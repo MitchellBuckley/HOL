@@ -6,9 +6,15 @@ open wordsTheory set_sepTheory progTheory helperLib addressTheory combinTheory;
 open backgroundLib file_readerLib writerLib;
 open GraphLangTheory
 
+fun arch_max_return_words () = 
+  case !arch_name of
+    RISCV => 2 
+  | ARM => 1
+  | M0 => 1
+
 fun stack_offset_in_fst_arg sec_name = let
   val (_,ret_word_count,_) = section_io sec_name
-  in 1 < ret_word_count end
+  in arch_max_return_words () < ret_word_count end
 
 local
   val bool_arb = mk_arb(``:bool``)
