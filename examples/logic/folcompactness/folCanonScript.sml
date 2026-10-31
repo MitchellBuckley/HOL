@@ -1,14 +1,11 @@
-open HolKernel Parse boolLib bossLib;
-
-open mp_then
-
-open pred_setTheory set_relationTheory listTheory
-open folSkolemTheory folPrenexTheory folModelsTheory folLangTheory
-     folPropTheory
+Theory folCanon
+Ancestors
+  pred_set set_relation list folSkolem folPrenex folModels
+  folLang folProp
+Libs
+  mp_then
 
 fun f $ x = f x
-
-val _ = new_theory "folCanon";
 
 (* ========================================================================= *)
 (* Canonical models in FOL and their use to derive classic metatheorems.     *)
@@ -410,8 +407,6 @@ QED
 Definition tm_constify_def[simp]:
   (tm_constify kvs (V x) = if x ∈ kvs then V x else Fn (1 ⊗ x) []) ∧
   (tm_constify kvs (Fn f zs) = Fn (0 ⊗ f) (MAP (tm_constify kvs) zs))
-Termination
-  WF_REL_TAC ‘measure (term_size o SND)’ >> simp[]
 End
 
 Definition varify_map_def:
@@ -660,7 +655,7 @@ Proof
   FREEZE_THEN (fn th => fs[th])
     (holds_uncm |> SPEC_ALL |> Q.INST [‘fs’ |-> ‘fvs’, ‘kvs’ |-> ‘∅’]
                 |> SIMP_RULE (srw_ss()) [] |> GSYM |> Q.GENL [‘ϕ’]) >>
-  qmatch_asmsub_abbrev_tac ‘interpretation (language FML) _’ >>
+  qmatch_assum_abbrev_tac ‘interpretation (language FML) _’ >>
   ‘FML = {FMC p | p ∈ A}’
      by (simp[Abbr‘FML’, Abbr‘A’, EXTENSION] >> metis_tac[]) >>
   map_every qexists_tac [‘uncm_mod M’, ‘uncm_map M fvs’] >> simp[] >>
@@ -687,7 +682,6 @@ Theorem holds_FMC_ARB:
 Proof
   simp[holds_valuation]
 QED
-
 
 Theorem not_entails:
   ¬entails (:α) H ϕ ⇔ satisfiable (:α) { FMC p | p ∈ Not ϕ INSERT H }
@@ -769,4 +763,3 @@ Proof
   fs[SUBSET_DEF] >> rw[] >> first_x_assum drule >> simp[]
 QED
 
-val _ = export_theory()

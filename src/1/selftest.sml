@@ -3,6 +3,21 @@ open HolKernel Parse boolTheory boolLib
 open testutils
 val _ = set_trace "Unicode" 0
 
+val _ = new_theory "scratch"
+
+val goal_compare = pair_compare(list_compare Term.compare, Term.compare)
+val goals_compare = list_compare goal_compare
+fun goals_eq gs1 gs2 = goals_compare (gs1, gs2) = EQUAL
+
+fun listp p xs = "[" ^ String.concatWith ", " (map p xs) ^ "]"
+fun pairp (p1, p2) (x,y) = "(" ^ p1 x ^ ", " ^ p2 y ^ ")"
+fun optp p NONE = "NONE"
+  | optp p (SOME x) = "SOME("^p x^")"
+
+val goal_toString =
+    pairp (listp term_to_string, term_to_string)
+val goals_toString = listp goal_toString
+
 val _ = tprint "Preterm free variables 1"
 val _ = require (check_result null) (Preterm.ptfvs o Parse.Preterm) ‘\x. x’
 
@@ -127,45 +142,70 @@ in
 end handle ExitOK => OK();
 
 fun cleanup() = let
-  fun rm s = FileSys.remove ("scratchTheory." ^ s)
+  fun rm s = HOLFileSys.remove ("scratchTheory." ^ s)
       handle _ => ()
 in
   app rm ["sml", "sig", "dat"]
 end
 
-exception InternalDie
-fun test f x = f x orelse raise InternalDie
+exception InternalDie of string
+fun test nm f x = f x orelse raise InternalDie nm
 fun oldconstants_test() = let
   val _ = tprint "Identity of old constants test"
+  val _ = new_theory "scratch"
+  val tab = ref (Termtab.empty : thm Termtab.table)
+  val new_definition = fn (s,t) =>
+    let val th = new_definition(s,t)
+    in
+       tab := Termtab.update(lhs (concl th), th) (!tab);
+       th
+    end
   val defn1_t = mk_eq(mk_var("foo", bool), boolSyntax.T)
   val defn2_t = mk_eq(mk_var("foo", bool), boolSyntax.F)
   val defn1 = new_definition("foo", defn1_t)
   val defn2 = new_definition("foo2", defn2_t)
   val defn3 = new_definition("foo3", defn1_t)
+  val _ = Termtab.size (!tab) = 3 orelse raise InternalDie "Table.size = 3"
   val c1 = lhs (concl defn1)
   val c2 = lhs (concl defn2)
   val c3 = lhs (concl defn3)
-  val _ = test (fn (c1,c2) => Term.compare(c1, c2) <> EQUAL) (c1, c2)
-  val _ = test (not o uncurry aconv) (c1, c2)
-  val _ = test (not o uncurry aconv) (c1, c3)
-  val _ = test (not o uncurry aconv) (c2, c3)
-  val _ = test (String.isPrefix "old" o #Name o dest_thy_const) c1
-  val _ = test (String.isPrefix "old" o #Name o dest_thy_const) c2
+  val _ = List.app (fn k => tab := Termtab.delete k (!tab)) [c1,c2,c3]
+                   handle Termtab.UNDEF _ =>
+                          raise InternalDie "Termtab.delete safe"
+  val _ = test "c1<c2" (fn (c1,c2) => Term.compare(c1, c2) = LESS) (c1, c2)
+  val _ = test "c2<c3" (fn (c1,c2) => Term.compare(c1, c2) = LESS) (c2, c3)
+  val _ = test "c1 ~~ c2" (not o uncurry aconv) (c1, c2)
+  val _ = test "c1 ~~ c3" (not o uncurry aconv) (c1, c3)
+  val _ = test "c2 ~~ c3" (not o uncurry aconv) (c2, c3)
   val _ = new_theory "foo"
   val defn1 = new_definition("c", mk_eq(mk_var("c", bool), boolSyntax.T))
   val _ = new_theory "foo"
   val defn2 = new_definition("c", mk_eq(mk_var("c", bool), boolSyntax.T))
   val c1 = lhs (concl defn1)
   val c2 = lhs (concl defn2)
-  val _ = test (fn (c1, c2) => Term.compare(c1,c2) <> EQUAL) (c1, c2)
-  val _ = test (not o uncurry aconv) (c1, c2)
+  val _ = test "rebound c1=c2"
+               (fn (c1, c2) => Term.compare(c1,c2) <> EQUAL) (c1, c2)
+  val _ = test "rebound c1~~c2" (not o uncurry aconv) (c1, c2)
+  (* end-to-end print-form check: the retired c1 should carry the
+     Globals.oldify decoration; the current c2 should not. *)
+  val _ = test "rebound c1 prints with oldify tag"
+               (String.isSubstring "<-old" o term_to_string) c1
+  val _ = test "rebound c2 prints without oldify tag"
+               (not o String.isSubstring "<-old" o term_to_string) c2
 in
   OK();
   cleanup()
 end handle e => (cleanup(); raise e)
 
 val _ = testutils.quietly oldconstants_test ()
-    handle InternalDie => die "Internal test failed";
+    handle InternalDie s => die ("Internal test failed: "^s);
+
+val _ = tprint "Checking type operator name identity thru deletion"
+val _ = new_type ("foo", 1)
+val foo1_ty = mk_type("foo", [bool])
+val _ = new_type ("foo", 1);
+val foo2_ty = mk_type("foo", [bool])
+val _ = require (check_result (equal LESS)) Type.compare (foo1_ty, foo2_ty)
 
 val _ = tprint "Testing functional-pretype 1 (pattern)"
 val _ = require (check_result (fn _ => true)) Parse.Term `x <> y ==> x <> y`
@@ -271,7 +311,7 @@ val int_ty = let val () = new_type ("int", 0)
                mk_thy_type{Thy = thy, Tyop = "int", Args = []}
              end
 val _ =
-    case Lib.total (VALID (HO_MATCH_MP_TAC th)) ([], goal) of
+    case Lib.total (runtac (VALID (HO_MATCH_MP_TAC th))) ([], goal) of
       SOME ([([],subgoal)],_) => if aconv subgoal expected then OK()
                                  else die ""
     | _ => die ""
@@ -289,7 +329,7 @@ fun checkparse () = let
   val tm = Lib.with_flag (Globals.notify_on_tyvar_guess, false)
                          Parse.Term
                          `!x. P x`
-  val randty =  type_of (rand tm)
+  val randty = type_of (rand tm)
 in
   if Type.compare(randty, alpha --> bool) <> EQUAL then die ""
   else OK()
@@ -470,7 +510,8 @@ val condprinter_test = tpp_expected
              |> unicode_off
              |> raw_backend
 val test = condprinter_test
-val condprinter_tests =
+(* Explicit type annotation to avoid free variable in testf's type *)
+val condprinter_tests: {input: string, output: string, testf: string -> string} list =
     [
       {input = "if oless e1 e2 /\\ oless x y /\\ foobabbbbbbb\n\
                \then p /\\ q /\\ r /\\ ppppp xxxx yyyyy\n\
@@ -579,7 +620,7 @@ val _ = let
   val ((nm1,th1), (nm2, th2)) =
       case readresult of
           [x,y] => (x,y)
-        | _ => raise InternalDie
+        | _ => raise InternalDie "Read has bad list"
 in
   if nm1 = "AND_CLAUSES" andalso nm2 = "OR_CLAUSES" andalso
      aconv (th1 |> concl) (concl boolTheory.AND_CLAUSES) andalso
@@ -587,12 +628,12 @@ in
   then
     OK()
   else die ""
-end handle InternalDie => die ""
+end handle InternalDie s => die s
 
 val _ = let
   val _ = tprint "REWRITE with T (if this appears to hang it has failed)"
   val t = mk_disj(mk_var("p", bool),T)
-  val (sgs,vfn) = REWRITE_TAC [TRUTH] ([], t)
+  val (sgs,vfn) = runtac (REWRITE_TAC [TRUTH]) ([], t)
 in
   if null sgs andalso aconv (concl (vfn [])) t then OK()
   else die ""
@@ -647,7 +688,8 @@ end
 
 val _ = tprint "Testing (foo THENL [...]) when foo solves"
 val _ = require (check_result (fn _ => true))
-                (ACCEPT_TAC TRUTH THENL [ACCEPT_TAC TRUTH]) ([], ``T``)
+                (runtac (ACCEPT_TAC TRUTH THENL [ACCEPT_TAC TRUTH]))
+                ([], ``T``)
 
 val _ = tprint "Testing save_thm rejecting names"
 val badnames = ["::", "nil", "true", "false", "ref", "="]
@@ -664,10 +706,10 @@ val _ = let
   val uth = UNDISCH_ALL th ;
 
   val g = ([], ``p ==> q``) : goal ;
-  val ([g'], _) = STRIP_TAC g ;
-  val ([], _) = (FIRST (map (VALID o ACCEPT_TAC) [uth', uth])) g' ;
-  val ([_], _) = (VALIDATE (FIRST (map ACCEPT_TAC [uth', uth]))) g' ;
-  val true = (VALID (FIRST (map ACCEPT_TAC [uth', uth])) g' ; false)
+  val ([g'], _) = runtac STRIP_TAC g ;
+  val ([], _) = runtac (FIRST (map (VALID o ACCEPT_TAC) [uth', uth])) g' ;
+  val ([_], _) = runtac (VALIDATE (FIRST (map ACCEPT_TAC [uth', uth]))) g' ;
+  val true = (runtac (VALID (FIRST (map ACCEPT_TAC [uth', uth]))) g' ; false)
     handle HOL_ERR _ => true ;
 in OK()
 end handle _ => die ""
@@ -680,13 +722,13 @@ val _ = let
   val _ = tprint "Testing VALIDATE (2)"
   val g = ([], ``(p ==> q) ==> r``) : goal
   val tac = STRIP_TAC THEN VALIDATE (POP_ASSUM (ASSUME_TAC o UNDISCH))
-  val (ngs, vf) = VALID tac g
+  val (ngs, vf) = runtac (VALID tac) g
 
   val tac1 = (VALIDATE (ASSUME_TAC (ASSUME ``x /\ y``)))
   val tac2 = (SUBGOAL_THEN ``x /\ y`` ASSUME_TAC )
 
-  val (ngs1, _) = VALID tac1 g
-  val (ngs2, _) = VALID tac2 g
+  val (ngs1, _) = runtac (VALID tac1) g
+  val (ngs2, _) = runtac (VALID tac2) g
 in
   if ListPair.allEq goal_equal (ngs1, ngs2) then OK()
   else die "final equality"
@@ -731,12 +773,12 @@ val _ = let
   val _ = tprint "Removing type abbreviation"
   val _ = quietly temp_type_abbrev_pp ("foo", ``:'a -> bool``)
   val s1 = type_to_string ``:bool -> bool``
-  val _ = s1 = ":bool foo" orelse raise InternalDie
+  val _ = s1 = ":bool foo" orelse raise InternalDie "type wrong"
   val _ = temp_remove_type_abbrev "foo"
   val s2 = type_to_string ``:bool -> bool``
 in
   if s2 = ":bool -> bool" then OK() else die ""
-end handle InternalDie => die ""
+end handle InternalDie s => die s
 
 fun nc (s,ty) =
   (quietly new_constant(s,ty); prim_mk_const{Name = s, Thy = current_theory()})
@@ -751,7 +793,7 @@ val _ = let
     ``!x u. ^P u x ==> !y. ^Q w x y ==> ^R x (^f y)``)
   val g = ([] : term list, ``^R a (^f b) : bool``)
   val exsg1 = ``?u. ^P u a`` and exsg2 = ``?w. ^Q w a b``
-  val (sgs, vf) = irule th g
+  val (sgs, vf) = runtac (irule th) g
   val verdict =
       case sgs of
           [([], sg)] => let val (sg1,sg2) = dest_conj sg
@@ -767,7 +809,7 @@ val _ = let
   val _ = tprint "irule 2 (shared existential)"
   val g = ([]: term list, ``a:'a = b``)
   val expected = ``?y:'a. (a = y) /\ (y = b)``
-  val (sgs, vf) = irule EQ_TRANS g
+  val (sgs, vf) = runtac (irule EQ_TRANS) g
 in
   case sgs of
       [([], sg)] => if aconv sg expected then OK() else die ""
@@ -779,22 +821,23 @@ val _ = let
   val P = nc("P", ``:'a -> bool``)
   val Q = nc("Q", ``:'a -> bool``)
   val g = ([``!x. ^P x ==> ^Q x``], ``^Q (b:'a)``)
-  val (sgs, vf) = POP_ASSUM irule g
+  val (sgs, vf) = runtac (POP_ASSUM irule) g
   val rth = vf (map mk_thm sgs)
   val _ = aconv (concl rth) (#2 g) andalso length (hyp rth) = 1 andalso
-          aconv (hd (hyp rth)) (hd (#1 g)) orelse raise InternalDie
+          aconv (hd (hyp rth)) (hd (#1 g)) orelse
+          raise InternalDie "aconvs wrong"
 in
   case sgs of
       [([], sg)] => if aconv sg ``^P (b:'a)`` then OK()
                     else die ""
     | _ => die ""
-end handle InternalDie => die ""
+end handle InternalDie s => die s
 
 val _ = let
   val _ = tprint "irule 4 (thm from goal, extra vars)"
   val g = ([``!x:'a y:'a. PP x y ==> QQ y (f y:'a)``],
            ``(QQ:'a -> 'a -> bool) a (f a)``)
-  val (sgs, vf) = POP_ASSUM irule g
+  val (sgs, vf) = runtac (POP_ASSUM irule) g
   val rth = vf (map mk_thm sgs)
 in
   case sgs of
@@ -823,7 +866,7 @@ val _ = let
   val tm = ``P x /\ U u ==> T' w ==> S' u w /\ V v ==> IMAGE f s x``
   val thm = mk_thm ([], tm)
   val g = ``IMAGE a b c``
-  val (sgs, vf) = irule thm ([], g)
+  val (sgs, vf) = runtac (irule thm) ([], g)
   val r_thm = vf (map mk_thm sgs)
 in
   if aconv (concl r_thm) g then OK() else die ""
@@ -835,7 +878,7 @@ val _ = let
                P x /\ U u ==> T' w ==> S' u w /\ V v ==> IMAGE f s x``
   val thm = ASSUME tm
   val g = ``IMAGE (a:'a -> 'b) b c``
-  val (sgs, vf) = irule thm ([], g)
+  val (sgs, vf) = runtac (irule thm) ([], g)
   val r_thm = vf (map mk_thm sgs)
 in
   if aconv (concl r_thm) g then OK() else die ""
@@ -878,7 +921,7 @@ val _ = let
 in
   require_msg (checktactic (fn _ => true) (fn th => concl th ~~ g))
               print_tacresult
-              (irule thm)
+              (runtac (irule thm))
               ([], g)
 end
 
@@ -906,7 +949,7 @@ val _ = let
   val _ = tprint "mp_then + goal_assum 1"
   val asl = [``P (x:'a):bool``, ``R (ARB:'b) (y:'a):bool``]
   val g = (asl, ``?x:'a y:'b. Q x (f y : 'c) /\ R y x``)
-  val (res, _) = goal_assum (first_assum o mp_then Any mp_tac) g
+  val (res, _) = runtac (goal_assum (first_assum o mp_then Any mp_tac)) g
   val expected = ``Q (y:'a) (f (ARB:'b) : 'c) : bool``
 in
   case res of
@@ -928,7 +971,7 @@ val _ = let
   val _ = tprint "drule 1"
   val asl = [``P (c:ind):bool``, ``!x:ind. P x ==> ?y:'a. Q x y``]
   val g = (asl, ``?a:ind (b:'a). Q a b``)
-  val (res, _) = first_assum drule g
+  val (res, _) = runtac (first_assum drule) g
   val expectedg = ``(?y:'a. Q (c:ind) y) ==> ?a b. Q a b``
 in
   case res of
@@ -952,7 +995,7 @@ val _ = let
   val th = mk_thm([], ``!x l:'a list. (<) x (LENGTH l) ==> (<) x some_n``)
   val asl = [``(<) v (LENGTH (m:ind list))``]
   val g = (asl, ``?a:ind (b:'a). Q a b``)
-  val (res, _) = drule th g
+  val (res, _) = runtac (drule th) g
   val expectedg = ``(<) v some_n ==> ?a:ind b:'a. Q a b``
 in
   case res of
@@ -971,7 +1014,7 @@ val _ = let
   val _ = tprint "drule 3"
   val asl = [``~p ==> q``, ``~p``]
   val g = (asl, ``r:bool``)
-  val (res, _) = pop_assum drule g
+  val (res, _) = runtac (pop_assum drule) g
   val expectedg = ``q ==> r``
 in
   case res of
@@ -991,7 +1034,8 @@ val _ = let
   val _ = tprint "mp_then (concl) 1"
   val asl = [``p ==> q``, ``~q``]
   val g = (asl, ``r:bool``)
-  val (res, _) = pop_assum (first_assum o mp_then Concl mp_tac) g
+  val (res, _) =
+      runtac (pop_assum (first_assum o mp_then Concl mp_tac)) g
   val expectedg = ``(p ==> F) ==> r``
 in
   case res of
@@ -1011,7 +1055,9 @@ val _ = let
   val _ = tprint "mp_then (concl) 2"
   val asl = [``p ==> ~q``, ``q:bool``]
   val g = (asl, ``r:bool``)
-  val eres = Exn.capture (#1 o pop_assum (first_assum o mp_then Concl mp_tac)) g
+  val eres =
+      Exn.capture
+        (#1 o runtac (pop_assum (first_assum o mp_then Concl mp_tac))) g
   val expectedg = ``(p ==> F) ==> r``
 in
   case eres of
@@ -1033,7 +1079,8 @@ val _ = let
   val _ = tprint "mp_then (pat) 1"
   val asl = [``P (x:'a) /\ ~p /\ r ==> ~q``, ``~p:bool``, ``r:bool``]
   val g = (asl, ``r:bool``)
-  val (res, _) = pop_assum (first_assum o mp_then (Pat `$~`) mp_tac) g
+  val (res, _) =
+      runtac (pop_assum (first_assum o mp_then (Pat `$~`) mp_tac)) g
   val expectedg = ``(P(x:'a) /\ r ==> ~q) ==> r``
 in
   case res of
@@ -1055,7 +1102,9 @@ val _ = let
   val asl = [``!x. P (x:'a) /\ ~p /\ r ==> ~q``, ``P(c:'a):bool``, ``r:bool``]
   val g = (asl, ``r:bool``)
   val (res, _) =
-      pop_assum (first_assum o mp_then (Pat `P (x:'a) : bool`) mp_tac) g
+      runtac
+        (pop_assum (first_assum o mp_then (Pat `P (x:'a) : bool`) mp_tac))
+        g
   val expectedg = ``(~p /\ r ==> ~q) ==> r``
 in
   case res of
@@ -1082,7 +1131,7 @@ val _ = let
              ``foo (a:ti) (x:'a -> bool):bool``, ``bar (x:'a -> bool):bool``]
   val g = (List.rev asl, ``gg (a:ti):bool``)
   val (res, _) =
-      first_x_assum (first_assum o mp_then (Pat `EVERY`) mp_tac) g
+      runtac (first_x_assum (first_assum o mp_then (Pat `EVERY`) mp_tac)) g
   val expectedg = ``(!x':ti. foo x' (x:'a -> bool) ==> gg x') ==> gg a``
   val expectedasl = [``bar (x:'a -> bool):bool``,
                      ``foo (a:ti) (x:'a -> bool):bool``,
@@ -1112,7 +1161,7 @@ val _ = let
   val g = boolSyntax.F
   val tac = first_x_assum (first_x_assum o mp_then (Pat ‘gh567’) assume_tac)
 in
-  case verdict tac (fn _ => ()) (asl,g) of
+  case verdict (runtac tac) (fn _ => ()) (asl,g) of
       FAIL ((), e) => die ("Got exception: " ^ General.exnMessage e)
     | PASS (sgs, _) =>
       if list_eq (pair_eq (list_eq aconv) aconv) sgs [([F], F)] then
@@ -1127,7 +1176,7 @@ val _ = let
              ``P (c:ind):bool``, ``R (d:ind):bool``,
              ``P (d:ind):bool``]
   val g = (asl, ``?a:ind (b:'a). Q a b``)
-  val (res, _) = first_assum drule_all g
+  val (res, _) = runtac (first_assum drule_all) g
   val expectedg = ``(?y:'a. Q (d:ind) y) ==> ?a b. Q a b``
 in
   case res of
@@ -1147,28 +1196,37 @@ val _ = let
   val asl = [“Q (a:ind) (b:'b):bool”,  “P (a:ind):bool”, “R T : bool”,
              “!x:ind. P x ==> !c:'b. Q x c ==> F”]
   val g = (asl, “p /\ q”)
-  val eres = Exn.capture (#1 o VALID (first_x_assum drule_all)) g
   val (asl', _) = front_last asl
   val expected = (asl', “F ==> p /\ q”)
 in
-  case eres of
-      Exn.Res res =>
-      if ListPair.allEq goal_equal ([expected], res) then OK()
-      else die ("Unexpected result:\n  " ^
-                PP.pp_to_string 70
-                                (fn r => PP.block PP.CONSISTENT 2 [pp_goals r])
-                                res
-               )
-    | Exn.Exn e => die ("Unexpected exception: " ^ General.exnMessage e)
+  require_pretty_msg
+    (check_result (fn r => ListPair.allEq goal_equal ([expected], r)))
+    pp_goals
+    (#1 o runtac (VALID (first_x_assum drule_all)))
+    g
 end
 
+val _ = let
+  val _ = tprint "drule_all 3 (ith with negated concl.)"
+  val asl = [“Q(a:ind) (b:'b):bool”, “P (a:ind):bool”,
+             “!x:ind. P x ==> !c:'b. Q x c ==> !z:'b. ~R c z”]
+  val g = (asl, “p /\ q”)
+  val (asl', _) = front_last asl
+  val expected = (asl', “(!z:'b. ~R (b:'b) z) ==> p /\ q”)
+in
+  require_pretty_msg
+    (check_result (fn r => ListPair.allEq goal_equal ([expected], r)))
+    pp_goals
+    (#1 o runtac (VALID (first_x_assum drule_all)))
+    g
+end
 
 val _ = let
   val _ = tprint "dxrule_all 1"
   val imp = ``!x:ind. P x /\ R x ==> ?y:'a. Q x y``
   val asl = [imp, ``P (c:ind):bool``, ``R (d:ind):bool``, ``P (d:ind):bool``]
   val g = (asl, ``?a:ind (b:'a). Q a b``)
-  val (res, _) = first_assum dxrule_all g
+  val (res, _) = runtac (first_assum dxrule_all) g
   val expectedg = ``(?y:'a. Q (d:ind) y) ==> ?a b. Q a b``
   val expected_asl = [imp, ``P (c:ind):bool``]
 in
@@ -1263,8 +1321,9 @@ val _ = app condprinter_test condprinter_tests
 
 val _ = let
   open Exn
-  fun badtac (asl,g) = ([], fn [] => ASSUME ``p:bool`` | _ => raise Fail "")
-  val vtac = VALID badtac
+  fun badtac (asl,g) (_ : Context.t) =
+      ([], fn [] => ASSUME ``p:bool`` | _ => raise Fail "")
+  val vtac = runtac (VALID badtac)
   fun checkmsg P f (os, ofn, m) = os = "Tactical" andalso ofn = f andalso P m
   fun checkv P = checkmsg P "VALID"
   fun checkvl P = checkmsg P "VALID_LT"
@@ -1296,3 +1355,266 @@ val _ = let
 in
   OK()
 end handle _ => die "FAILED"
+
+val _ = shouldfail {checkexn = is_struct_HOL_ERR "Parse",
+                    printarg = (fn s => "Type parser fails on bool'"),
+                    printresult = with_flag (show_types, true) term_to_string,
+                    testfn = Parse.Term o single o QUOTE}
+                   "!b:bool'. p /\\ b"
+
+(* ?p p. p  with inner variable binding, should swap to ?p q. p
+   or something alpha equivalent to that *)
+val _ = let
+  val v = mk_var("p", bool)
+  val u = mk_var("q", bool)
+  val t = mk_exists(v, mk_exists(v, v))
+  val expected = mk_exists(v, mk_exists (u, v))
+in
+  convtest("SWAP_EXISTS_CONV with vacuous binding of identical names",
+           SWAP_EXISTS_CONV,
+           t, expected)
+end
+
+fun q s = "\"" ^ String.toString s ^ "\""
+fun kvs_toString (k,vs) =
+    "(" ^ q k ^ ", [" ^ String.concatWith ", " (map q vs) ^ "])"
+fun kvs_alist_toString al =
+    "[" ^ String.concatWith ", " (map kvs_toString al) ^ "]"
+fun attr_result_toString {thmname,attrs,reserved,unknown} =
+    "{ attrs = " ^ kvs_alist_toString attrs ^ ",\n" ^
+    "  reserved = " ^ kvs_alist_toString reserved ^ ",\n" ^
+    "  unknown = " ^ kvs_alist_toString unknown ^ ",\n" ^
+    "  thmname = " ^ q thmname ^ "}"
+
+val _ = let
+  val _ = tprint ("extract_attributes \"" ^
+                  "foo[local,simp=once twice,baz]\"")
+  val expected = {attrs = [] : (string * string list) list,
+                  reserved = [("local", [])],
+                  thmname = "foo",
+                  unknown = [("simp", ["once", "twice"]), ("baz", [])]}
+in
+  require_msg
+    (check_result (equal expected))
+    attr_result_toString
+    ThmAttribute.extract_attributes
+    "foo[local,simp=once twice,baz]"
+end
+
+val _ = let
+  val _ = tprint "attribute abbreviation \"foo[A1=v1  v3,*]\""
+  val expected = {attrs = [],
+                  reserved = [("local", [])],
+                  thmname = "foo",
+                  unknown = [("A1",["v1", "v3"]),
+                             ("A2",[]), ("A3", ["vv"])]}
+  val _ = ThmAttribute.define_abbreviation{
+        abbrev = "*",
+        expansion = [("A2", []), ("local", []), ("A3", ["vv"])]
+      }
+in
+  require_msg
+    (check_result (equal expected))
+    attr_result_toString
+    ThmAttribute.extract_attributes
+    "foo[A1=v1  v3,*]"
+end;
+
+val _ = let
+  val _ = tprint "ABS_TAC with name conflation"
+  val t = “(\a:bool. T = T) = (\b. (a:bool) = a)”
+  val expected = [([], “(T = T) = (a = a:bool)”)]
+in
+  require_msg
+    (check_result (goals_eq expected o fst))
+    (goals_toString o fst)
+    (runtac (VALID ABS_TAC))
+    ([], t)
+end;
+
+val _ = let
+  val _ = tprint "EQ_MP_TAC(1)"
+  val t = “p /\ q”
+  val th = ASSUME “r \/ s”
+  val expected = [([], “r \/ s <=> p /\ q”)]
+in
+  require_msg
+    (check_result (goals_eq expected o fst))
+    (goals_toString o fst)
+    (runtac (EQ_MP_TAC th))
+    ([], t)
+end;
+
+val _ = let
+  val _ = tprint "EQ_MP_TAC(2)"
+  val t = “p /\ q”
+  val expected = [([], “T /\ T <=> p /\ q”)]
+  val th = CONJ TRUTH TRUTH
+in
+  require_msg
+    (check_result (goals_eq expected o fst))
+    (goals_toString o fst)
+    (runtac (VALID (EQ_MP_TAC th)))
+    ([], t)
+end;
+
+fun ip p {redex,residue} = p redex ^ " |-> " ^ p residue
+
+fun unify_test (t1,t2,b,st) =
+let
+  open optmonad
+  infix >>
+  fun tmp st = Feedback.trace ("types", if st then 1 else 0) term_to_string
+  val _ = tprint ("Unify" ^ (if b then "✓: " else "×: ") ^
+                  tmp st t1 ^ " and " ^ tmp st t2)
+  fun sub (tyi,tmi) t = Term.subst tmi (Term.inst tyi t)
+  fun check opt =
+      case opt of
+          NONE => not b
+        | SOME r =>
+          b andalso aconv (sub r t1) (sub r t2)
+  val print = optp (pairp(listp $ ip type_to_string, listp $ ip $ tmp true))
+in
+  require_msg (check_result check) print
+              FullUnify.Env.fromEmpty
+              (FullUnify.unify [] [] (t1,t2) >> FullUnify.collapse)
+end
+
+val _ = new_constant ("cle", “:'a -> 'b -> bool”)
+
+val _ = app unify_test [
+      (“x:bool”, “x:'a”, true, true),
+      (“x:bool->bool”, “y:bool”, false, true),
+      (“~ x”, “(f : 'a -> 'b) y”, true, true),
+      (“(f:'a -> 'a) x”, “$/\ T”, false, true),
+      (“(\x y. x /\ y <=> u /\ v) u a”,
+       “(f:bool->bool -> bool) x x”, true, false),
+      (“\x y. x /\ y /\ z”, “\a x. a /\ x”, false, false),
+      (“\x y. x /\ y”, “\y x. y /\ x”, true, false),
+      (“\x y. x /\ y”, “\y:'a x:'b. f y x”, true, false),
+      (“cle (t:'a) ($= t)”, “cle (s:'b) (t0:'c)”, true, false)
+    ]
+
+(* Test for GitHub issue #1819: DEP_*_REWRITE_TAC must not splice side
+   conditions that mention a goal-bound variable as if it were free. *)
+val _ = tprint "GitHub #1819: dep_rewrite avoids bound-var capture"
+val _ = let
+  open dep_rewrite
+  val rule_tm =
+      “!x:bool. (f:bool->bool) x ==> ((a:bool->bool) x = b x)”
+  val rule = ASSUME rule_tm
+  val goal_tm =
+      “!x:bool. (f:bool->bool) x ==> ((a:bool->bool) x = b x)”
+  val orig_fvs = HOLset.fromList Term.compare (free_vars goal_tm)
+  fun fvs_of (asl, g) =
+      List.concat (map free_vars (g::asl))
+  fun no_new_fvs subgoals =
+      List.all (List.all (fn v => HOLset.member(orig_fvs, v)) o fvs_of)
+               subgoals
+  val ok =
+      let val (subgoals, _) =
+              runtac (DEP_ONCE_REWRITE_TAC [rule]) ([], goal_tm)
+      in no_new_fvs subgoals end
+      handle HOL_ERR _ => true
+in
+  if ok then OK() else die "side condition leaked a captured bound variable"
+end
+
+(* Regression test for #1870 and analogous cross-theory redefinition
+   attacks (see also the paste attached to #2027).  The old exploits
+   passed a target thyname directly to prim_specification /
+   prim_type_definition; the new API drops that argument and reads
+   the current theory from Thm-owned state.  The attacker's only
+   remaining Thm-level route is `Thm.setCT`, which refuses on any
+   name that has been sealed by a prior export or load. *)
+val _ = shouldfail
+  {checkexn    = is_struct_HOL_ERR "Thm",
+   printarg    = fn s => "Cross-theory mint into sealed " ^ s ^ " refused",
+   printresult = fn () => "<no exception>",
+   testfn      = Thm.setCT}
+  "bool"
+
+(* Regression test for #2026: attacker targeting min$=.  min is
+   sealed from kernel initialisation, so the setCT step raises. *)
+val _ = shouldfail
+  {checkexn    = is_struct_HOL_ERR "Thm",
+   printarg    = fn s => "Cross-theory mint into sealed " ^ s ^ " refused",
+   printresult = fn () => "<no exception>",
+   testfn      = Thm.setCT}
+  "min"
+
+(* Test for #2024 *)
+val _ = let
+  val x = mk_var("x", bool)
+  val y = mk_var("y", bool)
+  val k = mk_abs(x, mk_abs(y, x))
+in
+  shouldfail {
+    checkexn = (fn HOL_ERR _ => true | _ => false),
+    printarg = K "Testing for #2024 malformed read_raw",
+    printresult = term_to_string,
+    testfn = Term.read_raw (Vector.fromList [k])
+  } "%0$0@"
+end
+
+(* Test for #2041 *)
+val _ = let
+  val x = Term.mk_var ("x", Type.bool --> Type.bool)
+  val v = Vector.fromList [x, boolSyntax.implication, boolSyntax.F]
+in
+  (* Try to construct “\x:B. x x ==> F”
+   The experimental read_raw accepted the ill-typed subterm [x x]. *)
+  shouldfail {
+    checkexn = (fn HOL_ERR _ => true | _ => false),
+    printarg = K "Testing for #2041 malformed read_raw",
+    printresult = (fn t => "Malformed term"),
+    testfn = Term.read_raw v
+  }  "%0%1%0%0@@%2@|"
+end
+
+
+(* Restarting a segment fires Parse.clear_consts_from_grammar, which must
+   drop the zapped segment's constants from the overload map even when the
+   map holds a pattern overload.  Must stay last in the file: it retires
+   the constants of whatever segment the tests above have been using. *)
+val _ = let
+  val _ = tprint "Segment restart clears the zapped segment's consts"
+  fun overloaded s =
+      Overload.is_overloaded (term_grammar.overload_info (term_grammar())) s
+  val thy = current_theory()
+  val _ = temp_overload_on ("chc_ovl", nc ("chc", bool))
+  val _ = temp_overload_on ("chc_cmp", ``\x y. x /\ y``)
+  val _ = if overloaded "chc_ovl" then () else die "chc_ovl not installed"
+  val warnings = ref ([] : string list)
+  val _ = Lib.with_flag
+            (Feedback.WARNING_outstream, fn s => warnings := s :: !warnings)
+            (Feedback.quiet_messages new_theory) thy
+in
+  if not (null (!warnings)) then
+    die ("restart hook warned:\n" ^ String.concatWith "\n" (!warnings))
+  else if overloaded "chc_ovl" then
+    die "restart left the retired constant overloaded"
+  (* bug #851064: the stale entry made the bare name unparseable *)
+  else if not (is_var (Parse.Term [QUOTE "chc"])) then
+    die "retired constant still reachable from the term parser"
+  else OK()
+end
+
+(* A bound must be found whatever else the theorem assumes; a variable
+   hypothesis used to make the search raise, so the theorem was treated
+   as unbounded and its BOUNDED hypothesis reached the rewrite results. *)
+val _ =
+  let
+    val th = ASSUME (mk_var("p", bool))
+    fun check (name, th) =
+        (tprint ("DEST_BOUNDED: " ^ name);
+         require_msg
+           (check_result
+              (fn (th', n) => n = 2 andalso
+                              HOLset.equal(hypset th', hypset th) andalso
+                              concl th' ~~ concl th))
+           (fn (th', n) => thm_to_string th' ^ " @ " ^ Int.toString n)
+           BoundedRewrites.DEST_BOUNDED (BoundedRewrites.Ntimes th 2))
+  in
+    check ("variable hypothesis", th)
+  end

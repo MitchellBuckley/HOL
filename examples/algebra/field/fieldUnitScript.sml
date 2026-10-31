@@ -4,29 +4,15 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "fieldUnit";
+Theory fieldUnit
+Ancestors
+  pred_set ring field
+Libs
+  jcLib
 
 (* ------------------------------------------------------------------------- *)
 
-
-
 (* val _ = load "jcLib"; *)
-open jcLib;
-
-(* open dependent theories *)
-open pred_setTheory;
-
-(* Get dependent theories local *)
-(* val _ = load "fieldTheory"; *)
-(* val _ = load "ringUnitTheory"; *)
-open ringTheory fieldTheory;
-open ringDividesTheory ringUnitTheory;
-
-
 (* ------------------------------------------------------------------------- *)
 (* Field Units Documentation                                                 *)
 (* ------------------------------------------------------------------------- *)
@@ -80,8 +66,4 @@ Proof
 QED
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

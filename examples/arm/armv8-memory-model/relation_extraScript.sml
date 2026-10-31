@@ -1,7 +1,6 @@
-open HolKernel Parse boolLib bossLib
-open set_relationTheory relationTheory
-
-val () = new_theory "relation_extra"
+Theory relation_extra
+Ancestors
+  set_relation relation
 
 (* -------------------------------------------------------------------------
    Definitions
@@ -157,27 +156,6 @@ Proof
   xsimp []
 QED
 
-Theorem dom_dom:
-  r = diag r1 ⨾ r ⨾ diag r2 ==> !x y. r x y ==> r1 x /\ r2 y
-Proof
-  xsimp []
-  \\ metis_tac []
-QED
-
-Theorem dom_l:
-  r = diag r1 ⨾ r ⨾ diag r2 ==> r = diag r1 ⨾ r
-Proof
-  xsimp []
-  \\ metis_tac []
-QED
-
-Theorem dom_r:
-  r = diag r1 ⨾ r ⨾ diag r2 ==> r = r ⨾ diag r2
-Proof
-  xsimp []
-  \\ metis_tac []
-QED
-
 (* - seq ------------------------------------------------------------------- *)
 
 Theorem seq_assoc:
@@ -204,20 +182,6 @@ Theorem seq_empty_r:
   r ⨾ REMPTY = REMPTY
 Proof
   xsimp []
-QED
-
-Theorem seq_runion_l:
-  r1 ⨾ (r2 RUNION r3) = r1 ⨾ r2 RUNION r1 ⨾ r3
-Proof
-  xsimp []
-  \\ metis_tac []
-QED
-
-Theorem seq_runion_r:
-  (r1 RUNION r2) ⨾ r3 = r1 ⨾ r3 RUNION r2 ⨾ r3
-Proof
-  xsimp []
-  \\ metis_tac []
 QED
 
 Theorem irreflexive_seq:
@@ -250,6 +214,52 @@ QED
 
 Theorem inclusion_seq_mon:
    r1 RSUBSET r2 /\ r3 RSUBSET r4 ==> (r1 ⨾ r3) RSUBSET (r2 ⨾ r4)
+Proof
+  xsimp []
+  \\ metis_tac []
+QED
+
+(* One-sided monotonicities and other RSUBSET helpers.  The Lib used
+   to prove these at load time via a `List.map rprove […]` block. *)
+
+Theorem seq_MONOTONE_L:
+  r1 RSUBSET r3 ==> (r1 ⨾ r2) RSUBSET (r3 ⨾ r2)
+Proof
+  xsimp []
+  \\ metis_tac []
+QED
+
+Theorem seq_MONOTONE_R:
+  r2 RSUBSET r3 ==> (r1 ⨾ r2) RSUBSET (r1 ⨾ r3)
+Proof
+  xsimp []
+  \\ metis_tac []
+QED
+
+Theorem RMINUS_MONOTONE_L:
+  r1 RSUBSET r3 ==> (r1 RMINUS r2) RSUBSET (r3 RMINUS r2)
+Proof
+  xsimp []
+  \\ metis_tac []
+QED
+
+Theorem delift_MONOTONE:
+  r1 RSUBSET r2 ==> (delift eqv r1) RSUBSET (delift eqv r2)
+Proof
+  xsimp [delift]
+  \\ metis_tac []
+QED
+
+Theorem restr_rel_MONOTONE:
+  r1 RSUBSET r2 ==> (restr_rel cond r1) RSUBSET (restr_rel cond r2)
+Proof
+  xsimp [restr_rel]
+  \\ metis_tac []
+QED
+
+Theorem full_rsubset_trans:
+  !r3 r4 r1 r2.
+    r1 RSUBSET r3 /\ r4 RSUBSET r2 /\ r3 RSUBSET r4 ==> r1 RSUBSET r2
 Proof
   xsimp []
   \\ metis_tac []
@@ -1238,4 +1248,3 @@ QED
    End
    ------------------------------------------------------------------------- *)
 
-val () = export_theory()

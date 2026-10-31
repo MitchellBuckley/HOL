@@ -42,27 +42,76 @@ app load ["pairTheory", "sumTheory", "listTheory", "listLib"];
 *)
 
 
-open pairTheory;
-open pairSyntax;
-open pairTools;
-open sumTheory;
-open listTheory;
-open listLib;
 open combinTheory;
 open quotientTheory;
-open quotient_listTheory;
-open quotient_pairTheory;
-open quotient_sumTheory;
-open quotient_optionTheory;
 open Rsyntax;
+open simpLib boolSimps
 
 structure Parse =
 struct
   open Parse
-  val (Type,Term) = parse_from_grammars(quotient_option_grammars)
+  val SOME quotient_grammars = grammarDB {thyname="quotient"}
+  val (Type,Term) = parse_from_grammars(quotient_grammars)
   fun == q _ = Type q
 end
 open Parse
+
+(* versions of pairSyntax functions that don't induce a dependency on pairs
+   being in ancestry *)
+val ERR = mk_HOL_ERR "quotient"
+fun Etry e f x = with_exn f x e
+fun mk_pair_ty (ty1,ty2) =
+    mk_thy_type{Args = [ty1,ty2], Thy = "pair", Tyop = "prod"}
+fun mk_pair (t1, t2) =
+    let val ty1 = type_of t1 and ty2 = type_of t2
+    in
+      list_mk_comb(mk_thy_const{Name = ",", Thy = "pair",
+                                Ty = ty1 --> (ty2 --> mk_pair_ty (ty1,ty2))},
+                   [t1,t2])
+    end
+
+fun dest_pair tm =
+    let val (f, args) = strip_comb tm
+        val e = ERR "dest_pair" "Not a pair"
+        val (t1,t2) = case args of
+                          [t1,t2] => (t1,t2)
+                        | _ => raise e
+        val {Name,Thy,...} = Etry e dest_thy_const f
+    in
+      if Name = "," andalso Thy = "pair" then (t1,t2)
+      else raise e
+    end
+
+fun mk_pabs (vstr,body) =
+    if is_var vstr then Term.mk_abs (vstr, body)
+    else let val (fst,snd) = dest_pair vstr
+             val ty1 = type_of fst and ty2 = type_of snd and bty = type_of body
+             val unc_t = mk_thy_const{
+                   Thy = "pair", Name = "UNCURRY",
+                   Ty = (ty1 --> ty2 --> bty) -->
+                        (mk_pair_ty (ty1,ty2) --> type_of body)
+                 }
+         in
+           Psyntax.mk_comb(unc_t, mk_pabs(fst, mk_pabs(snd,body)))
+         end
+
+fun dest_pabs tm =
+  Term.dest_abs tm
+  handle HOL_ERR _ =>
+    let
+      val e = ERR "dest_pabs" "Not a pabs"
+      val (Rator, Rand) = Etry e Psyntax.dest_comb tm
+      val {Name,Thy,...} = Etry e dest_thy_const Rator
+    in
+      if Name = "UNCURRY" andalso Thy = "pair" then
+        let
+          val (lv,body) = dest_pabs Rand
+          val (rv,body) = dest_pabs body
+        in
+          (mk_pair(lv,rv), body)
+        end
+      else raise e
+    end
 
 
 (* In interactive sessions, omit the chatting section below. *)
@@ -81,38 +130,23 @@ val _ = register_btrace("quotient", chatting);
 val caching = ref true; (* should be pure efficiency gain *)
 
 
-structure Map = Redblackmap
-
-(* Redblackmap has the same signature as Binarymap. *)
-
-val quotient_cache = ref ((Map.mkDict Type.compare) :(hol_type, thm) Map.dict);
+val quotient_cache : thm Typetab.table ref = ref Typetab.empty;
 
 val hits = ref 0;
 val misses = ref 0;
 
 fun reset_cache () =
-      (quotient_cache := (Map.mkDict Type.compare : (hol_type, thm)Map.dict);
+      (quotient_cache := Typetab.empty;
        hits := 0; misses := 0)
 
 fun list_cache () = (if !chatting andalso !caching then (
                      print (    "Hits = " ^ Int.toString (!hits) ^
                             ", Misses = " ^ Int.toString (!misses) ^
                             ", Cache size = " ^
-                             Int.toString (Map.numItems (!quotient_cache))
+                             Int.toString (Typetab.size (!quotient_cache))
                               ^ "\n"))
                      else ();
-                     Map.listItems (!quotient_cache))
-
-
-
-local
-     val tm = Term `!P:'a list -> bool.
-                       P [] /\ (!t. P t ==> !x. P (x::t)) ==> !l. P l`
-     val eq = Thm.ALPHA (concl listTheory.list_induction) tm
-     val list_induction' = EQ_MP eq listTheory.list_induction
-in
-val LIST_INDUCT_TAC =INDUCT_THEN list_induction' ASSUME_TAC
-end;
+                     Typetab.dest (!quotient_cache))
 
 fun del_imps tm = if is_imp tm then (del_imps o #conseq o dest_imp) tm
                                else tm;
@@ -321,7 +355,7 @@ fun define_partial_quotient_type tyname abs rep equiv =
 (* Then we can define the new type obj using 'new_type_definition'. *)
 (* This actually creates the new quotient type.                     *)
 
-        val TY_DEF =  new_type_definition( tyname, ty_exists )
+        val TY_DEF = new_type_definition( tyname, ty_exists )
         val nty = (hd o #Args o dest_type o type_of o #Bvar o dest_exists
                       o concl) TY_DEF
 
@@ -598,12 +632,9 @@ fun is_partial_equiv th = is_match_term partial_equiv_tm (concl th);
 
 fun check_equiv th =
     is_equiv th orelse is_partial_equiv th orelse
-         raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_equiv",
-                  message = "The following is neither an equivalence nor a partial equivalence theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+      raise mk_HOL_ERR "quotient" "check_equiv"
+        ("The following is neither an equivalence nor a partial equivalence theorem:\n" ^
+          thm_to_string th ^ "\n")
 
 fun distinct [] = true
   | distinct (x::xs) = not (mem x xs) andalso distinct xs
@@ -641,12 +672,9 @@ fun check_tyop_equiv th =
        null (Term.free_vars (concl th)) andalso
        is_match_term equiv_tm uncond_tm  orelse raise Match
    end
-   handle e => raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_tyop_equiv",
-                  message = "The following does not have the form of a type quotient extension theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+   handle e => raise mk_HOL_ERR "quotient" "check_tyop_equiv"
+     ("The following does not have the form of a type quotient extension theorem:\n" ^
+       thm_to_string th ^ "\n")
 
 
 fun dest_QUOTIENT_cond tm =
@@ -685,12 +713,9 @@ fun check_tyop_quotient th =
        null (Term.free_vars (concl th)) andalso
        is_match_term quotient_tm uncond_tm  orelse raise Match
    end
-   handle e => raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_tyop_quotient",
-                  message = "The following does not have the form of a quotient type extension theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+   handle e => raise mk_HOL_ERR "quotient" "check_tyop_quotient"
+     ("The following does not have the form of a quotient type extension theorem:\n" ^
+       thm_to_string th ^ "\n")
 
 fun check_tyop_simp th =
    let val tm = concl th
@@ -704,12 +729,9 @@ fun check_tyop_simp th =
    in
       true
    end
-   handle e => raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_tyop_simp",
-                  message = "The following does not have the form of a simplification theorem for either\nrelation extension simplification or map function extension simplification:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+   handle e => raise mk_HOL_ERR "quotient" "check_tyop_simp"
+     ("The following does not have the form of a simplification theorem for either\nrelation extension simplification or map function extension simplification:\n" ^
+       thm_to_string th ^ "\n")
 
 
 fun define_quotient_type tyname abs rep equiv =
@@ -720,284 +742,6 @@ fun define_quotient_type tyname abs rep equiv =
               then equiv
               else MATCH_MP EQUIV_IMP_PARTIAL_EQUIV equiv)
     end
-
-
-(* This section is code to construct a quotient from a normal equivalence;
-   It is now superceeded by the more general code for a partial equivalance.
-
-
-    else
-
-    let
-
-   (* Extract the existing type, ty, and the equivalence relation, REL. *)
-        val (vs, equiv_tm) = strip_forall (concl equiv)
-        val v = hd vs
-        val ty = type_of v
-        val REL = rator (rator (lhs equiv_tm))
-        val pty = (==`:^ty -> ^ty -> bool`==)
-        val _ = assert (curry op = (type_of REL)) pty
-
-        val refl = GEN v (EQ_MP (SYM (SPECL[v,v] equiv))
-                                (REFL (mk_comb{Rator=REL, Rand=v})))
-
-(* We will now define the new type, and call it nty here.
-   We represent nty values as equivalence classes of ty objects.
-   The classes are functions from ty to bool.  However, not all such
-   functions are also suitable equivalence classes.  We must restrict
-   the type ty->bool by a predicate.
-
-   We take the predicate P to be
-
-     P : (ty -> bool) -> bool
-     P = \c. ?r. c = REL r
-
-   That is, consider the sets of ty-values which are REL-equivalent.
-   Let each such set be represented by its characteristic function,
-   of type ty -> bool.  Then any set of ty-values is such an equivalence
-   set if and only if there is some ty, a, whose characteristic
-   function is the same as that of the given set.
-
-   If P x, then x is a suitable function to represent an obj.
-*)
-
-(* First we show that there is such a set of objects, that the
-   predicate P is non-empty.  *)
-
-        val rtm = mk_var{Name="r", Ty=ty}
-        val rcl = mk_comb{Rator=REL, Rand=rtm}
-        val cty = type_of rcl
-        val P = (“\c. ?r. c = ^rcl”)
-        val ty_exists =
-            EXISTS (“?x. ^P x”, rcl)
-                   (EQ_MP (SYM (BETA_CONV (mk_comb{Rator=P, Rand=rcl})))
-                          (EXISTS (“?a. ^rcl = ^REL a”, rtm) (REFL rcl)))
-(* or,
-        val ty_exists = TAC_PROOF(([],
-                        “?x. ^P x”),
-                        EXISTS_TAC rcl
-                        THEN BETA_TAC
-                        THEN EXISTS_TAC rtm
-                        THEN REFL_TAC)
-*)
-
-(* Then we can define the new type obj using 'new_type_definition'. *)
-        val TY_DEF =  new_type_definition( tyname, ty_exists )
-        val nty = (hd o #Args o dest_type o type_of o #Bvar o dest_exists
-                      o concl) TY_DEF
-
-(* This creates the new type, "nty", but only implicitly establishes its
-   relationships to the original type of equivalence classes on ty.
-   To define the bijections to and from the new type, we use
-   'define_new_type_bijections'.  This defines
-                   ty_ABS : (ty -> bool) -> nty
-                   ty_REP : nty -> (ty -> bool) .
-*)
-        val ty_bijections = define_new_type_bijections{
-                             name = tyname ^ "_bijections",
-                             ABS  = abs ^ "_CLASS",
-                             REP  = rep ^ "_CLASS",
-                             tyax = TY_DEF}
-        val ABS_REP = CONJUNCT1 ty_bijections
-        val AR1 = (#lhs o dest_eq o #Body o dest_forall o concl) ABS_REP
-        val {Rator=cty_ABS, Rand=AR2} = dest_comb AR1
-        val cty_REP = #Rator(dest_comb AR2)
-(* or,
-        val cty_ABS = mk_const{Name = tyname ^ "_ABS_CLASS",
-                              Ty = mk_type{Tyop="fun", Args=[cty,nty]}}
-        val cty_REP = mk_const{Name = tyname ^ "_REP_CLASS",
-                              Ty = mk_type{Tyop="fun", Args=[nty,cty]}}
-*)
-
-(* These bijections can be described more naturally and usefully. *)
-        val cty_ABS_REP = store_thm
-                (tyname ^ "_ABS_REP_CLASS",
-                 (“(!a. ^cty_ABS (^cty_REP a) = a) /\
-                     (!r. ^cty_REP (^cty_ABS (^REL r)) = ^REL r)”),
-                 REWRITE_TAC[ty_bijections]
-                 THEN REWRITE_TAC[GSYM ty_bijections]
-                 THEN BETA_TAC
-                 THEN GEN_TAC
-                 THEN EXISTS_TAC rtm
-                 THEN REFL_TAC)
-
-(* We now use standard functions to prove that these bijection functions
-   are one-to-one and onto.  The ABS function is one-to-one on its
-   defined domain.
-*)
-        val cty_REP_one_one = prove_rep_fn_one_one ty_bijections
-        val cty_REP_onto    = prove_rep_fn_onto    ty_bijections
-        val cty_ABS_one_one = prove_abs_fn_one_one ty_bijections
-        val cty_ABS_onto    = prove_abs_fn_onto    ty_bijections
-
-(*
-> val obj_REP_one_one =
-    |- !a a'. (obj_REP a = obj_REP a') = a = a'
-> val obj_REP_onto =
-    |- !r. (\c. ?a. c = ALPHA_obj a) r = (?a. r = obj_REP a)
-> val obj_ABS_one_one =
-    |- !r r'.
-         (\c. ?a. c = ALPHA_obj a) r ==>
-         (\c. ?a. c = ALPHA_obj a) r' ==>
-         ((obj_ABS r = obj_ABS r') = r = r')
-> val obj_ABS_onto =
-    |- !a. ?r. (a = obj_ABS r) /\ (\c. ?a. c = ALPHA_obj a) r
-*)
-
-(* ===================================================================== *)
-(* define function to yield representative objects of the new objects    *)
-(*     ty_REP : nty -> ty, etc.                                         *)
-(* We use the Hilbert choice operator (@) to not predjudice the choice.  *)
-(* ===================================================================== *)
-
-        val ty_REP = mk_var{Name = rep,
-                            Ty = mk_type{Tyop="fun", Args=[nty,ty]}}
-        val ty_REP_def =
-            new_definition(rep ^ "_def",
-               “^ty_REP a = $@ (^cty_REP a)”)
-        val ty_REP = (#Rator o dest_comb o #lhs o dest_eq
-                       o #Body o dest_forall o concl) ty_REP_def
-
-(* ===================================================================== *)
-(* define function to yield new objects from the base objects            *)
-(*     ty_ABS : ty -> nty, etc.                                         *)
-(* We use the one-argument version of the curried equivalence relation.  *)
-(* ===================================================================== *)
-
-        val ty_ABS = mk_var{Name = abs,
-                            Ty = mk_type{Tyop="fun", Args=[ty,nty]}}
-        val ty_ABS_def =
-            new_definition(abs ^ "_def",
-               “^ty_ABS r = ^cty_ABS (^REL r)”)
-        val ty_ABS = (#Rator o dest_comb o #lhs o dest_eq
-                       o #Body o dest_forall o concl) ty_ABS_def
-
-(* ======================= *)
-(*       L E M M A S       *)
-(* ======================= *)
-
-        val r'tm = mk_var{Name="r'", Ty=ty}
-        val r'cl = mk_comb{Rator=REL, Rand=r'tm}
-        val rr'cl = mk_comb{Rator=rcl, Rand=r'tm}
-        val req = mk_eq{lhs=rcl, rhs=r'cl}
-
-        val atm = mk_var{Name="a", Ty=nty}
-        val ABS_REP = CONJUNCT1 ty_bijections
-        val REP_ABS = CONJUNCT2 ty_bijections
-
-        val ty_REP_REL =
-            let val th1 =
-                EQ_MP (SYM (SPEC (mk_comb{Rator=cty_REP, Rand=atm}) REP_ABS))
-                      (AP_TERM cty_REP (SPEC atm ABS_REP))
-            in
-                GEN atm (EQ_MP (BETA_CONV (concl th1)) th1)
-            end
-
-(* Alternative proof:
-        val ty_REP_REL =
-            (GEN atm o BETA_RULE o REWRITE_RULE[GSYM REP_ABS]
-               o AP_TERM cty_REP o SPEC atm) ABS_REP
-*)
-
-        val cty_ABS_11 =
-            let val aeq = mk_eq{lhs=mk_comb{Rator=cty_ABS, Rand=rcl},
-                                rhs=mk_comb{Rator=cty_ABS, Rand=r'cl}}
-                val th1 = AP_TERM cty_REP (ASSUME aeq)
-                val th2 = CONJUNCT2 cty_ABS_REP
-                val x = mk_var{Name="x", Ty=cty}
-                val y = mk_var{Name="y", Ty=cty}
-                val th3 = SUBST [x |-> SPEC rtm th2, y |-> SPEC r'tm th2]
-                                (mk_eq{lhs=x, rhs=y})
-                                th1
-                val th4 = DISCH_ALL th3
-                val th5 = DISCH_ALL (AP_TERM cty_ABS (ASSUME req))
-            in
-                GENL[rtm,r'tm] (IMP_ANTISYM_RULE th4 th5)
-            end;
-
-(* Alternative proof:
-        val cty_ABS_11 = TAC_PROOF(([],
-            (“!r r'. (^cty_ABS (^REL r) = ^cty_ABS (^REL r')) =
-                       (^REL r = ^REL r')”)),
-            GEN_TAC THEN GEN_TAC
-            THEN EQ_TAC
-            THENL
-              [ DISCH_THEN (MP_TAC o AP_TERM cty_REP)
-                THEN REWRITE_TAC[cty_ABS_REP],
-
-                DISCH_THEN REWRITE_THM
-              ])
-*)
-
-        val ty_REL_SELECT_REL =
-            let val th1 = MP (ISPECL [rcl,rtm] SELECT_AX) (SPEC rtm refl)
-                val th2 = SPECL[rtm,#Rand(dest_comb(concl th1))] equiv
-            in
-                GEN rtm (SYM (EQ_MP th2 th1))
-            end;
-
-(* Alternative proof:
-        val ty_REL_SELECT_REL =
-            (SYM o REWRITE_RULE[equiv])
-             (MP (ISPECL [rcl,rtm] SELECT_AX) (SPEC rtm refl))
-*)
-
-
-(* ================================================= *)
-(*       Q U O T I E N T   P R O P E R T I E S       *)
-(* ================================================= *)
-
-(* Prove the quotient type bijection properties for ABS and REP. *)
-
-        val ABS_REP_tm = (“^ty_ABS (^ty_REP a)”)
-        val inst = ASSUME (“^cty_REP a = ^rcl”)
-        val REP_a_tm = mk_comb{Rator=ty_REP, Rand=atm}
-
-        val ty_ABS_REP =
-            (GEN atm o
-             REWRITE_RULE[ABS_REP] o
-             CHOOSE (rtm, SPEC atm ty_REP_REL) o
-             REWRITE_RULE[SYM inst] o
-             REWRITE_RULE[ty_REL_SELECT_REL] o
-             REWRITE_RULE[inst])
-               (REWRITE_CONV[ty_ABS_def,ty_REP_def] ABS_REP_tm)
-
-        val ty_REP_REFL = GEN atm (SPEC REP_a_tm refl)
-
-        val equiv_ty_ABS = TAC_PROOF(([],
-            (“!r r'. ^REL r r' =
-                       ^REL r r /\ ^REL r' r' /\ (^ty_ABS r = ^ty_ABS r')”)),
-            GEN_TAC THEN GEN_TAC
-            THEN PURE_REWRITE_TAC[EQT_INTRO (SPEC rtm refl)]
-            THEN REWRITE_TAC[ty_ABS_def]
-            THEN REWRITE_TAC[cty_ABS_11]
-            THEN CONV_TAC (LAND_CONV (REWR_CONV equiv))
-            THEN REFL_TAC)
-
-(* alternative proofs:
-
-            GEN_TAC THEN GEN_TAC
-            THEN REWRITE_TAC[GSYM cty_REP_one_one]
-            THEN REWRITE_TAC[ty_ABS_def]
-            THEN REWRITE_TAC[cty_ABS_REP]
-            THEN REWRITE_TAC[equiv])
-
-        val equiv_ty_ABS =
-            (GEN rtm o GEN r'tm o SYM o
-                 REWRITE_CONV[ty_ABS_def,cty_ABS_11,equiv])
-                         (“^ty_ABS r = ^ty_ABS r'”)
-*)
-
-        val QUOTIENT_thm = REWRITE_RULE[GSYM QUOTIENT_def]
-                           (LIST_CONJ [ty_ABS_REP, ty_REP_REFL, equiv_ty_ABS])
-
-    in
-       save_thm(tyname^"_QUOTIENT", QUOTIENT_thm)
-    end
-    end;
-
-End of code for a quotient from a normal equivalence. *)
-
 
 
 (* Equivalence theorems have the form:
@@ -1033,31 +777,15 @@ fun mkRELty ty = ty --> ty --> bool;
 fun identity_equiv ty =
     INST_TYPE [{redex=alpha, residue=ty}] IDENTITY_EQUIV;
 
-fun pair_equiv left_EQUIV right_EQUIV =
-    MATCH_MP (MATCH_MP PAIR_EQUIV left_EQUIV) right_EQUIV;
-
-fun sum_equiv left_EQUIV right_EQUIV =
-    MATCH_MP (MATCH_MP SUM_EQUIV left_EQUIV) right_EQUIV;
-
-fun list_equiv elem_EQUIV =
-    MATCH_MP LIST_EQUIV elem_EQUIV;
-
-fun option_equiv elem_EQUIV =
-    MATCH_MP OPTION_EQUIV elem_EQUIV;
-
-
 fun find_base tm = (find_base o #conseq o dest_imp o snd o strip_forall) tm
                    handle _ => tm
 
 fun equiv_type th =
     (fst o dom_rng o type_of o rand o find_base o concl) th
  (*   (#Ty o dest_var o #Bvar o dest_forall o find_base o concl) th *)
-                  handle e => raise HOL_ERR {
-                     origin_structure = "quotient",
-                     origin_function  = "equiv_type",
-                     message ="Invalid structure of equivalence theorem:\n"
-                                ^ thm_to_string th ^ "\n"
-                  }
+                  handle e => raise mk_HOL_ERR "quotient" "equiv_type"
+                    ("Invalid structure of equivalence theorem:\n"
+                      ^ thm_to_string th ^ "\n")
 
 fun make_equiv equivs tyop_equivs ty =
     let val base_tys = map equiv_type equivs
@@ -1098,39 +826,14 @@ fun make_equiv equivs tyop_equivs ty =
                handle _ => identity_equiv ty
     in
        main_make_equiv ty
-       handle _ =>raise HOL_ERR {
-                                   origin_structure = "quotient",
-                                   origin_function  = "make_equiv",
-                                   message = "Could not form the " ^
-                                             "equivalence theorem for " ^
-                                             type_to_string ty
-                                }
+       handle _ => raise mk_HOL_ERR "quotient" "make_equiv"
+        ("Could not form the equivalence theorem for " ^ type_to_string ty)
     end;
 
 
 
 fun identity_quotient ty =
     INST_TYPE [{redex=alpha, residue=ty}] IDENTITY_QUOTIENT;
-
-
-fun pair_quotient left_QUOTIENT right_QUOTIENT =
-    REWRITE_RULE[PAIR_REL_EQ,PAIR_MAP_I]
-     (C_MATCH_MP2 PAIR_QUOTIENT left_QUOTIENT right_QUOTIENT);
-
-
-fun sum_quotient left_QUOTIENT right_QUOTIENT =
-    REWRITE_RULE[SUM_REL_EQ,SUM_MAP_I]
-     (C_MATCH_MP2 SUM_QUOTIENT left_QUOTIENT right_QUOTIENT);
-
-
-fun list_quotient elem_QUOTIENT =
-    REWRITE_RULE[LIST_REL_EQ,LIST_MAP_I]
-     (C_MATCH_MP LIST_QUOTIENT elem_QUOTIENT);
-
-
-fun option_quotient base_QUOTIENT =
-    REWRITE_RULE[OPTION_REL_EQ,OPTION_MAP_I]
-     (C_MATCH_MP OPTION_QUOTIENT base_QUOTIENT);
 
 
 fun fun_quotient domain_QUOTIENT range_QUOTIENT =
@@ -1149,14 +852,11 @@ fun pth s th = if !chatting then (print s; print_thm th; print "\n"; th)
                             else th;
 (**)
 
-fun quotient_type th = (hd o tl o #Args o dest_type o type_of
-                            o rand o find_base o concl) th
-                       handle e => raise HOL_ERR {
-                          origin_structure = "quotient",
-                          origin_function  = "quotient_type",
-                          message ="Invalid structure of quotient theorem:\n"
-                                     ^ thm_to_string th ^ "\n"
-                       }
+fun quotient_type th =
+  (hd o tl o #Args o dest_type o type_of
+    o rand o find_base o concl) th
+  handle e => raise mk_HOL_ERR "quotient" "quotient_type"
+    ("Invalid structure of quotient theorem:\n" ^ thm_to_string th ^ "\n")
 
 fun make_hyp_quotient hyp_quots quots tyop_quots ty =
     let val base_tys = map quotient_type quots
@@ -1377,16 +1077,14 @@ fun check_quotient_ty tys_quot_ths ty =
                                       (* (#Tyop(dest_type rty) = Tyop) *)
             val ty_qty = tryfind is_ty_qth tys_quot_ths
                          handle HOL_ERR e =>
-                          raise HOL_ERR {
-                           origin_structure = "quotient",
-                           origin_function  = "check_quotient_ty",
-                           message = "Could not lift the type `" ^
+                          raise ERR "check_quotient_ty"
+                              ("Could not lift the type `" ^
                                type_to_string ty ^ "`;\n" ^
                                "Missing quotient extension theorem for type constructor " ^
                                "\"" ^ Tyop ^ "\".\n" ^
                                "Please prove and add to \"tyop_quotients\" inputs for quotient package.\n " (* ^
                                exn_to_string (HOL_ERR e) *)
-                          }
+                              )
          in ty
          end
 
@@ -1660,15 +1358,11 @@ fun lift_theorem_by_quotients quot_ths equivs tyop_equivs
                                              handle HOL_ERR _ => false
                                )   tyop_simps
                             orelse
-                          Raise (HOL_ERR {
-                           origin_structure = "quotient",
-                           origin_function  = "check_simp",
-                           message =
-                               "Missing quotient simplification theorem:\n" ^
+                          Raise (mk_HOL_ERR "quotient" "check_simp"
+                              ("Missing quotient simplification theorem:\n" ^
                                with_flag (show_types, true)
                                    thm_to_string (mk_oracle_thm "quotient" ([],tm)) ^ "\n" ^
-                               "Please prove and add to \"tyop_simps\" inputs for quotient package.\n "
-                          })
+                               "Please prove and add to \"tyop_simps\" inputs for quotient package.\n "))
 
         fun check_tyop_simps_present tyop =
             let val (taus,ksis,Rs,abss,reps,conseq) = strip_QUOTIENT_cond (concl tyop)
@@ -1748,11 +1442,7 @@ fun lift_theorem_by_quotients quot_ths equivs tyop_equivs
         let val (tmtheta,tytheta) = match_term pat ob
             val pat' = inst tytheta pat
         in if pat' ~~ ob then (tmtheta,tytheta)
-           else raise raise HOL_ERR {
-                               origin_structure = "quotient",
-                               origin_function  = "match_ty_term",
-                               message = "not a match"
-                                    }
+           else raise ERR "match_ty_term" "not a match"
         end
 
 (* For each constant being lifted, check that its respectfulness theorem
@@ -1801,15 +1491,12 @@ fun lift_theorem_by_quotients quot_ths equivs tyop_equivs
                in
                    GENL margs (SPEC mterm mrefl)
                end
-               handle e => raise HOL_ERR
-                            { origin_structure = "quotient",
-                              origin_function  = "make_missing_respects",
-                              message = "Missing respectfulness theorem for " ^
+               handle e => raise ERR "make_missing_respects"
+                              ("Missing respectfulness theorem for " ^
                                         term_to_string mfunc ^ ".\n" ^
                                with_flag (show_types, true)
                                    thm_to_string (mk_oracle_thm "quotient" ([], fake_respects mfunc)) ^ "\n" ^
-                               "Please prove and add to \"respects\" inputs for quotient package.\n "
-                            }
+                               "Please prove and add to \"respects\" inputs for quotient package.\n ")
         in
            map make_missing_respects missing @ respects
         end
@@ -2200,13 +1887,13 @@ fun lift_theorem_by_quotients quot_ths equivs tyop_equivs
            end
 
         fun mk_R_tm tau = mk_var {Name="R" ^ base_vartype tau,
-                                  Ty=  tau --> tau --> bool}
+                                  Ty= tau --> tau --> bool}
 
         fun mk_abs_tm (tau,ksi) = mk_var {Name="abs" ^ base_vartype tau,
-                                          Ty=  tau --> ksi}
+                                          Ty= tau --> ksi}
 
         fun mk_rep_tm (tau,ksi) = mk_var {Name="rep" ^ base_vartype tau,
-                                          Ty=  ksi --> tau}
+                                          Ty= ksi --> tau}
 
         val quotient_tm = (fst o strip_comb o lhs o snd o strip_forall o concl) QUOTIENT_def
 
@@ -2299,24 +1986,18 @@ fun lift_theorem_by_quotients quot_ths equivs tyop_equivs
            else if is_var tm then []
            else let val {Name=nm, Ty= ty} = dest_const tm
                     val (atys,rty) = strip_type ty
-                    fun err1 () = HOL_ERR {
-                           origin_structure = "quotient",
-                           origin_function  = "findops",
-                           message = "Missing polymorphic respectfulness theorem for `" ^
+                    fun err1 () = ERR "findops"
+                             ("Missing polymorphic respectfulness theorem for `" ^
                                          term_to_string tm ^ "`.\n" ^
                                with_flag (show_types, true)
                                    thm_to_string (mk_oracle_thm "quotient" ([], fake_poly_respects tm)) ^ "\n" ^
-                               "Please prove and add to \"poly_respects\" inputs for quotient package.\n "
-                        }
-                    fun err2 () = HOL_ERR {
-                           origin_structure = "quotient",
-                           origin_function  = "findops",
-                           message = "Missing polymorphic preservation theorem for `" ^
+                               "Please prove and add to \"poly_respects\" inputs for quotient package.\n ")
+                    fun err2 () = ERR "findops"
+                             ("Missing polymorphic preservation theorem for `" ^
                                          term_to_string tm ^ "`.\n" ^
                                with_flag (show_types, true)
                                    thm_to_string (mk_oracle_thm "quotient" ([], fake_poly_preserves tm)) ^ "\n" ^
-                               "Please prove and add to \"poly_preserves\" inputs for quotient package.\n "
-                        }
+                               "Please prove and add to \"poly_preserves\" inputs for quotient package.\n ")
                 in if is_rep_ty ty
                    then if mem (#Name(dest_const tm)) ("respects" :: RELnms @ tyop_RELnms)
                                 orelse exists (can (match_ty_term tm)) newdeffuncs
@@ -2419,7 +2100,7 @@ would include
                     tyop_ty_ths
 
         fun insert_cache ty qth =
-            (quotient_cache := Map.insert(!quotient_cache, ty, qth); qth)
+            (quotient_cache := Typetab.update (ty, qth) (!quotient_cache); qth)
 
 (* The function get_quotient produces the quotient theorem for type ty. *)
 
@@ -2449,7 +2130,7 @@ would include
 
         fun get_quotient1 ty =
            if !caching then
-              case Map.peek(!quotient_cache, ty) of
+              case Typetab.lookup (!quotient_cache) ty of
                  SOME th => (hits := !hits + 1; th)
                | NONE    => (misses := !misses + 1;
                              insert_cache ty (get_quotient ty))
@@ -2627,12 +2308,9 @@ corresponding quotient theorem antecedents are resolvable.
           in
             tryfind (get_higher_df_op tm) polydfs
           end
-          handle e => raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "MK_DEF_OP",
-                  message = "Missing polymorphic preservation theorem for " ^
-                                term_to_string tm ^ ".\n"
-                }
+          handle e => raise ERR "MK_DEF_OP"
+            ("Missing polymorphic preservation theorem for " ^
+              term_to_string tm ^ ".\n")
 
 (* The tactic LAMBDA_RSP_TAC:
 
@@ -2821,7 +2499,7 @@ R2 (f[x']) (g[y']).
               (* (f x) = ^(v(f) v(x)) *)
             prove (gl,
             REPEAT GEN_TAC
-            THEN REWRITE_TAC[FUN_MAP,FUN_MAP_I,(*SET_MAP_def,*)I_THM,PAIR_MAP]
+            THEN REWRITE_TAC[FUN_MAP,FUN_MAP_I,(*SET_MAP_def,*)I_THM]
             THEN REPEAT (CHANGED_TAC
                    (CONV_TAC (DEPTH_CONV BETA_CONV)
                     THEN REWRITE_TAC[]))
@@ -3122,14 +2800,11 @@ R2 (f[x']) (g[y']).
               th
           end
           handle _ =>
-              raise HOL_ERR {
-                    origin_structure = "quotient",
-                    origin_function  = "TRANSFORM_CONV",
-                    message = "Could not convert to higher types the term\n" ^
+              raise ERR "TRANSFORM_CONV"
+                    ("Could not convert to higher types the term\n" ^
                         term_to_string tm ^ "\n" ^
                         "May be missing a respects or a poly_respects theorem"
-                        ^ " for some constant in it."
-                   }
+                        ^ " for some constant in it.")
 
 
 (* ------------------------------------------------------------------------- *)
@@ -3152,8 +2827,7 @@ R2 (f[x']) (g[y']).
 
         fun regularize tm =
           let val ty = type_of tm
-              val regularize_abs = (pairLib.mk_pabs o (I ## regularize)
-                                                   o pairLib.dest_pabs)
+              val regularize_abs = mk_pabs o (I ## regularize) o dest_pabs
           in
             (* abstraction *)
             if is_abs tm then
@@ -3437,14 +3111,11 @@ R2 (f[x']) (g[y']).
                     in
                       MP rth th
                     end
-                    handle _ => raise HOL_ERR {
-                         origin_structure = "quotient",
-                         origin_function  = "REGULARIZE",
-                         message = "Could not lift the irregular theorem\n" ^
+                    handle _ => raise ERR "REGULARIZE"
+                           ("Could not lift the irregular theorem\n" ^
                              thm_to_string th ^ "\n" ^
                              "May try proving and then lifting\n" ^
-                             term_to_string tm'
-                   }
+                             term_to_string tm')
                end
 
 
@@ -3468,14 +3139,11 @@ R2 (f[x']) (g[y']).
                     in () end
              else ();
              if is_rep_ty (type_of tm) then
-                   raise HOL_ERR {
-                         origin_structure = "quotient",
-                         origin_function  = "check_high",
-                         message = "Could not lift the term " ^
-                             term_to_string tm ^ "\n" ^
-                             "May be missing a constant to be lifted, " ^
-                             "or a poly_preserves theorem."
-                   }
+               raise ERR "check_high"
+                 ("Could not lift the term " ^
+                   term_to_string tm ^ "\n" ^
+                   "May be missing a constant to be lifted, " ^
+                   "or a poly_preserves theorem.")
              else ()
             )
 
@@ -3580,13 +3248,10 @@ R2 (f[x']) (g[y']).
                           Ho_Rewrite.PURE_REWRITE_RULE LAM_APP_DEFS o
                           QUOT_REWRITE_RULE [GSYM EQUALS_PRS] o
                           CONV_RULE TRANSFORM_CONV) thr
-                         handle e => raise HOL_ERR {
-                                   origin_structure = "quotient",
-                                   origin_function  = "LIFT_RULE",
-                                   message = "Could not lift the theorem\n" ^
+                         handle e => raise ERR "LIFT_RULE"
+                                   ("Could not lift the theorem\n" ^
                                        thm_to_string th ^ "\n" ^
-                                       exn_to_string e
-                                  }
+                                       exn_to_string e)
                          end)
 
     in
@@ -3636,12 +3301,9 @@ fun check_respects_tm tm =
 fun check_respects th =
    null (Term.free_vars (concl th)) andalso
    check_respects_tm (concl th)
-   handle e => raise HOL_ERR {
-                        origin_structure = "quotient",
-                        origin_function  = "check_respects",
-                        message = "The following theorem is not of the right form for a respectfulness theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                                  };
+   handle e => raise ERR "check_respects"
+     ("The following theorem is not of the right form for a respectfulness theorem:\n" ^
+       thm_to_string th ^ "\n")
 
 
 (* --------------------------------------------------------------- *)
@@ -3659,12 +3321,9 @@ fun check_poly_respects th =
        null (Term.free_vars (concl th)) andalso
        check_respects_tm uncond_tm
    end
-   handle e => raise HOL_ERR {
-                        origin_structure = "quotient",
-                        origin_function  = "check_poly_respects",
-                        message = "The following theorem is not of the right form for a polymorphic respectfulness\ntheorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                                  };
+   handle e => raise ERR "check_poly_respects"
+     ("The following theorem is not of the right form for a polymorphic respectfulness\ntheorem:\n" ^
+       thm_to_string th ^ "\n")
 
 local
        fun any_type_var_in tyl ty = exists (C type_var_in ty) tyl
@@ -3706,12 +3365,9 @@ fun check_poly_preserves th =
    in
            true
    end
-   handle e => raise HOL_ERR {
-                        origin_structure = "quotient",
-                        origin_function  = "check_poly_preserves",
-                        message = "The following theorem is not of the right form for a polymorphic preservation\ntheorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                                  }
+   handle e => raise ERR "check_poly_preserves"
+     ("The following theorem is not of the right form for a polymorphic preservation\ntheorem:\n" ^
+       thm_to_string th ^ "\n")
 end;
 
 
@@ -3860,46 +3516,77 @@ fun define_quotient_types {types, defs, tyop_equivs, tyop_quotients,tyop_simps,
     new_thms
   end;
 
+(* Five(!) different flavours of result to appeal to as part of the machinery
+   here :
+
+  equiv: equivalance relations lift through REL operators:
+          |- (/\_i EQUIV Ri) ==> EQUIV (OP_REL R1 ... Rn)
+  quotient:
+    |- (/\_i QUOTIENT Ri absi repi) ==>
+       QUOTIENT (OP_REL R1 ... Rn) (OP_MAP abs1 ... absn) (OP_MAP rep1 ... repn)
+  simps:  |- OP_MAP I ... I = I  &   |- OP_REL (=) ... (=) = (=)
+  rsp: "respects"
+       (* per interesting constant f with type as range or arg *)
+       |- (/\_i QUOTIENT Ri absi repi) /\ (* one per tyvar in f's type *)
+          (/\_k Rj ak bk) (* Rj depends on the type of ak, can be equality and
+                             omitted; can be compound, e.g. Ra ===> Rb *) ==>
+          OP_REL R1 ... Rn (f a1 .. am) (f b1 .. bm)
+  prs: "poly-preserves"
+       (* per interesting constant f with type as range or arg *)
+       |- (/\_i QUOTIENT Ri absi repi) ==> (* one per tyvar in f's type *)
+          f a1 a2 = map_r (f (map_1 a1) (map_2 a2))
+       (* where map's are derived/compounds based on types, and can always
+          be omitted to force equality *)
+*)
+
+(* quotient *)
+val {merge = quotient_merge, DB = quotient_DB, export = quotient_export,
+     temp_exclude = quotient_exclude, getDB = quotient_getDB,
+     temp_setDB = quotient_setDB, ...} =
+    ThmSetData.export_list {settype = "quotient", initial = [FUN_QUOTIENT]}
+(* equiv *)
+val {merge = quotient_equiv_merge, DB = quotient_equiv_DB,
+     export = quotient_equiv_export,
+     temp_exclude = quotient_equiv_exclude, getDB = quotient_equiv_getDB,
+     temp_setDB = quotient_equiv_setDB, ...} =
+    ThmSetData.export_list {settype = "quotient_equiv", initial = []}
+(* simp *)
+val {merge = quotient_simp_merge, DB = quotient_simp_DB,
+     export = quotient_simp_export,
+     temp_exclude = quotient_simp_exclude, getDB = quotient_simp_getDB,
+     temp_setDB = quotient_simp_setDB, ...} =
+    ThmSetData.export_list {settype = "quotient_simp",
+                            initial = [FUN_MAP_I, FUN_REL_EQ]}
+(* PRS, poly_preserves *)
+val {merge = quotient_prs_merge, DB = quotient_prs_DB,
+     export = quotient_prs_export,
+     temp_exclude = quotient_prs_exclude, getDB = quotient_prs_getDB,
+     temp_setDB = quotient_prs_setDB, ...} =
+    ThmSetData.export_list {settype = "quotient_prs",
+                            initial = [FORALL_PRS, EXISTS_PRS,
+                                       EXISTS_UNIQUE_PRS, ABSTRACT_PRS,
+                                       COND_PRS, LET_PRS,
+                                       literal_case_PRS, I_PRS, K_PRS, o_PRS,
+                                       C_PRS, W_PRS]}
+val {merge = quotient_rsp_merge, DB = quotient_rsp_DB,
+     export = quotient_rsp_export,
+     temp_exclude = quotient_rsp_exclude, getDB = quotient_rsp_getDB,
+     temp_setDB = quotient_rsp_setDB, ...} =
+    ThmSetData.export_list {settype = "quotient_rsp",
+                            initial = [RES_FORALL_RSP, RES_EXISTS_RSP,
+                                       RES_EXISTS_EQUIV_RSP, RES_ABSTRACT_RSP,
+                                       COND_RSP, LET_RSP, literal_case_RSP,
+                                       I_RSP, K_RSP, o_RSP, C_RSP, W_RSP]}
+    (* ?? EQUALS, LAMBDA, RES_FORALL, RES_EXISTS, APPLY ?? *)
 
 fun define_quotient_types_full_rule {types, defs, tyop_equivs, tyop_quotients,
                tyop_simps, respects, poly_preserves, poly_respects} =
   let
-      val tyop_equivs = tyop_equivs @
-                        [LIST_EQUIV, PAIR_EQUIV, SUM_EQUIV, OPTION_EQUIV]
-      val tyop_quotients = tyop_quotients @
-                        [LIST_QUOTIENT, PAIR_QUOTIENT,
-                            SUM_QUOTIENT, OPTION_QUOTIENT, FUN_QUOTIENT]
-      val tyop_simps = tyop_simps @
-                       [LIST_MAP_I, LIST_REL_EQ, PAIR_MAP_I, PAIR_REL_EQ,
-                        SUM_MAP_I, SUM_REL_EQ, OPTION_MAP_I, OPTION_REL_EQ,
-                        FUN_MAP_I, FUN_REL_EQ]
-      val poly_preserves = poly_preserves @
-                           [CONS_PRS, NIL_PRS, MAP_PRS, LENGTH_PRS, APPEND_PRS,
-                            FLAT_PRS, REVERSE_PRS, FILTER_PRS, NULL_PRS,
-                            SOME_EL_PRS, ALL_EL_PRS, FOLDL_PRS, FOLDR_PRS,
-                            FST_PRS, SND_PRS, COMMA_PRS, CURRY_PRS,
-                            UNCURRY_PRS, PAIR_MAP_PRS,
-                            INL_PRS, INR_PRS, ISL_PRS, ISR_PRS, SUM_MAP_PRS,
-                            NONE_PRS, SOME_PRS, IS_SOME_PRS, IS_NONE_PRS,
-                            OPTION_MAP_PRS,
-                            FORALL_PRS, EXISTS_PRS,
-                            EXISTS_UNIQUE_PRS, ABSTRACT_PRS,
-                            COND_PRS, LET_PRS, literal_case_PRS,
-                            I_PRS, K_PRS, o_PRS, C_PRS, W_PRS]
-      val poly_respects  = poly_respects @
-                           [CONS_RSP, NIL_RSP, MAP_RSP, LENGTH_RSP, APPEND_RSP,
-                            FLAT_RSP, REVERSE_RSP, FILTER_RSP, NULL_RSP,
-                            SOME_EL_RSP, ALL_EL_RSP, FOLDL_RSP, FOLDR_RSP,
-                            FST_RSP, SND_RSP, COMMA_RSP, CURRY_RSP,
-                            UNCURRY_RSP, PAIR_MAP_RSP,
-                            INL_RSP, INR_RSP, ISL_RSP, ISR_RSP, SUM_MAP_RSP,
-                            NONE_RSP, SOME_RSP, IS_SOME_RSP, IS_NONE_RSP,
-                            OPTION_MAP_RSP,
-                            RES_FORALL_RSP, RES_EXISTS_RSP,
-                            RES_EXISTS_EQUIV_RSP, RES_ABSTRACT_RSP,
-                            COND_RSP, LET_RSP, literal_case_RSP,
-                            I_RSP, K_RSP, o_RSP, C_RSP, W_RSP]
-(* ?? EQUALS, LAMBDA, RES_FORALL, RES_EXISTS, APPLY ?? *)
+      val tyop_equivs = tyop_equivs @ quotient_equiv_getDB()
+      val tyop_quotients = tyop_quotients @ quotient_getDB()
+      val tyop_simps = tyop_simps @ quotient_simp_getDB()
+      val poly_preserves = poly_preserves @ quotient_prs_getDB()
+      val poly_respects  = poly_respects @ quotient_rsp_getDB()
   in
     define_quotient_types_rule
           {types=types, defs=defs,
@@ -3954,15 +3641,16 @@ fun define_quotient_types_std {types, defs, respects, old_thms} =
 
 
 fun define_equivalence_type {name, equiv, defs, welldefs, old_thms} =
-    define_quotient_types {types=[{name=name, equiv=equiv}],
-                           defs=defs,
-                           tyop_equivs=[],
-                           tyop_quotients=[FUN_QUOTIENT],
-                           tyop_simps=[FUN_REL_EQ,FUN_MAP_I],
-                           respects=welldefs,
-                           poly_preserves=[FORALL_PRS,EXISTS_PRS],
-                           poly_respects=[RES_FORALL_RSP,RES_EXISTS_RSP],
-                           old_thms=old_thms};
+    define_quotient_types_full {
+      types=[{name=name, equiv=equiv}],
+      defs=defs,
+      tyop_equivs=[],
+      tyop_quotients=[FUN_QUOTIENT],
+      tyop_simps=[FUN_REL_EQ,FUN_MAP_I],
+      respects=welldefs,
+      poly_preserves=[FORALL_PRS,EXISTS_PRS],
+      poly_respects=[RES_FORALL_RSP,RES_EXISTS_RSP],
+      old_thms=old_thms};
 
 (* Subset types: *)
 
@@ -3978,12 +3666,9 @@ fun is_inhab th = is_ho_match_term inhab_tm (concl th);
 
 fun check_inhab th =
     is_inhab th orelse
-         raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_inhab",
-                  message = "The following is not a predicate inhabitation theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+      raise ERR "check_inhab"
+        ("The following is not a predicate inhabitation theorem:\n" ^
+          thm_to_string th ^ "\n")
 
 fun dest_con_inhab c =
       let open Psyntax
@@ -4003,12 +3688,9 @@ fun check_con_inhab th =
    in
        null (Term.free_vars (concl th)) orelse raise Match
    end
-   handle e => raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "check_con_inhab",
-                  message = "The following does not have the form of a constant inhabitation theorem:\n" ^
-                                       thm_to_string th ^ "\n"
-                       }
+   handle e => raise ERR "check_con_inhab"
+     ("The following does not have the form of a constant inhabitation theorem:\n" ^
+       thm_to_string th ^ "\n")
 
 
 fun tryconv f (x:'a) = f x handle HOL_ERR _ => x
@@ -4020,7 +3702,7 @@ val inhab = TAC_PROOF (([],``?x:bool list. ~(x = [])``),
 *)
 
 fun define_subset_reln {name:string, inhab:thm} =
-  let open Psyntax bossLib
+  let open Psyntax
       val _ = check_inhab inhab
       val P = tryconv eta_conv (snd (dest_comb (concl inhab)))
       val ty = fst (dom_rng (type_of P)) (* P : ty -> bool *)
@@ -4092,12 +3774,9 @@ fun prove_subset_respects Rdefs =
       val PRs = map dest_Rdef Rdefs
       val (Ps,Rcons) = unzip PRs
       fun find_R [] tm =
-            raise HOL_ERR {
-                  origin_structure = "quotient",
-                  origin_function  = "prove_subset_respects",
-                  message = "Term does not match expected predicates: " ^
-                            term_to_string tm
-                          }
+        raise ERR "prove_subset_respects"
+          ("Term does not match expected predicates: " ^
+            term_to_string tm)
         | find_R ((P,R)::rest) tm =
             let val (x,body) = dest_abs P
                 val (tmS,tyS) = match_term body tm

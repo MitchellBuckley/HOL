@@ -1,5 +1,10 @@
 open HolKernel Parse boolLib simpLib
-open testutils boolSimps BackchainingLib
+open testutils boolSimps
+
+val _ = new_theory "scratch"
+
+val failcount = ref 0
+val _ = diemode := Remember failcount
 
 val _ = Portable.catch_SIGINT()
 
@@ -55,7 +60,7 @@ val _ =
     infloop_protect
       "Abbreviations + ASM_SIMP_TAC"
       test4P
-      (ASM_SIMP_TAC bool_ss [markerSyntax.Abbr`y`])
+      (runtac (VALID (ASM_SIMP_TAC bool_ss [markerSyntax.Abbr`y`])))
       ([``Abbrev (y:'b = f (x : 'a))``, ``P (y:'b) : bool``],
        ``Q (y:'b) : bool``)
 
@@ -71,9 +76,9 @@ val test5P =
                          in
                            aconv (concl th) goal5 andalso null (hyp th)
                          end)
-        (fn g => (EQ_TAC THEN STRIP_TAC THEN
-                  SIMP_TAC bool_ss [Once EQ_SYM_EQ] THEN
-                  POP_ASSUM ACCEPT_TAC) g)
+        (runtac (EQ_TAC THEN STRIP_TAC THEN
+                 SIMP_TAC bool_ss [Once EQ_SYM_EQ] THEN
+                 POP_ASSUM ACCEPT_TAC))
         ([], goal5)
 
 (* test that being a bounded rewrite overrides detection of loops in
@@ -187,7 +192,7 @@ end
 val _ = let
   val asm = ``Abbrev(f = (\x. x /\ y))``
   val g = ([asm], ``p /\ y``)
-  val doit = ASM_SIMP_TAC bool_ss []
+  val doit = runtac (ASM_SIMP_TAC bool_ss [])
   fun geq (asl1, g1) (asl2, g2) =
       aconv g1 g2 andalso
       case (asl1, asl2) of
@@ -385,7 +390,8 @@ val _ = let
                                        | _ => false)
 
       in
-        require_msg testresult printgoals (VALID (ASM_SIMP_TAC pure_ss thl))
+        require_msg testresult printgoals
+                    (runtac (VALID (ASM_SIMP_TAC pure_ss thl)))
                     (asms,i)
       end
   val oneone = Q.prove(‘ONE_ONE f ==> !x y. (f x = f y) <=> (x = y)’,
@@ -426,12 +432,14 @@ val _ = let
         | _ => false
   fun test (msg, tac, ing, outgs) =
       (tprint msg;
-       require_msg (testresult outgs) printgoals (VALID tac) ing)
+       require_msg (testresult outgs) printgoals (runtac tac) ing)
   val T_t = “?x:'a. p”
   fun gs c = global_simp_tac c
   val fs = full_simp_tac
   val gsc = {droptrues=true,elimvars=false,strip=true,oldestfirst=true}
   val gsc' = {droptrues=true,elimvars=false,strip=true,oldestfirst=false}
+  val bss1 = bool_ss ++ rewrites [ASSUME “x = T”]
+  val bss2 = bss1 ++ rewrites [ASSUME “x = F”]
 in
   List.app (ignore o test) [
     ("Abbrev var not rewritten",
@@ -451,8 +459,61 @@ in
     ("fs + Excl (in assumptions)", fs bool_ss [Excl "EXISTS_SIMP"],
      ([“^T_t = X”], “p /\ q”), [([“^T_t = X”], “p /\ q”)]),
     ("gs + Excl (in assumptions)", gs gsc bool_ss [Excl "EXISTS_SIMP"],
-     ([“^T_t = X”], “p /\ q”), [([“^T_t = X”], “p /\ q”)])
+     ([“^T_t = X”], “p /\ q”), [([“^T_t = X”], “p /\ q”)]),
+    ("NoAsms",
+     asm_simp_tac bool_ss [markerLib.NoAsms],
+     ([“x = F”], “p /\ x”), [([“x = F”], “p /\ x”)]),
+    ("IgnAsm",
+     asm_simp_tac bool_ss [markerLib.IgnAsm ‘x = _’],
+     ([“x = F”, “y = T”], “p /\ x /\ y”), [([“x = F”, “y = T”], “p /\ x”)]),
+    ("IgnAsm (sub-match)",
+     asm_simp_tac bool_ss [markerLib.IgnAsm ‘F (* sa *)’],
+     ([“x = F”, “y = T”], “p /\ x /\ y”), [([“x = F”, “y = T”], “p /\ x”)]),
+    ("Rewrite competition: ASM vs arg",
+     asm_simp_tac bool_ss [ASSUME “x = T”],
+     ([“x = F”], “P (x:bool):bool”), [([“x = F”], “P F:bool”)]),
+    ("Rewrite competition: ARG1 vs arg2",
+     asm_simp_tac bool_ss [ASSUME “x = T”, ASSUME “x = F”],
+     ([], “P (x:bool):bool”), [([], “P T:bool”)]),
+    ("Rewrite competition: ASM1 vs asm2",
+     asm_simp_tac bool_ss [],
+     ([“x=T”, “x=F”], “P (x:bool):bool”), [([“x=T”,“x=F”], “P T:bool”)]),
+    ("Rewrite competition: ss1 vs SS2",
+     asm_simp_tac bss2 [],
+     ([], “P(x:bool):bool”), [([], “P F:bool”)]),
+    ("Rewrite competition: ARG vs ss",
+     asm_simp_tac bss1 [ASSUME “x = F”],
+     ([], “P(x:bool):bool”), [([], “P F:bool”)]),
+    ("Rewrite competition: ASM vs ss",
+     asm_simp_tac bss1 [],
+    ([“x = F”], “P(x:bool):bool”), [([“x = F”], “P F:bool”)])
   ]
 end
 
-val _ = Process.exit Process.success
+(* The simpset layer must never use a directive as a rewrite: requirement
+   directives are refused (their marker$ hypothesis would otherwise reach
+   the result), tactic-only ones are dropped. *)
+val _ =
+  let
+    val q = mk_var("q", bool)
+    val th = ASSUME q
+    fun refuses (name, d) =
+        (tprint ("SIMP_CONV refuses " ^ name);
+         shouldfail {testfn = fn l => SIMP_CONV bool_ss l q,
+                     printresult = thm_to_string,
+                     printarg = fn _ => name,
+                     checkexn = check_HOL_ERRexn
+                                  (fn (_, f, _) => f = "process_tags")}
+                    [d])
+    fun drops (name, d, t) =
+        (tprint ("SIMP_CONV drops " ^ name);
+         require_msg (check_result (fn th => rhs (concl th) ~~ t))
+                     thm_to_string (QCONV (SIMP_CONV bool_ss [d])) t)
+  in
+    List.app refuses [("Req0", Req0 th), ("ReqD", ReqD th)];
+    List.app drops [("NoAsms", markerLib.NoAsms, concl markerLib.NoAsms),
+                    ("IgnAsm", markerLib.IgnAsm ‘x = _’,
+                     concl (markerLib.IgnAsm ‘x = _’))]
+  end
+
+val _ = exit_count0 failcount

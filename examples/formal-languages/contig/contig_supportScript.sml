@@ -1,10 +1,8 @@
-open HolKernel Parse boolLib bossLib BasicProvers
-               pred_setLib stringLib
-
-open pairTheory arithmeticTheory listTheory rich_listTheory pred_setTheory
-     stringTheory combinTheory optionTheory;
-
-val _ = new_theory "contig_support";
+Theory contig_support
+Ancestors
+ combin option pair arithmetic list rich_list pred_set string
+Libs
+  BasicProvers pred_setLib stringLib
 
 Theorem SKOLEM_SUBSET :
   !P Q.
@@ -22,13 +20,14 @@ QED
 Theorem strlen_eq :
  !(s:string) m. (STRLEN L = m)
        <=>
-       (m = 0 ∧ L = []) ∨
-       (0 < m ∧ ∃n t. L = CHR n::t ∧ n < 256 ∧ STRLEN t = m - 1)
+       (m = 0 /\ L = []) \/
+       (0 < m /\ ?n t. L = CHR n::t /\ n < 256 /\ STRLEN t = m - 1)
 Proof
  Induct \\ rw[STRLEN_DEF,EQ_IMP_THM]
  >- (Cases_on ‘L’ >> gvs[STRLEN_DEF] >> metis_tac[CHR_ONTO])
  >- gvs[STRLEN_DEF]
  >- gvs[STRLEN_DEF]
+
 QED
 
 Theorem strlen_eq_1 :
@@ -36,7 +35,6 @@ Theorem strlen_eq_1 :
 Proof
  rw [Once strlen_eq] \\ metis_tac[]
 QED
-
 
 (*---------------------------------------------------------------------------*)
 (* Some supporting definitions                                               *)
@@ -184,5 +182,3 @@ Theorem concatPartial_nil :
 Proof
  EVAL_TAC
 QED
-
-val _ = export_theory();

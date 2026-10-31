@@ -13,6 +13,7 @@ sig
   val ind_suffix : string ref
   val def_suffix : string ref
   val const_eq_ref : conv ref
+  val add_defs_to_EVAL : (string * thm) list -> unit
 
   val wfrec_eqns : thry -> term ->
                     {SV : term list,
@@ -41,6 +42,7 @@ sig
 
   val inst_defn  : defn -> (term,term)subst * (hol_type,hol_type)subst -> defn
   val set_reln   : defn -> term -> defn
+  val instantiate_aux : defn -> term -> (thm -> thm) -> thm list
 
   val elim_tcs   : defn -> thm list -> defn
   val simp_tcs   : defn -> conv -> defn
@@ -49,13 +51,25 @@ sig
   val triv_defn  : defn -> bool
   val fetch_eqns : defn -> thm
 
+  val sort_eqns : term -> term list
+
   val been_stored: string * thm -> unit
   val store      : string * thm * thm -> unit
+  val store_at   : DB.thm_src_location -> string * thm * thm -> unit
   val save_defn  : defn -> unit
+  val save_defn_at : DB.thm_src_location -> defn -> unit
 
   val parse_absyn : absyn -> term * string list
   val parse_quote : term quotation -> term list
 
+  (* The name a proof of the termination obligation is reported under,
+     the goal itself, and the validation that turns a proof of that goal
+     into `eqns /\ ind'.  `tgoal' parks the pair in the proof manager
+     and `tprove' discharges it; a reader that only wants to show the
+     goal -- the LSP's goal-state handler -- can do neither, the proof
+     manager being process-global state a request thread must not
+     touch.  Raises `ERR "tgoal"' when there is nothing to prove. *)
+  val tc_obligation : defn -> string * (goal * (thm -> thm))
   val tgoal      : defn -> proofs
   val tprove0    : defn * tactic -> thm * thm
   val tprove     : defn * tactic -> thm * thm
@@ -68,5 +82,14 @@ sig
   val tprove_no_defn : (thm * thm) * tactic -> thm * thm
 
   val SUC_TO_NUMERAL_DEFN_CONV_hook : (term -> thm) ref
+
+  val build_eqns
+     : term quotation ->
+       term list * thm list * (term * term) * (term * thm) list
+  val build_eqns_from_term
+     : term -> term list * thm list * (term * term) * (term * thm) list
+
+  val extract_tcs : term quotation -> (thm * term list * bool) list
+  val extract_tcs_from_term : term -> (thm * term list * bool) list
 
 end

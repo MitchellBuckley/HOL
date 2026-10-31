@@ -4,56 +4,25 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "countModulo";
-
 (* ------------------------------------------------------------------------- *)
-
-
+Theory countModulo
+Ancestors
+  pred_set list arithmetic divides gcd logroot number
+  combinatorics pair option listRange countMonad countMacro
+  bitsize complexity loopIncrease loopDecrease loopDivide
+  loopMultiply
+Libs
+  jcLib monadsyntax
 
 (* val _ = load "jcLib"; *)
-open jcLib;
-
-(* val _ = load "SatisfySimps"; (* for SatisfySimps.SATISFY_ss *) *)
-
-(* Get dependent theories local *)
-(* val _ = load "countMacroTheory"; *)
-open countMonadTheory countMacroTheory;
-
-open bitsizeTheory complexityTheory;
-open loopIncreaseTheory loopDecreaseTheory;
-open loopDivideTheory loopMultiplyTheory;
-
-(* Get dependent theories in lib *)
-(* (* val _ = load "helperNumTheory"; -- in monoidTheory *) *)
-(* (* val _ = load "helperSetTheory"; -- in monoidTheory *) *)
-open helperNumTheory helperSetTheory helperListTheory;
-open helperFunctionTheory;
-
-(* (* val _ = load "dividesTheory"; -- in helperNumTheory *) *)
-(* (* val _ = load "gcdTheory"; -- in helperNumTheory *) *)
-open pred_setTheory listTheory arithmeticTheory;
-open dividesTheory gcdTheory;
-
-(* (* val _ = load "logPowerTheory"; *) *)
-open logrootTheory logPowerTheory;
-
-(*
-(* val _ = load "computeBasicTheory"; *)
-open computeBasicTheory; (* for exp_mod_eqn *)
-*)
-
-(* (* val _ = load "monadsyntax"; *) *)
-open monadsyntax;
-open pairTheory optionTheory;
-open listRangeTheory;
-
 val _ = monadsyntax.enable_monadsyntax();
 val _ = monadsyntax.enable_monad "Count";
 
+val _ = temp_overload_on("SQ", ``\n. n * n``);
+val _ = temp_overload_on("HALF", ``\n. n DIV 2``);
+val _ = temp_overload_on("TWICE", ``\n. 2 * n``);
+val _ = temp_overload_on ("RISING", ``\f. !x:num. x <= f x``);
+val _ = temp_overload_on ("FALLING", ``\f. !x:num. f x <= x``);
 
 (* ------------------------------------------------------------------------- *)
 (* Modulo Computations with Count Monad Documentation                        *)
@@ -163,7 +132,7 @@ val _ = ParseExtras.tight_equality();
 (* ------------------------------------------------------------------------- *)
 
 (* for EVAL IFm *)
-val _ = computeLib.set_skip computeLib.the_compset ``ifM`` (SOME 1);
+val _ = computeLib.set_EVAL_skip ``ifM`` (SOME 1);
 (* EVAL IFm must be in current script, e.g. EVAL ``expn 1 2 3``; *)
 
 (* ------------------------------------------------------------------------- *)
@@ -171,20 +140,21 @@ val _ = computeLib.set_skip computeLib.the_compset ``ifM`` (SOME 1);
 (* ------------------------------------------------------------------------- *)
 
 (* Define modular addition: (x + y) MOD m *)
-val maddM_def = Define`
+Definition maddM_def:
     maddM m x y =
        do
           z <- addM x y;
           modM z m;
        od
-`;
+End
 
 (* Theorem: valueOf(maddM m x y) = (x + y) MOD m *)
 (* Proof: by maddM_def *)
-val maddM_value = store_thm(
-  "maddM_value[simp]",
-  ``!m x y. valueOf(maddM m x y) = (x + y) MOD m``,
-  simp[maddM_def]);
+Theorem maddM_value[simp]:
+    !m x y. valueOf(maddM m x y) = (x + y) MOD m
+Proof
+  simp[maddM_def]
+QED
 
 (* Theorem: stepsOf(maddM m x y) = size (MAX x y) + size (x + y) * size m *)
 (* Proof:
@@ -192,10 +162,11 @@ val maddM_value = store_thm(
    = stepsOf(addM x y) + stepsOf(modM (x + y) m)     by maddM_def
    = size (MAX x y) + (size (x + y) * size m)        by size_max, modM_steps
 *)
-val maddM_steps = store_thm(
-  "maddM_steps[simp]",
-  ``!m x y. stepsOf(maddM m x y) = size (MAX x y) + size (x + y) * size m``,
-  simp[maddM_def, size_max]);
+Theorem maddM_steps[simp]:
+    !m x y. stepsOf(maddM m x y) = size (MAX x y) + size (x + y) * size m
+Proof
+  simp[maddM_def, size_max]
+QED
 
 (* Theorem: stepsOf(maddM m x y) <= size m + (1 + size m) * size (MAX x y) *)
 (* Proof:
@@ -205,9 +176,9 @@ val maddM_steps = store_thm(
     = t + (1 + t) * size m        where t = size (MAX x y)
     = size m + (1 + size m) * t                          by arithmetic
 *)
-val maddM_steps_upper = store_thm(
-  "maddM_steps_upper",
-  ``!m x y. stepsOf(maddM m x y) <= size m + (1 + size m) * size (MAX x y)``,
+Theorem maddM_steps_upper:
+    !m x y. stepsOf(maddM m x y) <= size m + (1 + size m) * size (MAX x y)
+Proof
   rpt strip_tac >>
   assume_tac maddM_steps >>
   first_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
@@ -216,7 +187,8 @@ val maddM_steps_upper = store_thm(
   `t + size m * size (x + y) <= t + size m * (1 + t)` by rw[] >>
   `t + size m * (1 + t) = t + size m + t * size m` by rw[] >>
   `t + size m + t * size m = size m + (1 + size m) * t` by rw[] >>
-  decide_tac);
+  decide_tac
+QED
 
 (* Theorem: stepsOf(maddM m x y) <= 3 * size m * size (MAX x y) *)
 (* Proof:
@@ -226,9 +198,9 @@ val maddM_steps_upper = store_thm(
    <= (1 + 1 + 1) * size m * size (MAX x y)     by dominant term
     = 3 * size m * size (MAX x y)
 *)
-val maddM_steps_bound = store_thm(
-  "maddM_steps_bound",
-  ``!m x y. stepsOf(maddM m x y) <= 3 * size m * size (MAX x y)``,
+Theorem maddM_steps_bound:
+    !m x y. stepsOf(maddM m x y) <= 3 * size m * size (MAX x y)
+Proof
   rpt strip_tac >>
   assume_tac maddM_steps_upper >>
   first_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
@@ -242,25 +214,27 @@ val maddM_steps_bound = store_thm(
   `h <= t` by
     (`h <= size m * h` by rw[] >>
   rw[Abbr`h`, Abbr`t`]) >>
-  decide_tac);
+  decide_tac
+QED
 
 (* ------------------------------------------------------------------------- *)
 
 (* Define modular subtraction: (x - y) MOD m *)
-val msubM_def = Define`
+Definition msubM_def:
     msubM m x y =
        do
           z <- subM x y;
           modM z m;
        od
-`;
+End
 
 (* Theorem: valueOf(msubM m x y) = (x - y) MOD m *)
 (* Proof: by msubM_def *)
-val msubM_value = store_thm(
-  "msubM_value[simp]",
-  ``!m x y. valueOf(msubM m x y) = (x - y) MOD m``,
-  simp[msubM_def]);
+Theorem msubM_value[simp]:
+    !m x y. valueOf(msubM m x y) = (x - y) MOD m
+Proof
+  simp[msubM_def]
+QED
 
 (* Theorem: stepsOf(msubM m x y) = size (MAX x y) + size (x - y) * size m *)
 (* Proof:
@@ -268,10 +242,11 @@ val msubM_value = store_thm(
    = stepsOf(subM x y) + stepsOf(modM (x - y) m) by msubM_def
    = size (MAX x y) + size (x - y) * size m      by size_max, modM_steps
 *)
-val msubM_steps = store_thm(
-  "msubM_steps[simp]",
-  ``!m x y. stepsOf(msubM m x y) = size (MAX x y) + size (x - y) * size m``,
-  simp[msubM_def, size_max]);
+Theorem msubM_steps[simp]:
+    !m x y. stepsOf(msubM m x y) = size (MAX x y) + size (x - y) * size m
+Proof
+  simp[msubM_def, size_max]
+QED
 
 (* Theorem: stepsOf(msubM m x y) <= size m * size x + size (MAX x y) *)
 (* Proof:
@@ -279,14 +254,15 @@ val msubM_steps = store_thm(
     = size (MAX x y) + size (x - y) * size m      by msubM_steps
    <= size (MAX x y) + size x * size m            by size_monotone_le
 *)
-val msubM_steps_upper = store_thm(
-  "msubM_steps_upper",
-  ``!m x y. stepsOf(msubM m x y) <= size m * size x + size (MAX x y)``,
+Theorem msubM_steps_upper:
+    !m x y. stepsOf(msubM m x y) <= size m * size x + size (MAX x y)
+Proof
   rpt strip_tac >>
   assume_tac msubM_steps >>
   last_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
   qabbrev_tac `t = size (MAX x y)` >>
-  rw[size_monotone_le]);
+  rw[size_monotone_le]
+QED
 
 (* Theorem: stepsOf(msubM m x y) <= 2 * size m * size (MAX x y) *)
 (* Proof:
@@ -296,9 +272,9 @@ val msubM_steps_upper = store_thm(
    <= (1 + 1) * size m * size (MAX x y)   by dominant term
     = 2 * size m * size (MAX x y)
 *)
-val msubM_steps_bound = store_thm(
-  "msubM_steps_bound",
-  ``!m x y. stepsOf(msubM m x y) <= 2 * size m * size (MAX x y)``,
+Theorem msubM_steps_bound:
+    !m x y. stepsOf(msubM m x y) <= 2 * size m * size (MAX x y)
+Proof
   rpt strip_tac >>
   assume_tac msubM_steps_upper >>
   first_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
@@ -311,25 +287,27 @@ val msubM_steps_bound = store_thm(
   `h <= t` by
     (`h <= size m * h` by rw[] >>
   rw[Abbr`h`, Abbr`t`]) >>
-  decide_tac);
+  decide_tac
+QED
 
 (* ------------------------------------------------------------------------- *)
 
 (* Define modular multiplication: (x * y) MOD m *)
-val mmulM_def = Define`
+Definition mmulM_def:
     mmulM m x y =
        do
           z <- mulM x y;
           modM z m;
        od
-`;
+End
 
 (* Theorem: valueOf(mmulM m x y) = (x * y) MOD m *)
 (* Proof: by mmulM_def *)
-val mmulM_value = store_thm(
-  "mmulM_value[simp]",
-  ``!m x y. valueOf(mmulM m x y) = (x * y) MOD m``,
-  simp[mmulM_def]);
+Theorem mmulM_value[simp]:
+    !m x y. valueOf(mmulM m x y) = (x * y) MOD m
+Proof
+  simp[mmulM_def]
+QED
 
 (* Theorem: stepsOf(mmulM m x y) = (size x) * (size y) + size (x * y) * size m *)
 (* Proof:
@@ -337,10 +315,11 @@ val mmulM_value = store_thm(
    = stepsOf(mulM x y) + stepsOf(modM (x * y) m)   by mmulM_def
    = (size x) * (size y) + size (x * y) * size m      by multM_steps, modM_steps
 *)
-val mmulM_steps = store_thm(
-  "mmulM_steps[simp]",
-  ``!m x y. stepsOf(mmulM m x y) = (size x) * (size y) + size (x * y) * size m``,
-  simp[mmulM_def]);
+Theorem mmulM_steps[simp]:
+    !m x y. stepsOf(mmulM m x y) = (size x) * (size y) + size (x * y) * size m
+Proof
+  simp[mmulM_def]
+QED
 
 (* Theorem: stepsOf(mmulM m x y) <= size m * size x + size (MAX x y) *)
 (* Proof:
@@ -348,16 +327,17 @@ val mmulM_steps = store_thm(
    <= (size x) (size y) + size (x * y) * size m         by mmulM_steps
    <= (size x) (size y) + (size x + size y) * size m    by size_mult_upper
 *)
-val mmulM_steps_upper = store_thm(
-  "mmulM_steps_upper",
-  ``!m x y. stepsOf(mmulM m x y) <= size m * (size x + size y) + (size x) * (size y)``,
+Theorem mmulM_steps_upper:
+    !m x y. stepsOf(mmulM m x y) <= size m * (size x + size y) + (size x) * (size y)
+Proof
   rpt strip_tac >>
   assume_tac mmulM_steps >>
   last_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
   qabbrev_tac `sx = size x` >>
   qabbrev_tac `sy = size y` >>
   qabbrev_tac `sm = size m` >>
-  rw[size_mult_upper, Abbr`sx`, Abbr`sy`]);
+  rw[size_mult_upper, Abbr`sx`, Abbr`sy`]
+QED
 
 (* Theorem: stepsOf(mmulM m x y) <= 3 * size m * size x * size y *)
 (* Proof:
@@ -367,9 +347,9 @@ val mmulM_steps_upper = store_thm(
    <= (1 + 1 + 1) * size m * size x * size y         by dominant term
     = 3 * size m * size x * size y
 *)
-val mmulM_steps_bound = store_thm(
-  "mmulM_steps_bound",
-  ``!m x y. stepsOf(mmulM m x y) <= 3 * size m * size x * size y``,
+Theorem mmulM_steps_bound:
+    !m x y. stepsOf(mmulM m x y) <= 3 * size m * size x * size y
+Proof
   rpt strip_tac >>
   assume_tac mmulM_steps_upper >>
   last_x_assum (qspecl_then [`m`, `x`, `y`] strip_assume_tac) >>
@@ -379,21 +359,15 @@ val mmulM_steps_bound = store_thm(
   `size m * size x <= t` by rw[Abbr`t`] >>
   `size m * size y <= t` by rw[Abbr`t`] >>
   `size x * size y <= t` by rw[Abbr`t`] >>
-  decide_tac);
+  decide_tac
+QED
 
 (* ------------------------------------------------------------------------- *)
 
 (* Define modular square *)
-val msqM_def = Define`
+Definition msqM_def:
     msqM m x = mmulM m x x
-`;
-
-(* Theorem: valueOf(msqM m x) = (x * x) MOD m *)
-(* Proof: by msqM_def *)
-val msqM_value = store_thm(
-  "msqM_value[simp]",
-  ``!m x. valueOf(msqM m x) = (x * x) MOD m``,
-  simp[msqM_def]);
+End
 
 (* Obtain theorems *)
 val msqM_value = save_thm("msqM_value[simp]",
@@ -520,26 +494,28 @@ QED
          (if EVEN n then 0 else (size b * size (((b * b) ** (HALF n)) MOD m) + size (b * ((b * b) ** (HALF n) MOD m)) * size m)) +
          stepsOf (mexpM m ((b * b) MOD m) (HALF n))
 *)
-val mexpM_steps_thm = store_thm(
-  "mexpM_steps_thm",
-  ``!m b n. stepsOf (mexpM m b n) = if m <= 1 \/ n = 0 then 2 * size m + size n
+Theorem mexpM_steps_thm:
+    !m b n. stepsOf (mexpM m b n) = if m <= 1 \/ n = 0 then 2 * size m + size n
      else 1 + 5 * size n + (size b) ** 2 + 2 * size m + size (b * b) * size m +
           (if EVEN n then 0 else (size b * size (((b * b) ** (HALF n)) MOD m) + size (b * ((b * b) ** (HALF n) MOD m)) * size m)) +
-          stepsOf (mexpM m ((b * b) MOD m) (HALF n))``,
+          stepsOf (mexpM m ((b * b) MOD m) (HALF n))
+Proof
   ho_match_mp_tac (theorem "mexpM_ind") >>
   (rw[] >> simp[Once mexpM_def]) >-
   (Cases_on `m = 0 \/ m = 1` >> simp[]) >-
   (Cases_on `m = 0 \/ m = 1` >> simp[]) >>
-  (Cases_on `m = 0 \/ m = 1` >> simp[]));
+  (Cases_on `m = 0 \/ m = 1` >> simp[])
+QED
 
 (* Theorem: stepsOf (expM b 0) = 1 *)
 (* Proof: by expM_steps_thm *)
-val mexpM_steps_base = store_thm(
-  "mexpM_steps_base",
-  ``!m b n. (stepsOf (mexpM 0 b n) = 2 + size n) /\
+Theorem mexpM_steps_base:
+    !m b n. (stepsOf (mexpM 0 b n) = 2 + size n) /\
            (stepsOf (mexpM 1 b n) = 2 + size n) /\
-           (stepsOf (mexpM m b 0) = 1 + 2 * size m)``,
-  (rw[Once mexpM_steps_thm] >> rw[Once mexpM_steps_thm]));
+           (stepsOf (mexpM m b 0) = 1 + 2 * size m)
+Proof
+  (rw[Once mexpM_steps_thm] >> rw[Once mexpM_steps_thm])
+QED
 
 (*
 mexpM_steps_thm |> SPEC ``m:num`` |> SPEC ``b:num`` |> SPEC ``1`` |> SIMP_RULE (srw_ss()) [EXP_0];
@@ -575,17 +551,25 @@ val it = |- stepsOf (mexpM m b 1) = if m <= 1 then TWICE (size m) + 1
          size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m) +
      if m <= 1 then 0 else stepsOf (mexpM m (SQ b MOD m) (HALF n))
 *)
-val mexpM_steps_by_sqmod_div_loop = store_thm(
-  "mexpM_steps_by_sqmod_div_loop",
-  ``!m. let body b n = if m <= 1 then 2 * size m + size n else
-             1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
-             if EVEN n then 0 else
-                size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m
-        in !b n. stepsOf (mexpM m b n) =
-                 if n = 0 then 1 + 2 * size m else body b n +
-                 if m <= 1 then 0 else stepsOf (mexpM m ((b * b) MOD m) (HALF n))``,
+Theorem mexpM_steps_by_sqmod_div_loop:
+  !m. let body b n =
+          if m <= 1 then 2 * size m + size n
+          else
+            1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
+            if EVEN n then 0
+            else
+              size b * size (SQ b ** HALF n MOD m) +
+              size (b * (SQ b ** HALF n MOD m)) * size m
+      in
+        !b n. stepsOf (mexpM m b n) =
+              if n = 0 then 1 + 2 * size m
+              else body b n +
+                   if m <= 1 then 0
+                   else stepsOf (mexpM m ((b * b) MOD m) (HALF n))
+Proof
   rw[Once mexpM_steps_thm] >>
-  rw[]);
+  rw[]
+QED
 
 (*
 This puts mexpM_steps in the category: halving loop with body cover and exit, RISING sqmod.
@@ -619,14 +603,20 @@ suitable for: loop2_div_mono_count_cover_exit_le
       = 1 + 5sn + sb ** 2 + 2sm + 4 * sm * sb + sm ** 2
       = 1 + 2sm + 5sn + 4 sm sb + sb ** 2 + sm ** 2
 *)
-val mexpM_body_upper = store_thm(
-  "mexpM_body_upper",
-  ``!m. let body b n = if m <= 1 then 2 * size m + size n else
-               1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
-               if EVEN n then 0 else
-                  size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m
-        in !b n. body b n <=
-                 1 + 2 * size m + 5 * size n + 4 * size m * size b + (size b) ** 2 + (size m) ** 2``,
+Theorem mexpM_body_upper:
+  !m. let body b n = if m <= 1 then 2 * size m + size n
+                     else
+                       1 + 5 * size n + size b ** 2 + 2 * size m +
+                       size (SQ b) * size m +
+                       if EVEN n then 0
+                       else
+                         size b * size (SQ b ** HALF n MOD m) +
+                         size (b * (SQ b ** HALF n MOD m)) * size m
+      in
+        !b n. body b n <=
+              1 + 2 * size m + 5 * size n + 4 * size m * size b +
+              (size b) ** 2 + (size m) ** 2
+Proof
   rw[] >>
   (Cases_on `m <= 1` >> rw[]) >| [
     `size (b ** 2) <= 2 * size b` by metis_tac[size_sq_upper, EXP_2] >>
@@ -644,7 +634,8 @@ val mexpM_body_upper = store_thm(
     `size m * size k <= size m * size m` by rw[] >>
     `size m * size m = size m ** 2` by rw[] >>
     decide_tac
-  ]);
+  ]
+QED
 
 (* Theorem: let body b n = if m <= 1 then 2 * size m + size n else
                1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
@@ -659,51 +650,70 @@ val mexpM_body_upper = store_thm(
                                                           by dominant term
     = 14 * (size n) * (size b) ** 2 * (size m) ** 2       by arithmetic
 *)
-val mexpM_body_bound = store_thm(
-  "mexpM_body_bound",
-  ``!m. let body b n = if m <= 1 then 2 * size m + size n else
-               1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
-               if EVEN n then 0 else
-                  size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m
-        in !b n. body b n <= 14 * (size n) * (size b) ** 2 * (size m) ** 2``,
+Theorem mexpM_body_bound:
+  !m. let body b n =
+          if m <= 1 then
+            2 * size m + size n
+          else
+            1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
+            if EVEN n then 0
+            else
+              size b * size (SQ b ** HALF n MOD m) +
+              size (b * (SQ b ** HALF n MOD m)) * size m
+      in
+        !b n. body b n <= 14 * (size n) * (size b) ** 2 * (size m) ** 2
+Proof
   rpt strip_tac >>
   assume_tac mexpM_body_upper >>
-  last_x_assum (qspec_then `m` strip_assume_tac) >>
-  qabbrev_tac `body = \b n. if m <= 1 then 2 * size m + size n else
-               1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
-               if EVEN n then 0 else
-                  size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m` >>
-  `!b n. body b n <= 14 * size n * size b ** 2 * size m ** 2` suffices_by fs[] >>
+  last_x_assum (qspec_then ‘m’ strip_assume_tac) >>
+  qabbrev_tac
+    ‘body = \b n.
+              if m <= 1 then 2 * size m + size n
+              else
+                1 + 5 * size n + size b ** 2 + 2 * size m +
+                size (SQ b) * size m +
+                if EVEN n then 0
+                else
+                  size b * size (SQ b ** HALF n MOD m) +
+                  size (b * (SQ b ** HALF n MOD m)) * size m’ >>
+  ‘!b n. body b n <= 14 * size n * size b ** 2 * size m ** 2’ suffices_by fs[] >>
   rpt strip_tac >>
-  `body b n <= 1 + 2 * size m + 5 * size n + 4 * size m * size b + size b ** 2 + size m ** 2` by metis_tac[] >>
-  qabbrev_tac `sm = size m` >>
-  qabbrev_tac `sb = size b` >>
-  qabbrev_tac `sn = size n` >>
-  qabbrev_tac `t = sn * sb ** 2 * sm ** 2` >>
-  `body b n <= 14 * t` suffices_by rw[Abbr`t`] >>
-  `0 < t` by rw[MULT_POS, Abbr`t`, Abbr`sm`, Abbr`sb`, Abbr`sn`] >>
-  `1 <= t` by decide_tac >>
-  `sm <= t` by
-  (`sm <= sm * (sn * sb ** 2 * sm)` by rw[MULT_POS, Abbr`sn`, Abbr`sb`, Abbr`sm`] >>
-  `sm * (sn * sb ** 2 * sm) = t` by rw[Abbr`t`] >>
+  ‘body b n <=
+    1 + 2 * size m + 5 * size n + 4 * size m * size b +
+    size b ** 2 + size m ** 2’ by metis_tac[] >>
+  qabbrev_tac ‘sm = size m’ >>
+  qabbrev_tac ‘sb = size b’ >>
+  qabbrev_tac ‘sn = size n’ >>
+  qabbrev_tac ‘t = sn * sb ** 2 * sm ** 2’ >>
+  ‘body b n <= 14 * t’ suffices_by rw[Abbr‘t’] >>
+  ‘0 < t’ by rw[MULT_POS, Abbr‘t’, Abbr‘sm’, Abbr‘sb’, Abbr‘sn’] >>
+  ‘1 <= t’ by decide_tac >>
+  ‘sm <= t’ by
+  (‘sm <= sm * (sn * sb ** 2 * sm)’
+     by rw[MULT_POS, Abbr‘sn’, Abbr‘sb’, Abbr‘sm’] >>
+  ‘sm * (sn * sb ** 2 * sm) = t’ by rw[Abbr‘t’] >>
   decide_tac) >>
-  `sn <= t` by
-    (`sn <= sn * (sb ** 2 * sm ** 2)` by rw[MULT_POS, Abbr`sb`, Abbr`sm`] >>
-  `sn * (sb ** 2 * sm ** 2) = t` by rw[Abbr`t`] >>
+  ‘sn <= t’ by
+    (‘sn <= sn * (sb ** 2 * sm ** 2)’ by rw[MULT_POS, Abbr‘sb’, Abbr‘sm’] >>
+  ‘sn * (sb ** 2 * sm ** 2) = t’ by rw[Abbr‘t’] >>
   decide_tac) >>
-  `sm * sb <= t` by
-      (`sm * sb <= sm * sb * (sn * sb * sm)` by rw[MULT_POS,Abbr`sn`, Abbr`sb`, Abbr`sm`] >>
-  `sm * sb * (sn * sb * sm) = t` by rw[Abbr`t`] >>
+  ‘sm * sb <= t’ by
+      (‘sm * sb <= sm * sb * (sn * sb * sm)’
+         by rw[MULT_POS,Abbr‘sn’, Abbr‘sb’, Abbr‘sm’] >>
+  ‘sm * sb * (sn * sb * sm) = t’ by rw[Abbr‘t’] >>
   decide_tac) >>
-  `sb ** 2 <= t` by
-        (`sb ** 2 <= sb ** 2 * (sn * sm ** 2)` by rw[MULT_POS,Abbr`sn`, Abbr`sm`] >>
-  `sb ** 2 * (sn * sm ** 2) = t` by rw[Abbr`t`] >>
+  ‘sb ** 2 <= t’ by
+        (‘sb ** 2 <= sb ** 2 * (sn * sm ** 2)’
+           by rw[MULT_POS,Abbr‘sn’, Abbr‘sm’] >>
+  ‘sb ** 2 * (sn * sm ** 2) = t’ by rw[Abbr‘t’] >>
   decide_tac) >>
-  `sm ** 2 <= t` by
-          (`sm ** 2 <= sm ** 2 * (sn * sb ** 2)` by rw[MULT_POS,Abbr`sn`, Abbr`sb`] >>
-  `sm ** 2 * (sn * sb ** 2) = t` by rw[Abbr`t`] >>
-  decide_tac) >>
-  decide_tac);
+  ‘sm ** 2 <= t’ by
+          (‘sm ** 2 <= sm ** 2 * (sn * sb ** 2)’
+             by rw[MULT_POS,Abbr‘sn’, Abbr‘sb’] >>
+           ‘sm ** 2 * (sn * sb ** 2) = t’ by rw[Abbr‘t’] >>
+           decide_tac) >>
+  decide_tac
+QED
 
 (* Note:
 
@@ -729,7 +739,7 @@ The modified result is given in: loop2_div_mono_count_cover_exit_le
    Let body = (\b n. if m <= 1 then 2 * size m + size n else
                1 + 5 * size n + size b ** 2 + 2 * size m + size (SQ b) * size m +
                if EVEN n then 0 else
-                  size b * size (SQ b ** HALF n MOD m) + size (b * SQ b ** HALF n MOD m) * size m),
+                  size b * size (SQ b ** HALF n MOD m) + size (b * (SQ b ** HALF n MOD m)) * size m),
        cover = (\b n. 14 * (size n) * (size b) ** 2 * (size m) ** 2),
        exit = (\n. m <= 1),
        f = (\b. (b * b) MOD m),
@@ -779,60 +789,66 @@ The modified result is given in: loop2_div_mono_count_cover_exit_le
       = (1 + 2 * size m) + 14 * (size k * size n * size m) ** 2   by notation for c
       = 1 + 2 * size m + 14 * (size n) ** 2 * (size m) ** 2 * (size (MAX b m)) ** 2
 *)
-val mexpM_steps_upper = store_thm(
-  "mexpM_steps_upper",
-  ``!m b n. stepsOf (mexpM m b n) <=
-           1 + 2 * size m + 14 * (size n) ** 2 * (size m) ** 2 * (size (MAX b m)) ** 2``,
+Theorem mexpM_steps_upper:
+  !m b n.
+    stepsOf (mexpM m b n) <=
+    1 + 2 * size m + 14 * (size n) ** 2 * (size m) ** 2 * (size (MAX b m)) ** 2
+Proof
   rpt strip_tac >>
   assume_tac mexpM_steps_by_sqmod_div_loop >>
-  last_x_assum (qspec_then `m` strip_assume_tac) >>
+  last_x_assum (qspec_then ‘m’ strip_assume_tac) >>
   assume_tac mexpM_body_bound >>
-  first_x_assum (qspec_then `m` strip_assume_tac) >>
-  qabbrev_tac `body = \b n. if m <= 1 then 2 * size m + size n
+  first_x_assum (qspec_then ‘m’ strip_assume_tac) >>
+  qabbrev_tac ‘body = \b n. if m <= 1 then 2 * size m + size n
                   else 1 + 5 * size n + size b ** 2 + 2 * size m +
-                    size (SQ b) * size m + if EVEN n then 0
-                    else size b * size (SQ b ** HALF n MOD m) +
-                         size (b * SQ b ** HALF n MOD m) * size m` >>
-  qabbrev_tac `cover = \b n. 14 * (size n) * (size b) ** 2 * (size m) ** 2` >>
-  qabbrev_tac `exit = \b:num n:num. m <= 1` >>
-  qabbrev_tac `c = 1 + 2 * size m` >>
-  qabbrev_tac `f = \b. (b * b) MOD m` >>
-  qabbrev_tac `g = \b. MAX b m` >>
-  qabbrev_tac `loop = \b n. stepsOf (mexpM m b n)` >>
-  qabbrev_tac `quit = \b:num. c` >>
-  `loop b n <= c + 14 * (size n) ** 2 * (size m) ** 2 * (size (MAX b m)) ** 2` suffices_by rw[Abbr`loop`] >>
-  `!b n. loop b n = if n = 0 then quit b else body b n + if exit b n then 0 else loop (f b) (HALF n)` by metis_tac[] >>
-  Cases_on `m = 0` >| [
-    `loop b n = 2 + size n` by metis_tac[mexpM_steps_base] >>
-    simp[Abbr`c`] >>
-    `0 < size n * (size (g b)) ** 2` by rw[MULT_POS] >>
-    `size n <= size n * (size n * (size (g b)) ** 2)` by rw[] >>
-    `size n * (size n * (size (g b)) ** 2) = size n ** 2 * (size (g b)) ** 2` by rw[] >>
+                       size (SQ b) * size m +
+                       if EVEN n then 0
+                       else size b * size (SQ b ** HALF n MOD m) +
+                            size (b * (SQ b ** HALF n MOD m)) * size m’ >>
+  qabbrev_tac ‘cover = \b n. 14 * (size n) * (size b) ** 2 * (size m) ** 2’ >>
+  qabbrev_tac ‘exit = \b:num n:num. m <= 1’ >>
+  qabbrev_tac ‘c = 1 + 2 * size m’ >>
+  qabbrev_tac ‘f = \b. (b * b) MOD m’ >>
+  qabbrev_tac ‘g = \b. MAX b m’ >>
+  qabbrev_tac ‘loop = \b n. stepsOf (mexpM m b n)’ >>
+  qabbrev_tac ‘quit = \b:num. c’ >>
+  ‘loop b n <= c + 14 * (size n) ** 2 * (size m) ** 2 * (size (MAX b m)) ** 2’
+  suffices_by rw[Abbr‘loop’] >>
+  ‘!b n. loop b n = if n = 0 then quit b
+                    else body b n + if exit b n then 0 else loop (f b) (HALF n)’
+    by metis_tac[] >>
+  Cases_on ‘m = 0’ >| [
+    ‘loop b n = 2 + size n’ by metis_tac[mexpM_steps_base] >>
+    simp[Abbr‘c’] >>
+    ‘0 < size n * (size (g b)) ** 2’ by rw[MULT_POS] >>
+    ‘size n <= size n * (size n * (size (g b)) ** 2)’ by rw[] >>
+    ‘size n * (size n * (size (g b)) ** 2) = size n ** 2 * (size (g b)) ** 2’ by rw[] >>
     decide_tac,
-    Cases_on `n = 0` >| [
-      `loop b n = c` by metis_tac[] >>
+    Cases_on ‘n = 0’ >| [
+      ‘loop b n = c’ by metis_tac[] >>
       decide_tac,
-      `!x y. body x y <= cover x y` by metis_tac[] >>
-      `MONO2 cover` by rw[size_monotone_le, LE_MONO_MULT2, Abbr`cover`] >>
-      `!x. f x <= g x` by
-  (rw[Abbr`f`, Abbr`g`] >>
-      `x ** 2 MOD m < m` by rw[MOD_LESS] >>
+      ‘!x y. body x y <= cover x y’ by metis_tac[] >>
+      ‘MONO2 cover’ by rw[size_monotone_le, LE_MONO_MULT2, Abbr‘cover’] >>
+      ‘!x. f x <= g x’ by
+  (rw[Abbr‘f’, Abbr‘g’] >>
+      ‘x ** 2 MOD m < m’ by rw[MOD_LESS] >>
       decide_tac) >>
-      `MONO g` by rw[Abbr`g`] >>
-      `RISING g` by rw[Abbr`g`] >>
-      `1 < 2` by decide_tac >>
+      ‘MONO g’ by rw[Abbr‘g’] >>
+      ‘RISING g’ by rw[Abbr‘g’] >>
+      ‘1 < 2’ by decide_tac >>
       imp_res_tac loop2_div_mono_count_cover_exit_le >>
-      first_x_assum (qspecl_then [`n`, `b`] strip_assume_tac) >>
-      `pop 2 n * cover (FUNPOW g (pop 2 n) b) n =
-       14 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2` by
-    (`pop 2 n = size n` by rw[pop_2_size] >>
-      rw[Abbr`cover`, Abbr`g`] >>
-      `0 < size n` by rw[] >>
-      `FUNPOW (\b. MAX b m) (size n) b = MAX b m` by rw[FUNPOW_MAX] >>
+      first_x_assum (qspecl_then [‘n’, ‘b’] strip_assume_tac) >>
+      ‘pop 2 n * cover (FUNPOW g (pop 2 n) b) n =
+       14 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2’ by
+    (‘pop 2 n = size n’ by rw[pop_2_size] >>
+      rw[Abbr‘cover’, Abbr‘g’] >>
+      ‘0 < size n’ by rw[] >>
+      ‘FUNPOW (\b. MAX b m) (size n) b = MAX b m’ by rw[FUNPOW_MAX] >>
       simp[]) >>
       metis_tac[]
     ]
-  ]);
+  ]
+QED
 
 (* Theorem: stepsOf (mexpM m b n) <= 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2 *)
 (* Proof:
@@ -841,9 +857,9 @@ val mexpM_steps_upper = store_thm(
    <= (1 + 2 + 14) * size n ** 2 * size m ** 2 * size (MAX b m) ** 2         by dominant term
     = 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2                   by arithmetic
 *)
-val mexpM_steps_bound = store_thm(
-  "mexpM_steps_bound",
-  ``!m b n. stepsOf (mexpM m b n) <= 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2``,
+Theorem mexpM_steps_bound:
+    !m b n. stepsOf (mexpM m b n) <= 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2
+Proof
   rpt strip_tac >>
   assume_tac mexpM_steps_upper >>
   last_x_assum (qspecl_then [`m`, `b`, `n`] strip_assume_tac) >>
@@ -856,37 +872,41 @@ val mexpM_steps_bound = store_thm(
   `size m * (size m * size n ** 2 * size (MAX b m) ** 2) = t` by rw[Abbr`t`] >>
   decide_tac) >>
   qunabbrev_tac `t` >>
-  decide_tac);
+  decide_tac
+QED
 
 (* Theorem: stepsOf o (mexpM m b) IN
             big_O (POLY 1 o (\n. size n ** 2 * size m ** 2 * size (MAX b m) ** 2)) *)
 (* Proof: by big_O_def, POLY_def, mexpM_steps_bound *)
-val mexpM_steps_O_base = store_thm(
-  "mexpM_steps_O_base",
-  ``!m b. stepsOf o (mexpM m b) IN
-         big_O (POLY 1 o (\n. size n ** 2 * size m ** 2 * size (MAX b m) ** 2))``,
+Theorem mexpM_steps_O_base:
+    !m b. stepsOf o (mexpM m b) IN
+         big_O (POLY 1 o (\n. size n ** 2 * size m ** 2 * size (MAX b m) ** 2))
+Proof
   rw[big_O_def, POLY_def] >>
   `!n. 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2 =
         17 * size m ** 2 * size n ** 2 * size (MAX b m) ** 2` by decide_tac >>
-  metis_tac[mexpM_steps_bound]);
+  metis_tac[mexpM_steps_bound]
+QED
 
 (* Theorem: stepsOf o (mexpM m b) IN O_poly 2 *)
 (* Proof: by O_poly_thm, mexpM_steps_bound *)
-val mexpM_steps_O_poly = store_thm(
-  "mexpM_steps_O_poly",
-  ``!m b. stepsOf o (mexpM m b) IN O_poly 2``,
+Theorem mexpM_steps_O_poly:
+    !m b. stepsOf o (mexpM m b) IN O_poly 2
+Proof
   rw[O_poly_thm] >>
   `!n. 17 * size n ** 2 * size m ** 2 * size (MAX b m) ** 2 =
         17 * size m ** 2 * size (MAX b m) ** 2 * size n ** 2` by decide_tac >>
-  metis_tac[mexpM_steps_bound]);
+  metis_tac[mexpM_steps_bound]
+QED
 
 (* Theorem: stepsOf o (combin$C (mexpM m) n) IN big_O (POLY 1 o (\b. (size (MAX b m)) ** 2)) *)
 (* Proof: by big_O_def, POLY_def, mexpM_steps_bound *)
-val mexpM_steps_O_swap = store_thm(
-  "mexpM_steps_O_swap",
-  ``!m n. stepsOf o (combin$C (mexpM m) n) IN big_O (POLY 1 o (\b. (size (MAX b m)) ** 2))``,
+Theorem mexpM_steps_O_swap:
+    !m n. stepsOf o (combin$C (mexpM m) n) IN big_O (POLY 1 o (\b. (size (MAX b m)) ** 2))
+Proof
   rw[big_O_def, POLY_def] >>
-  metis_tac[mexpM_steps_bound]);
+  metis_tac[mexpM_steps_bound]
+QED
 
 (* Theorem: stepsOf o (mexpM m b) IN big_O (\n. (ulog n) ** 2) *)
 (* Proof:
@@ -896,27 +916,25 @@ val mexpM_steps_O_swap = store_thm(
       = (\n. ulog n ** 2)                     by POLY_def, FUN_EQ_THM
    The result follows.
 *)
-val mexpM_steps_big_O = store_thm(
-  "mexpM_steps_big_O",
-  ``!m b. stepsOf o (mexpM m b) IN big_O (\n. (ulog n) ** 2)``,
+Theorem mexpM_steps_big_O:
+    !m b. stepsOf o (mexpM m b) IN big_O (\n. (ulog n) ** 2)
+Proof
   assume_tac mexpM_steps_O_poly >>
   `O_poly 2 = big_O (POLY 2 o ulog)` by rw[O_poly_eq_O_poly_ulog] >>
   `POLY 2 o ulog = \n. ulog n ** 2` by rw[FUN_EQ_THM, POLY_def] >>
-  fs[]);
+  fs[]
+QED
 
 (* Theorem: (valueOf (mexpM m b n) = b ** n MOD m) /\
             (stepsOf o parityM) IN big_O (\n. size n) *)
 (* Proof: by mexpM_value, mexpM_steps_big_O *)
-val mexpM_thm = store_thm(
-  "mexpM_thm",
-  ``!m b n. (valueOf (mexpM m b n) = b ** n MOD m) /\
-       stepsOf o (mexpM m b) IN big_O (\n. (ulog n) ** 2)``,
-  metis_tac[mexpM_value, mexpM_steps_big_O]);
+Theorem mexpM_thm:
+    !m b n. (valueOf (mexpM m b n) = b ** n MOD m) /\
+       stepsOf o (mexpM m b) IN big_O (\n. (ulog n) ** 2)
+Proof
+  metis_tac[mexpM_value, mexpM_steps_big_O]
+QED
 
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

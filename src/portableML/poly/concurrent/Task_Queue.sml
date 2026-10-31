@@ -4,48 +4,7 @@
 Ordered queue of grouped tasks.
 *)
 
-signature TASK_QUEUE =
-sig
-  type group
-  val new_group: group option -> group
-  val group_id: group -> int
-  val eq_group: group * group -> bool
-  val cancel_group: group -> exn -> unit
-  val is_canceled: group -> bool
-  val group_status: group -> exn list
-  val str_of_group: group -> string
-  val str_of_groups: group -> string
-  val urgent_pri: int
-  type task
-  val dummy_task: task
-  val group_of_task: task -> group
-  val name_of_task: task -> string
-  val pri_of_task: task -> int
-  val str_of_task: task -> string
-  val str_of_task_groups: task -> string
-  val running: task -> (unit -> 'a) -> 'a
-  val joining: task -> (unit -> 'a) -> 'a
-  val waiting: task -> task list -> (unit -> 'a) -> 'a
-  type queue
-  val empty: queue
-  val group_tasks: queue -> group list -> task list
-  val known_task: queue -> task -> bool
-  val all_passive: queue -> bool
-  val status: queue -> {ready: int, pending: int, running: int, passive: int, urgent: int}
-  val cancel: queue -> group -> Thread.thread list
-  val cancel_all: queue -> group list * Thread.thread list
-  val finish: task -> queue -> bool * queue
-  val enroll: Thread.thread -> string -> group -> queue -> task * queue
-  val enqueue_passive: group -> string -> (unit -> bool) -> queue -> task * queue
-  val enqueue: string -> group -> task list -> int -> (bool -> bool) -> queue -> task * queue
-  val extend: task -> (bool -> bool) -> queue -> queue option
-  val dequeue_passive: Thread.thread -> task -> queue -> bool option * queue
-  val dequeue: Thread.thread -> bool -> queue -> (task * (bool -> bool) list) option * queue
-  val dequeue_deps: Thread.thread -> task list -> queue ->
-    (((task * (bool -> bool) list) option * task list) * queue)
-end;
-
-structure Task_Queue: TASK_QUEUE =
+structure Task_Queue :> Task_Queue =
 struct
 
 open Portable
@@ -59,33 +18,66 @@ val new_id = Counter.make ();
 abstype group = Group of
  {parent: group option,
   id: int,
-  status: exn option Synchronized.var}
+  status: exn option Unsynchronized.ref}
 with
 
-fun make_group (parent, id, status) = Group {parent = parent, id = id, status = status};
+fun make_group (parent, id, status) =
+    Group {parent = parent, id = id, status = status};
 
-fun new_group parent = make_group (parent, new_id (), Synchronized.var "group_status" NONE);
+fun new_group parent =
+    make_group (parent, new_id (), Unsynchronized.ref NONE);
 
 fun group_id (Group {id, ...}) = id;
 fun eq_group (group1, group2) = group_id group1 = group_id group2;
 
 fun fold_groups f (g as Group {parent = NONE, ...}) a = f g a
-  | fold_groups f (g as Group {parent = SOME group, ...}) a = fold_groups f group (f g a);
+  | fold_groups f (g as Group {parent = SOME group, ...}) a =
+    fold_groups f group (f g a);
 
 
-(* group status *)
+(* group status
+
+   One lock for the whole of a group's ancestry, rather than a
+   synchronized variable per group.  `is_canceled` and `group_status`
+   walk the parent chain, and that walk has to be atomic: with a
+   variable per group each read is its own critical section, so a walk
+   can report an ancestry that was never simultaneously true -- a worker
+   checking whether to abandon could miss a cancellation, or see a
+   parent cancelled but not the child.  A flat group is insensitive to
+   this, but Future.worker_subgroup nests them, and so does a task that
+   forks its own futures.
+
+   Ported from Isabelle's src/Pure/Concurrent/task_queue.ML, where the
+   status field is likewise a plain ref guarded by this one mutex. *)
+local
+  fun is_canceled_unsynchronized (Group {parent, status, ...}) =
+      isSome (! status) orelse
+      (case parent of
+           NONE => false
+         | SOME group => is_canceled_unsynchronized group);
+
+  fun group_status_unsynchronized (Group {parent, status, ...}) =
+      the_list (! status) @
+      (case parent of
+           NONE => []
+         | SOME group => group_status_unsynchronized group);
+
+  val lock = Mutex.mutex ();
+  fun SYNCHRONIZED e = Multithreading.synchronized "group_status" lock e;
+in
 
 fun cancel_group (Group {status, ...}) exn =
-  Synchronized.change status
-    (fn exns => SOME (Par_Exn.make (exn :: the_list exns)));
+  SYNCHRONIZED (fn () =>
+    Unsynchronized.change status
+      (fn exns => SOME (Par_Exn.make (exn :: the_list exns))));
 
-fun is_canceled (Group {parent, status, ...}) =
-  isSome (Synchronized.value status) orelse
-  (case parent of NONE => false | SOME group => is_canceled group);
+fun is_canceled group =
+  SYNCHRONIZED (fn () => is_canceled_unsynchronized group);
 
-fun group_status (Group {parent, status, ...}) =
-  the_list (Synchronized.value status) @
-    (case parent of NONE => [] | SOME group => group_status group);
+fun group_status group =
+  SYNCHRONIZED (fn () => group_status_unsynchronized group);
+
+end;
 
 fun str_of_group group =
   (is_canceled group ? enclose "(" ")") (Int.toString (group_id group));
@@ -100,7 +92,8 @@ end;
 
 val urgent_pri = 1000;
 
-type timing = Time.time * Time.time * string list;  (*run, wait, wait dependencies*)
+type timing = Time.time * Time.time * string list;
+           (* run       , wait      , wait dependencies *)
 
 val timing_start = (Time.zeroTime, Time.zeroTime, []): timing;
 
@@ -120,7 +113,8 @@ val dummy_task =
   Task {group = new_group NONE, name = "", id = 0, pri = NONE, timing = NONE};
 
 fun new_task group name pri =
-  Task {group = group, name = name, id = new_id (), pri = pri, timing = new_timing ()};
+  Task {group = group, name = name, id = new_id (),
+        pri = pri, timing = new_timing ()};
 
 fun group_of_task (Task {group, ...}) = group;
 fun name_of_task (Task {name, ...}) = name;
@@ -129,15 +123,18 @@ fun pri_of_task (Task {pri, ...}) = the_default 0 pri;
 fun str_of_task (Task {name, id, ...}) =
   if name = "" then Int.toString id else Int.toString id ^ " (" ^ name ^ ")";
 
-fun str_of_task_groups task = str_of_task task ^ " in " ^ str_of_groups (group_of_task task);
+fun str_of_task_groups task =
+    str_of_task task ^ " in " ^ str_of_groups (group_of_task task);
 
 fun update_timing update (Task {timing, ...}) e =
   Thread_Attributes.uninterruptible (fn restore_attributes => fn () =>
     let
-      val start = Time.now ();
-      val result = Exn.capture (restore_attributes e) ();
-      val t = Time.now () - start;
-      val _ = (case timing of NONE => () | SOME var => Synchronized.change var (update t));
+      val start = Time.now ()
+      val result = Exn.capture (restore_attributes e) ()
+      val t = Time.now () - start
+      val _ = case timing of
+                  NONE => ()
+                | SOME var => Synchronized.change var (update t)
     in Exn.release result end) ();
 
 fun task_ord (Task{id=id1, pri=pri1, ...},Task{id = id2, pri = pri2, ...}) =
@@ -209,7 +206,8 @@ fun add_job task dep (jobs: jobs) =
 
 datatype queue = Queue of {groups: groups, jobs: jobs, urgent: int};
 
-fun make_queue groups jobs urgent = Queue {groups = groups, jobs = jobs, urgent = urgent};
+fun make_queue groups jobs urgent =
+    Queue {groups = groups, jobs = jobs, urgent = urgent};
 val empty = make_queue Inttab.empty Task_Graph.empty 0;
 
 fun group_tasks (Queue {groups, ...}) gs =
@@ -249,7 +247,8 @@ fun status (Queue {jobs, urgent, ...}) =
     val (x, y, z, w) =
       Task_Graph.fold (fn (_, (job, (deps, _))) => fn (x, y, z, w) =>
           (case job of
-            Job _ => if Task_Graph.Keys.is_empty deps then (x + 1, y, z, w) else (x, y + 1, z, w)
+            Job _ => if Task_Graph.Keys.is_empty deps then (x + 1, y, z, w)
+                     else (x, y + 1, z, w)
           | Running _ => (x, y, z + 1, w)
           | Passive _ => (x, y, z, w + 1)))
         jobs (0, 0, 0, 0);
@@ -294,41 +293,45 @@ fun cancel_all (Queue {jobs, ...}) =
 
 fun finish task (Queue {groups, jobs, urgent}) =
   let
-    val group = group_of_task task;
-    val groups' = fold_groups (fn g => del_task (group_id g, task)) group groups;
-    val jobs' = Task_Graph.del_node task jobs;
-    val maximal = Task_Graph.is_maximal jobs task;
-  in (maximal, make_queue groups' jobs' urgent) end;
+    val group = group_of_task task
+    val groups' = fold_groups (fn g => del_task (group_id g, task)) group groups
+    val jobs' = Task_Graph.del_node task jobs
+    val maximal = Task_Graph.is_maximal jobs task
+  in (maximal, make_queue groups' jobs' urgent)
+  end
 
 
 (* enroll *)
 
 fun enroll thread name group (Queue {groups, jobs, urgent}) =
   let
-    val task = new_task group name NONE;
-    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups;
-    val jobs' = jobs |> Task_Graph.new_node (task, Running thread);
-  in (task, make_queue groups' jobs' urgent) end;
+    val task = new_task group name NONE
+    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups
+    val jobs' = jobs |> Task_Graph.new_node (task, Running thread)
+  in (task, make_queue groups' jobs' urgent)
+  end
 
 
 (* enqueue *)
 
 fun enqueue_passive group name abort (Queue {groups, jobs, urgent}) =
   let
-    val task = new_task group name NONE;
-    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups;
-    val jobs' = jobs |> Task_Graph.new_node (task, Passive abort);
-  in (task, make_queue groups' jobs' urgent) end;
+    val task = new_task group name NONE
+    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups
+    val jobs' = jobs |> Task_Graph.new_node (task, Passive abort)
+  in (task, make_queue groups' jobs' urgent)
+  end;
 
 fun enqueue name group deps pri job (Queue {groups, jobs, urgent}) =
   let
     val task = new_task group name (SOME pri);
-    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups;
+    val groups' = fold_groups (fn g => add_task (group_id g, task)) group groups
     val jobs' = jobs
       |> Task_Graph.new_node (task, Job [job])
-      |> foldl' (add_job task) deps;
-    val urgent' = if pri >= urgent_pri then urgent + 1 else urgent;
-  in (task, make_queue groups' jobs' urgent') end;
+      |> foldl' (add_job task) deps
+    val urgent' = if pri >= urgent_pri then urgent + 1 else urgent
+  in (task, make_queue groups' jobs' urgent')
+  end;
 
 fun extend task job (Queue {groups, jobs, urgent}) =
   case total (get_job jobs) task of
@@ -353,7 +356,8 @@ fun dequeue thread urgent_only (queue as Queue {groups, jobs, urgent}) =
       SOME (result as (task, _)) =>
         let
           val jobs' = set_job task (Running thread) jobs;
-          val urgent' = if pri_of_task task >= urgent_pri then urgent - 1 else urgent;
+          val urgent' = if pri_of_task task >= urgent_pri then urgent - 1
+                        else urgent;
         in (SOME result, make_queue groups jobs' urgent') end
     | NONE => (NONE, queue))
   else (NONE, queue);
@@ -378,22 +382,25 @@ fun dequeue_deps thread deps (queue as Queue {groups, jobs, urgent}) =
           else
             let val entry as (_, (ds, _)) = #2 (Task_Graph.get_entry jobs task) in
               (case ready_job (task, entry) of
-                NONE => ready_dep (Tasks.update (task, ()) seen) (Task_Graph.Keys.dest ds @ tasks)
+                NONE => ready_dep (Tasks.update (task, ()) seen)
+                                  (Task_Graph.Keys.dest ds @ tasks)
               | some => some)
             end;
 
     fun result (res as (task, _)) deps' =
       let
         val jobs' = set_job task (Running thread) jobs;
-        val urgent' = if pri_of_task task >= urgent_pri then urgent - 1 else urgent;
-      in ((SOME res, deps'), make_queue groups jobs' urgent') end;
+        val urgent' = if pri_of_task task >= urgent_pri then urgent - 1
+                      else urgent
+      in ((SOME res, deps'), make_queue groups jobs' urgent')
+      end
   in
-    (case ready deps [] of
-      (SOME res, deps') => result res deps'
-    | (NONE, deps') =>
+    case ready deps [] of
+        (SOME res, deps') => result res deps'
+      | (NONE, deps') =>
         (case ready_dep Tasks.empty deps' of
-          SOME res => result res deps'
-        | NONE => ((NONE, deps'), queue)))
+             SOME res => result res deps'
+           | NONE => ((NONE, deps'), queue))
   end;
 
 end;

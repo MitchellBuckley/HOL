@@ -2,7 +2,7 @@ structure CooperCore :> CooperCore =
 struct
 open HolKernel Parse boolLib
      integerTheory int_arithTheory intReduce
-     intSyntax CooperSyntax CooperMath CooperThms
+     intSyntax CooperSyntax CooperMath cooperTheory
 
 val ERR = mk_HOL_ERR "CooperCore";
 
@@ -13,31 +13,18 @@ val REWRITE_CONV = GEN_REWRITE_CONV Conv.TOP_DEPTH_CONV bool_rewrites
 (* Fix the grammar used by this file *)
 structure Parse :> Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars listTheory.list_grammars
+  val (Type,Term) = parse_from_grammars $ valOf $ grammarDB {thyname="list"}
 end
 open Parse
 
 local
-  val prove = INST_TYPE [alpha |-> int_ty] o prove
-  infix THEN
+  val at_int = INST_TYPE [alpha |-> int_ty]
 in
-
-val MEM_base = prove(
-  Term`!e:'a l. MEM e (e::l)`,
-  REWRITE_TAC [listTheory.MEM]);
-val MEM_build = prove(
-  Term`!l1 e1:'a e2. MEM e1 l1 ==> MEM e1 (e2::l1)`,
-  REPEAT STRIP_TAC THEN ASM_REWRITE_TAC [listTheory.MEM]);
-val mem_nilP = prove(
-  ``!P. (?x:'a. MEM x [] /\ P x) = F``,
-  REWRITE_TAC [listTheory.MEM]);
-val mem_singP = prove(
-  ``!P y. (?x:'a. MEM x [y] /\ P x) = P y``,
-  simpLib.SIMP_TAC boolSimps.bool_ss [listTheory.MEM]);
-val mem_consP = prove(
-  ``!P h t. (?x:'a. MEM x (h :: t) /\ P x) <=> P h \/ (?x. MEM x t /\ P x)``,
-  simpLib.SIMP_TAC boolSimps.bool_ss [listTheory.MEM, RIGHT_AND_OVER_OR,
-                                      EXISTS_OR_THM]);
+  val MEM_base   = at_int cooperTheory.MEM_base_poly
+  val MEM_build  = at_int cooperTheory.MEM_build_poly
+  val mem_nilP   = at_int cooperTheory.mem_nilP_poly
+  val mem_singP  = at_int cooperTheory.mem_singP_poly
+  val mem_consP  = at_int cooperTheory.mem_consP_poly
 end
 
 fun prove_membership t1 t2 = let
@@ -65,6 +52,8 @@ in
   recurse [] NONE tmlist
 end
 
+val move_add = fetch "cooper" "move_add"
+val NOT_AND_IMP = fetch "cooper" "NOT_AND_IMP"
 fun phase4_CONV tm = let
   (* have a formula of the form
        ?x. form

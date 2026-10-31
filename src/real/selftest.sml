@@ -1,8 +1,17 @@
 open HolKernel Parse bossLib boolLib;
 
-open simpLib realSimps isqrtLib RealArith RealField bitArithLib;
+val _ = new_theory "scratch"
+
+open simpLib realSimps isqrtLib RealArith RealField NLArith bitArithLib;
+open intrealTheory
 
 open testutils;
+
+val errc = ref 0
+val _ = diemode := Remember errc
+
+val _ = numLib.prefer_num()
+val _ = realSyntax.prefer_real()
 
 (* The original version and old port by Hurd *)
 val REAL_ARITH0 = RealArith.OLD_REAL_ARITH;
@@ -11,54 +20,92 @@ val REAL_ARITH1 = RealArith.REAL_ARITH;
 (* The new port, also suppports rational coefficients *)
 val REAL_ARITH2 = RealField.REAL_ARITH;
 
-val s = SIMP_CONV (bossLib.std_ss ++ REAL_REDUCE_ss) []
 
-fun test (problem, result) = let
+val s = SIMP_CONV (bossLib.std_ss ++ REAL_REDUCE_ss ++
+                   intSimps.INT_REDUCE_ss ++
+                   BasicProvers.thy_ssfrag "intreal") [LET_THM]
+
+fun test conv nm (problem, result) = let
   val t2s = trace ("Unicode", 0) term_to_string
-  val padr = StringCvt.padRight #" "
-  val padl = StringCvt.padLeft #" "
-  val p_s = padr 30 (t2s problem)
-  val r_s = padl 10 (t2s result)
-  val _ = tprint (p_s ^ " = " ^ r_s)
-  val th = QCONV s problem
-  val answer = rhs (concl th)
 in
-  if aconv answer result then OK()
-  else die ("FAILED!\n  Got "^term_to_string answer)
+  convtest("[" ^ nm ^ "] " ^ t2s problem ^ " = " ^ t2s result,
+           conv, problem, result)
 end;
 
-val tests = [(``~~3r``, ``3r``),
-             (``3r + 4``, ``7r``),
-             (``3 - 4r``, ``~1r``),
-             (``abs (~20r)``, ``20r``),
-             (``abs (1/6)``, ``1/6``),
-             (``abs (~3/6)``, ``1/2``),
-             (``abs 0``, ``0``),
-             (``3r * 3/4``, ``9/4``),
-             (``6/~8``, ``~3/4``),
-             (``1/3 + 1/2``, ``5/6``),
-             (``1/2 = 0``, ``F``),
-             (``0 + 3r``, ``3r``),
-             (``3r * 0``, ``0r``),
-             (``~0r``, ``0r``),
-             (``1r - 0``, ``1r``),
-             (``1 / 10 + 0r``, ``1r/10``),
-             (``0r + 1 / 10``, ``1r/10``),
-             (``1/2 * 0r``, ``0r``),
-             (``0r * 1/2``, ``0r``)]
+val real_reduce_simp_tests = [
+  (“~~3r”              , “3r”),
+  (“3r + 4”            , “7r”),
+  (“3 - 4r”            , “~1r”),
+  (“abs (~20r)”        , “20r”),
+  (“abs (1/6)”         , “1/6”),
+  (“abs (~3/6)”        , “1/2”),
+  (“abs 0”             , “0”),
+  (“3r * 3/4”          , “9/4”),
+  (“6/~8”              , “~3/4”),
+  (“1/3 + 1/2”         , “5/6”),
+  (“1/2 = 0”           , “F”),
+  (“0 + 3r”            , “3r”),
+  (“3r * 0”            , “0r”),
+  (“~0r”               , “0r”),
+  (“1r - 0”            , “1r”),
+  (“1 / 10 + 0r”       , “1r/10”),
+  (“0r + 1 / 10”       , “1r/10”),
+  (“1/2 * 0r”          , “0r”),
+  (“0r * 1/2”          , “0r”),
+  (“flr 10:num”        , “10n”),
+  (“clg 12:num”        , “12n”),
+  (“flr (1/10):num”    , “0n”),
+  (“clg (1/10):num”    , “1n”),
+  (“flr (131/10):num”  , “13n”),
+  (“clg (131/10):num”  , “14n”),
+  (“flr (-2/4):num”    , “0n”),
+  (“clg (-2/4):num”    , “0n”),
+  (“NUM_CEILING (1/4)” , “1n”),
+  (“NUM_CEILING (5/4)” , “2n”),
+  (“NUM_CEILING 0”     , “0n”),
+  (“NUM_CEILING 3”     , “3n”),
+  (“NUM_CEILING (-5)”  , “0n”),
 
-val _ = List.app test tests
+  (“NUM_FLOOR (2/3)”   , “0n”),
+  (“NUM_FLOOR (7/3)”   , “2n”),
+  (“NUM_FLOOR 0”       , “0n”),
+  (“NUM_FLOOR 3”       , “3n”),
+  (“NUM_FLOOR (-5)”    , “0n”),
+
+  (“INT_FLOOR (1/4)”   , “0i”),
+  (“INT_FLOOR (5/4)”   , “1i”),
+  (“INT_FLOOR 0”       , “0i”),
+  (“INT_FLOOR 3”       , “3i”),
+  (“INT_FLOOR (-1/4)”  , “-1i”),
+  (“INT_FLOOR (-5/4)”  , “-2i”),
+
+  (“INT_CEILING (1/4)” , “1i”),
+  (“INT_CEILING (5/4)” , “2i”),
+  (“INT_CEILING 0”     , “0i”),
+  (“INT_CEILING 3”     , “3i”),
+  (“INT_CEILING (-1/4)”, “0i”),
+  (“INT_CEILING (-5/4)”, “-1i”)
+]
+
+val _ = List.app (test s "simp") real_reduce_simp_tests
+val _ = List.app (test EVAL "EVAL") real_reduce_simp_tests
+
+fun isunch UNCHANGED = true | isunch _ = false
+val _ = List.app (shouldfail {testfn = s, printresult = thm_to_string,
+                              printarg = fn t => "Testing SIMP_CONV “" ^
+                                                 term_to_string t ^
+                                                 "” raises UNCHANGED",
+                              checkexn = isunch})
+                 [“flr x”, “clg x”, “flr (10/x)”, “clg (10/x)”,
+                  “flr (-x/5)”, “clg(-x/5)”]
+
 
 val _ = List.app
           (fn (s1,s2) => tpp_expected
                            {testf=standard_tpp_message, input=s1, output=s2})
-          [("realinv 2", "2⁻¹"), ("inv (TC R)", "R⁺ ᵀ")]
-val _ = tpp "¬p ∧ q"                                                   (* UOK *)
+          [("realinv 2", "2⁻¹"), ("inv (TC R)", "(R⁺)ᵀ")]
+val _ = tpp "¬p ∧ q"
 
-fun UNCH_test (n,c,t) =
-  shouldfail {checkexn = fn Conv.UNCHANGED => true | _ => false,
-              printarg = fn t => "UNCHANGED " ^ n ^ ": " ^ term_to_string t,
-              printresult = thm_to_string, testfn = c} t
 fun nftest (r as (n,c,t1,t2)) =
     let
       fun test (t1,t2) = (Exn.capture c t1, Exn.capture c t2)
@@ -144,6 +191,8 @@ val _ = List.app nftest [
       ("MULCANON36", REALMULCANON, “-1 * (x * y) : real”, “-x * y:real”),
       ("MULCANON37", REALMULCANON, “-1 * x : real”, “-x:real”),
       ("MULCANON38", REALMULCANON, “1r * x”, “x:real”),
+      ("MULCANON39", REALMULCANON, “x/-1r”, “-x:real”),
+      ("MULCANON40", REALMULCANON, “x/-2r”, “-1/2 * x:real”),
 
       ("MULRELNORM01", simp,
        “z <> 0 ⇒ 2r * z pow 2 * inv yy = 5 * z pow 2 * inv y * a”,
@@ -203,6 +252,7 @@ val _ = List.app nftest [
        “X * 2 pow e1 < 2 pow e2 * 2 pow e3”),
       ("MULRELNORM32", simp, “x / 2r = y”, “x = 2 * y”),
       ("MULRELNORM33", simp, “x pow 4 = (inv x) pow 3”, “x = 0 \/ x pow 7 = 1”),
+      ("MULRELNORM34", simp, “x/-1 = -x:real”, “T”),
       ("ADDCANON1", REALADDCANON, “10 + x * 2 + x * y + 6 + x”,
        “3 * x + x * y + 16”)
     ]
@@ -380,6 +430,16 @@ val _ = require_msg (check_result (aconv expected2)) term_to_string
                     (quietly Parse.Term) ‘0 < x’
 val _ = temp_set_grammars grammars
 
+val _ = convtest("REAL_RAT_REDUCE_CONV terminates on 1/3 * x",
+                 QCONV REAL_RAT_REDUCE_CONV,
+                 ``&1 / &3 * (x:real)``,
+                 ``&1 / &3 * (x:real)``)
+
+val _ = convtest("REAL_RAT_REDUCE_CONV still adds rational literals",
+                 REAL_RAT_REDUCE_CONV,
+                 ``&1 / &3 + &1 / &6 :real``,
+                 ``&1 / &2 :real``)
+
 (* tests for bitArithLib *)
 val _ = convtest("Testing karatsuba_conv on ``1 * 2``",
                   karatsuba_conv,
@@ -401,5 +461,94 @@ val _ = convtest("Testing real_mul_conv on ``64 * 128``",
                  ``64 * (128:real)``,
                  ``8192:real``)
 
+(* ================================================================ *)
+(* Tests for NLArith (REAL_NLA)                                     *)
+(*                                                                  *)
+(* E2E: REAL_NLA closes the goal directly.                          *)
+(* FAIL: REAL_NLA raises HOL_ERR on false goals.                    *)
+(* SHAPE: REAL_NLA returns thm with expected conclusion.            *)
+(* TACTIC: NLA_TAC closes a goal state.                             *)
+(* ================================================================ *)
 
-val _ = Process.exit Process.success
+(* -- E2E tests: REAL_NLA proves nonlinear goals -- *)
+
+val _ = List.app (real_arith_test REAL_NLA) [
+      (* Simple square nonneg *)
+      ("NLA_E2E_01", “!x:real. x * x >= &0”),
+      ("NLA_E2E_02", “!x:real. x pow 2 >= &0”),
+
+      (* Difference-of-variables square *)
+      ("NLA_E2E_03", “!x y:real. (x - y) * (x - y) >= &0”),
+
+      (* AM-GM: x^2 + y^2 >= 2xy *)
+      ("NLA_E2E_04", “!x y:real. x * x + y * y >= &2 * x * y”),
+
+      (* Product bounds from hypotheses *)
+      ("NLA_E2E_05", “!x y:real. x >= &5 /\ y >= &5 ==> x * y >= &25”),
+      ("NLA_E2E_06", “!x y:real. x >= &0 /\ y >= &0 ==> x * y >= &0”),
+      ("NLA_E2E_07", “!a b:real. a >= &3 /\ b >= &4 ==> a * b >= &12”),
+
+      (* Linear fallback still works *)
+      ("NLA_E2E_08", “!x:real. x + &1 > x”),
+      ("NLA_E2E_09", “!x:real. &0 < x ==> &0 <= x”),
+
+      (* Sum of nonneg products *)
+      ("NLA_E2E_10",
+       “!x y z:real. x >= &0 /\ y >= &0 /\ z >= &0 ==> x*y + y*z + x*z >= &0”),
+
+      (* Sum of squares *)
+      ("NLA_E2E_11", “!x y:real. x * x + y * y >= &0”),
+
+      (* Strict product bound *)
+      ("NLA_E2E_12", “!x y:real. x > &0 /\ y > &0 ==> x * y > &0”),
+
+      (* Combined linear + nonlinear *)
+      ("NLA_E2E_13", “!x:real. x >= &1 ==> x * x >= x”)
+    ];
+
+(* -- FAIL test: clean HOL_ERR on false goals -- *)
+
+val _ = List.app (shouldfail {
+      testfn = REAL_NLA,
+      printresult = thm_to_string,
+      printarg = fn t => "NLA should fail: " ^ term_to_string t,
+      checkexn = fn HOL_ERR _ => true | _ => false})
+    [
+      “!x:real. x * x <= ~(&1)”,
+      “!x:real. x * x < &0”
+    ];
+
+(* -- SHAPE test: REAL_NLA returns thm with correct conclusion -- *)
+
+val _ = let
+  val _ = tprint "NLA_SHAPE: conclusion matches input"
+  val tm = “!x y:real. x >= &5 /\ y >= &5 ==> x * y >= &25”
+  val th = REAL_NLA tm
+in
+  if aconv (concl th) tm then OK()
+  else die ("FAILED: concl = " ^ term_to_string (concl th))
+end;
+
+(* -- TACTIC test: NLA_TAC closes a goal -- *)
+
+val _ = let
+  val _ = tprint "NLA_TAC closes x^2 >= 0"
+  val goal : goal = ([], “!x:real. x * x >= &0”)
+  val (sgs, vf) = runtac NLA_TAC goal
+in
+  if null sgs then OK()
+  else die ("FAILED: " ^ Int.toString (length sgs) ^ " subgoals remain")
+end;
+
+val _ = let
+  val _ = tprint "NLA_ASM_TAC closes product bound with assumptions"
+  val asms = map ASSUME [“x >= &5 :real”, “y >= &5 :real”]
+  val goal : goal = (map concl asms, “x * y >= &25 :real”)
+  val (sgs, vf) = runtac NLA_ASM_TAC goal
+in
+  if null sgs then OK()
+  else die ("FAILED: " ^ Int.toString (length sgs) ^ " subgoals remain")
+end;
+
+val _ = print "\n"
+val _ = exit_count0 errc

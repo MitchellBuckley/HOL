@@ -7,13 +7,7 @@ structure folTools :> folTools =
 struct
 
 open HolKernel Parse boolLib combinTheory simpLib
-     normalFormsTheory normalForms folMapping;
-
-structure Parse = struct
-  open Parse
-  val (Type,Term) = parse_from_grammars normalFormsTheory.normalForms_grammars
-end
-open Parse
+     normalFormsTheory normalForms folMapping folToolsContextTheory;
 
 type 'a pp       = 'a mlibUseful.pp;
 type 'a stream   = 'a mlibStream.stream;
@@ -297,21 +291,6 @@ val pp_logic_map : logic_map pp =
 (* Equality axioms.                                                          *)
 (* ------------------------------------------------------------------------- *)
 
-val EQ_SYMTRANS = prove
-  (``!x y z. ~(x:'a = y) \/ ~(x = z) \/ (y = z)``,
-   REPEAT STRIP_TAC THEN
-   ASM_CASES_TAC ``x:'a = y`` THEN
-   ASM_REWRITE_TAC
-   [ONCE_REWRITE_RULE [boolTheory.DISJ_SYM]
-    (REWRITE_RULE[] boolTheory.BOOL_CASES_AX)]);
-
-val EQ_COMB = prove
-  (``!f g x y. ~(f:'a->'b = g) \/ ~(x = y) \/ (f x = g y)``,
-   REPEAT GEN_TAC THEN
-   ASM_CASES_TAC ``x:'a = y`` THEN
-   ASM_CASES_TAC ``f:'a->'b = g`` THEN
-   ASM_REWRITE_TAC []);
-
 val EQ_EXTENSION = CONV_RULE CNF_CONV EXT_POINT_DEF;
 
 local
@@ -426,17 +405,9 @@ end;
 (* Boolean theorems.                                                         *)
 (* ------------------------------------------------------------------------- *)
 
-val FALSITY' = prove (``~F``, REWRITE_TAC []);
+val FALSITY' = EQ_MP (SYM (CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))) TRUTH
 
-val EQ_BOOL = (CONJUNCTS o prove)
-  (``(!x y. ~x \/ ~(x = y) \/ y) /\
-     (!x y. x \/ (x = y) \/ y) /\
-     (!x y. ~x \/ (x = y) \/ ~y)``,
-   REPEAT CONJ_TAC THEN
-   REPEAT GEN_TAC THEN
-   ASM_CASES_TAC ``x:bool`` THEN
-   ASM_CASES_TAC ``y:bool`` THEN
-   ASM_REWRITE_TAC []);
+val EQ_BOOL = CONJUNCTS EQ_BOOL_CONJ
 
 local
   val simple_bool = map mk_vthm [TRUTH, FALSITY'];
@@ -484,8 +455,6 @@ fun FOL_SOLVE solv lmap lim =
     val solver =
       timed_fn "solver initialization"
       (initialize_solver solv) {thms = thms, hyps = hyps, limit = lim}
-    fun exn_handler f x = f x
-      handle Time => raise ERR "FOL_SOLVER" "Time exception raised"
   in
     fn query =>
     let
@@ -495,7 +464,7 @@ fun FOL_SOLVE solv lmap lim =
       val () = save_fol_problem (thms, hyps, q)
       val lift = fol_thms_to_hol (#mapping_parm parm) (C assoc axioms) query
       val timed_lift = timed_fn "proof translation" lift
-      val timed_stream = map_thk (timed_fn "proof search" o exn_handler)
+      val timed_stream = map_thk (timed_fn "proof search")
     in
       eliminate consts
       (mlibStream.map timed_lift (timed_stream (fn () => solver q) ()))
@@ -610,5 +579,6 @@ local
 in
   val tptp_read = fol_to_hol o mlibTptp.read;
 end;
+
 
 end

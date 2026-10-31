@@ -19,24 +19,18 @@ struct
 
      where sigma is the type instantiation given by the map
   *)
-  type t = (string, hol_type) Binarymap.dict * (term, term) Binarymap.dict
+  type t = hol_type Symtab.table * term Termtab.table
   fun triTY ((d,_):t) = d
   fun triTM ((_, d):t) = d
   type 'a EM = (t, 'a) optmonad.optmonad
-  val empty : t =
-        (Binarymap.mkDict String.compare, Binarymap.mkDict Term.compare)
+  val empty : t = (Symtab.empty, Termtab.empty)
 
   fun lookup_ty0 tym ty =
       if is_vartype ty then
-        case Binarymap.peek(tym, dest_vartype ty) of
+        case Symtab.lookup tym (dest_vartype ty) of
             NONE => ty
           | SOME ty' => lookup_ty0 tym ty'
-      else
-        let val {Thy,Tyop,Args} = dest_thy_type ty
-            val Args' = map (lookup_ty0 tym) Args
-        in
-          mk_thy_type {Thy=Thy, Tyop=Tyop, Args=Args'}
-        end
+      else ty
   fun lookup_ty (E:t) ty = lookup_ty0 (#1 E) ty
   fun instE (E:t) tm =
       let val tyvs = type_vars_in_term tm
@@ -50,30 +44,22 @@ struct
         val tm = instE E tm0
       in
         case dest_term tm of
-          VAR _ => (case Binarymap.peek(#2 E, tm) of
+          VAR _ => (case Termtab.lookup (#2 E) tm of
                         NONE => tm
                       | SOME tm' => lookup_tm E tm')
-        | CONST _ => tm
-        | COMB(f,x) => mk_comb(lookup_tm E f, lookup_tm E x)
-        | LAMB(v,bod) =>
-          let
-            val tm' =
-                #1 (Binarymap.remove(#2 E, v)) handle Binarymap.NotFound => #2 E
-          in
-            mk_abs(v, lookup_tm (#1 E, tm') bod)
-          end
+        | _ => tm
       end
 
 
 
   fun add_tybind (s,ty) : unit EM = fn (tym,tmm)  =>
-      case Binarymap.peek(tym, s) of
-          NONE => SOME ((Binarymap.insert(tym,s,ty), tmm), ())
+      case Symtab.lookup tym s of
+          NONE => SOME ((Symtab.update (s, ty) tym, tmm), ())
         | SOME _ => NONE
 
   fun add_tmbind (v, tm) : unit EM = fn (tym,tmm) =>
-      case Binarymap.peek(tmm, v) of
-          NONE => SOME((tym, Binarymap.insert(tmm,v,tm)), ())
+      case Termtab.lookup tmm v of
+          NONE => SOME((tym, Termtab.update (v, tm) tmm), ())
         | SOME _ => NONE
 
   fun fromEmpty (m : 'a EM) = Option.map #2 (m empty)
@@ -100,8 +86,8 @@ fun unify_types ctys (ty1, ty2) : unit Env.EM =
               else if is_vartype ty2 then fail
               else
                 let
-                  val {Args=a1,Tyop=op1,Thy=thy1} = dest_thy_type ty1
-                  val {Args=a2,Tyop=op2,Thy=thy2} = dest_thy_type ty2
+                  val {Args=a1,Tyop=op1,Thy=thy1} = dest_thy_typeid ty1
+                  val {Args=a2,Tyop=op2,Thy=thy2} = dest_thy_typeid ty2
                 in
                   if thy1 <> thy2 orelse op1 <> op2 then fail
                   else
@@ -140,7 +126,8 @@ fun unify ctys ctms (t1, t2) : unit Env.EM =
                                 else Env.add_tmbind (tm1, tm2)
                 | (CONST _, CONST _) => if tm1 ~~ tm2 then return () else fail
                 | (COMB(f1,x1), COMB(f2,x2)) =>
-                  recurse bvs (f1,f2) >> recurse bvs (x1,x2)
+                    unify_types ctys (type_of x1, type_of x2) >>
+                    recurse bvs (f1,f2) >> recurse bvs (x1,x2)
                 | (LAMB(bv1,bod1), LAMB(bv2,bod2)) =>
                   let
                     val gv = genvar (type_of bv1)
@@ -152,25 +139,75 @@ fun unify ctys ctms (t1, t2) : unit Env.EM =
           fun flip (p as (t1, t2)) =
               if is_var t1 then p else if is_var t2 then (t2,t1) else p
         in
-          unify_types ctys (type_of tm10, type_of tm20) >>
           lift flip (gettm tm10 >* gettm tm20) >>- k
         end
   in
+    unify_types ctys (type_of t1, type_of t2) >>
     recurse [] (t1, t2)
   end
+
+fun collapse_map (freeset,empty,dosub) subst =
+    let
+      fun find_used_leaf subst =
+          let
+            val with_frees =
+                map (fn i as {redex,residue} => (i,freeset residue)) subst
+            val (used_vars, keys) =
+                List.foldl (fn (({redex,residue},fvs), (uvA, kA)) =>
+                               (HOLset.union(uvA, fvs), HOLset.add(kA, redex)))
+                           (empty, empty)
+                           with_frees
+            fun used_leaf (i as {redex,residue},fvs) =
+                if HOLset.member(used_vars, redex) andalso
+                   HOLset.isEmpty(HOLset.intersection(fvs,keys))
+                then SOME i
+                else NONE
+
+          in
+            case trypluck' used_leaf with_frees of
+                (SOME i, rest) => SOME(i, map #1 rest)
+              | (NONE, _) => NONE
+          end
+
+      fun recurse subst =
+          case find_used_leaf subst of
+              NONE => subst
+            | SOME (i as {redex,residue}, rest) =>
+              let
+                val rest' = map (fn {redex,residue} =>
+                                    {redex=redex, residue = dosub [i] residue})
+                                rest
+              in
+                i :: recurse rest'
+              end
+    in
+      recurse subst
+    end
 
 fun collapse0 E =
     let
       val mk_vartype = trace ("Vartype Format Complaint", 0) mk_vartype
+      val tymap =
+          collapse_map (HOLset.fromList Type.compare o Type.type_vars,
+                      HOLset.empty Type.compare,
+                      Type.type_subst)
+                     (Symtab.fold
+                        (fn (k,v) => fn A =>
+                            {redex = mk_vartype k, residue = v} :: A)
+                        (Env.triTY E) [])
+      val tmmap0 = map (fn {residue,redex} =>
+                           {residue = Term.inst tymap residue,
+                            redex = Term.inst tymap redex})
+                       (Termtab.fold
+                          (fn (k,v) => fn A =>
+                              {redex = k, residue = v} :: A)
+                          (Env.triTM E) [])
     in
-      (Binarymap.foldl
-         (fn (s,ty,A) => {redex=mk_vartype s, residue = Env.lookup_ty E ty}::A)
-         []
-         (Env.triTY E),
-       Binarymap.foldl
-         (fn (v,tm,A) => {redex = v, residue = Env.lookup_tm E tm} :: A)
-         []
-         (Env.triTM E))
+      (tymap,
+       collapse_map
+         (fn t => FVL [t] empty_tmset, empty_tmset, Term.subst)
+         tmmap0
+      )
     end
 
 fun collapse E = SOME(E, collapse0 E)

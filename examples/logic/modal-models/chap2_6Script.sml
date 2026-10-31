@@ -1,35 +1,16 @@
-open HolKernel Parse boolLib bossLib;
-open chap1Theory;
-open pred_setTheory;
-open relationTheory;
-open arithmeticTheory;
-open set_relationTheory;
+Theory chap2_6
+Ancestors
+  chap1 pred_set relation arithmetic set_relation chap2_1 chap2_2
+  chap2_4 chap2_5 equiv_on_partition prim_rec list rich_list
+  finite_map combin folModels folLang folCanon ultrafilter
+  ultraproduct lemma2_73 pair
 
-open chap2_1Theory;
-open chap2_2Theory;
-open chap2_4Theory;
-open chap2_5Theory;
-open equiv_on_partitionTheory;
-open prim_recTheory;
-open listTheory;
-open rich_listTheory;
-open finite_mapTheory;
-open combinTheory;
-open folModelsTheory;
-open folLangTheory;
-open folCanonTheory;
-open ultrafilterTheory;
-open ultraproductTheory;
-open lemma2_73Theory;
-open pairTheory;
-
-
-val _ = new_theory "chap2_6";
 val _ = temp_delsimps ["satis_def"]
 
-val L1tau_def = Define`
-L1tau phi <=> form_functions phi = {} /\
-              form_predicates phi ⊆ (0,2) INSERT {(p,1)| p IN (univ (:num))}`
+Definition L1tau_def:
+  L1tau phi <=> form_functions phi = {} /\
+                form_predicates phi ⊆ (0,2) INSERT {(p,1)| p IN (univ (:num))}
+End
 
 Theorem ST_L1tau:
 !phi x. L1tau (ST x phi)
@@ -38,11 +19,12 @@ Induct_on `phi` (* 5 *) >>
 fs[L1tau_def,fDISJ_def,fNOT_def,fAND_def]
 QED
 
-val folm2mm_def = Define`
+Definition folm2mm_def:
 folm2mm FM = <| frame := <| world := FM.Dom ;
                               rel := \w1 w2. (FM.Pred 0 [w1;w2] /\
                                               w1 IN FM.Dom /\ w2 IN FM.Dom) |>;
-                 valt := \v w. (FM.Pred v [w] /\ w IN FM.Dom) |>`;
+                 valt := \v w. (FM.Pred v [w] /\ w IN FM.Dom) |>
+End
 
 
 Theorem MAP_LIST_EQ :
@@ -76,11 +58,11 @@ Proof
   Cases_on `t` >> fs[FCT_def,termval_def] >> Cases_on `l = []` >> fs[] >>
   `(MAP (termval M1 σ) l) = (MAP (termval M2 σ) l)` suffices_by metis_tac[] >>
   irule MAP_LIST_EQ >> rw[] >> Cases_on `m` >> rw[termval_def] >>
-  `term_size (Fn n' l') < 1 + (n + term1_size l)` by fs[term_size_lemma] >>
+  `term_size (Fn n' l') < 1 + (n + list_size term_size l)` by fs[term_size_lemma] >>
   first_x_assum (qspec_then `term_size (Fn n' l')` assume_tac) >>
-  `1 + (n + term1_size l) = n + (term1_size l + 1)` by fs[] >>
+  `1 + (n + list_size term_size l) = n + (list_size term_size l + 1)` by fs[] >>
   fs[] >> first_x_assum drule >> rw[] >>
-  first_x_assum (qspec_then `Fn n' l'` assume_tac) >> fs[term_size_def] >>
+  first_x_assum (qspec_then `Fn n' l'` assume_tac) >> fs[] >>
   Cases_on `l' = []`
   >- (fs[] >> `MEM (FCT (Fn n' [])) (MAP (λa. FCT a) l)` by (fs[MEM_MAP] >>
      qexists_tac `Fn n' []` >> fs[FCT_def]) >>
@@ -121,18 +103,20 @@ QED
 
 
 
-val ST_form_functions_EMPTY = store_thm(
-  "ST_form_functions_EMPTY",
-  ``!f x. form_functions (ST x f) = {}``,
+Theorem ST_form_functions_EMPTY:
+    !f x. form_functions (ST x f) = {}
+Proof
   Induct_on `f` >>
- rw[ST_def,form_functions_def,fNOT_def,fAND_def,fDISJ_def,Exists_def]);
+ rw[ST_def,form_functions_def,fNOT_def,fAND_def,fDISJ_def,Exists_def]
+QED
 
 
-val ST_FV_singleton = store_thm(
-  "ST_FV_singleton",
-  ``!f x. (FV (ST x f)) SUBSET {x}``,
+Theorem ST_FV_singleton:
+    !f x. (FV (ST x f)) SUBSET {x}
+Proof
   Induct_on `f` >> rw[ST_def,FV_def,fNOT_def,fAND_def,fDISJ_def] >>
-  fs[SUBSET_DEF] >> metis_tac[]);
+  fs[SUBSET_DEF] >> metis_tac[]
+QED
 
 Theorem term_functions_EMPTY_termval:
 !t. term_functions t = {} ==>
@@ -165,191 +149,184 @@ QED
 
 
 
-val thm_2_65 = store_thm(
-  "thm_2_65",
-  ``!M. countably_saturated (mm2folm M) ==> M_sat M``,
-rw[countably_saturated_def,n_saturated_def,M_sat_def] >>
-qabbrev_tac `Σ' = {fR (Fn 0 []) (fV x)} UNION (IMAGE (ST x) Σ)` >>
-qabbrev_tac `MA = <| Dom := (mm2folm M).Dom;
-                     Fun := (λn args. if n = 0 ∧ args = [] then w
-                                      else CHOICE (mm2folm M).Dom);
-                     Pred := (mm2folm M).Pred |>` >>
-`consistent MA Σ'`
-  by
-   (rw[consistent_def] >> fs[fin_satisfiable_in_def] >>
-    Cases_on `(fR (Fn 0 []) (fV x)) IN G0` (* 2 *)
-    >- (`G0 = (fR (Fn 0 []) (fV x)) INSERT (G0 DELETE (fR (Fn 0 []) (fV x)))`
-          by fs[INSERT_DELETE] >>
-        `!f. f IN G0 ==> f = fR (Fn 0 []) (fV x) \/ f IN (IMAGE (ST x) Σ)`
-          by (rpt strip_tac >>
-              `f <> fR (Fn 0 []) (fV x) ==> f ∈ IMAGE (ST x) Σ`
-                suffices_by metis_tac[] >>
-              strip_tac >>
-              `f IN Σ'` by fs[SUBSET_DEF] >> fs[Abbr`Σ'`] (* 2 *)
-              >- fs[] >- metis_tac[]) >>
-        fs[satisfiable_in_def] >>
-        qabbrev_tac
-         `G0' = G0 DELETE fR (Fn 0 []) (fV x)` >>
-        qabbrev_tac
-         `ps =
-              {CHOICE {x' | x' IN Σ /\ f = ST x x'} |
-                f IN G0'}` >>
-        `!f. (f IN G0 /\ f <> fR (Fn 0 []) (fV x))
-               ==> {x' | x' IN Σ /\ f = ST x x'} <> {}`
-          by
-           (rw[] >> rfs[Abbr`Σ'`,IMAGE_DEF] >> rw[GSYM MEMBER_NOT_EMPTY] >>
-            metis_tac[]) >>
-        `ps SUBSET Σ`
-          by
-           (rw[SUBSET_DEF,Abbr`ps`] >>
-            `CHOICE {x' | x' ∈ Σ ∧ f = ST x x'} IN
-              {x' | x' ∈ Σ ∧ f = ST x x'}`
-              suffices_by fs[] >>
-            `{x' | x' ∈ Σ ∧ f = ST x x'} <> {}`
-              suffices_by metis_tac[CHOICE_DEF] >>
-            fs[Abbr`G0'`] >> metis_tac[]) >>
-        `FINITE ps`
-          by (`FINITE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'} /\
-               ps = IMAGE CHOICE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'}`
-                suffices_by metis_tac[IMAGE_FINITE] >>
-              rw[Once EXTENSION,EQ_IMP_THM,IMAGE_DEF,Abbr`ps`] (* 3 *)
-              >- (`{{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'} =
-                   IMAGE (\f. {x' | x' ∈ Σ ∧ f = ST x x'}) G0' /\
-                  FINITE G0'` suffices_by metis_tac[IMAGE_FINITE] >>
-                  rw[IMAGE_DEF,Once EXTENSION,Abbr`G0'`] >>
-                  qabbrev_tac `a = fR (Fn 0 []) (fV x)` >>
-                  fs[INSERT_DELETE]
-                 )
-              >> metis_tac[]
-              ) >>
-        `∃x. (x ∈ M.frame.world ∧ M.frame.rel w x) ∧
-         ∀form. form ∈ ps ⇒ satis M x form` by metis_tac[] >>
-        qexists_tac `\n. x'` >> rw[fsatis_def] (* 5 *)
-        >- (rw[Abbr`MA`] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def])
-        >- fs[IMAGE_DEF,SUBSET_DEF,Abbr`MA`,valuation_def,mm2folm_def]
-        >- (fs[] >> rw[feval_def,termval_def,Abbr`MA`,
+Theorem thm_2_65:
+  !M. countably_saturated (mm2folm M) ==> M_sat M
+Proof
+  rw[countably_saturated_def,n_saturated_def,M_sat_def] >>
+  qabbrev_tac ‘Σ' = {fR (Fn 0 []) (fV x)} UNION (IMAGE (ST x) Σ)’ >>
+  qabbrev_tac ‘MA = <| Dom := (mm2folm M).Dom;
+                       Fun := (λn args. if n = 0 ∧ args = [] then w
+                                        else CHOICE (mm2folm M).Dom);
+                       Pred := (mm2folm M).Pred |>’ >>
+  ‘consistent MA Σ'’
+    by (rw[consistent_def] >> fs[fin_satisfiable_in_def] >>
+        Cases_on ‘(fR (Fn 0 []) (fV x)) IN G0’ (* 2 *)
+        >- (‘G0 = (fR (Fn 0 []) (fV x)) INSERT (G0 DELETE (fR (Fn 0 []) (fV x)))’
+              by fs[INSERT_DELETE] >>
+            ‘!f. f IN G0 ==> f = fR (Fn 0 []) (fV x) \/ f IN (IMAGE (ST x) Σ)’
+              by (rpt strip_tac >>
+                  ‘f <> fR (Fn 0 []) (fV x) ==> f ∈ IMAGE (ST x) Σ’
+                    suffices_by metis_tac[] >>
+                  strip_tac >>
+                  ‘f IN Σ'’ by fs[SUBSET_DEF] >> fs[Abbr‘Σ'’] (* 2 *)
+                  >- fs[] >- metis_tac[]) >>
+            fs[satisfiable_in_def] >>
+            qabbrev_tac ‘G0' = G0 DELETE fR (Fn 0 []) (fV x)’ >>
+            qabbrev_tac
+            ‘ps =
+             {CHOICE {x' | x' IN Σ /\ f = ST x x'} | f IN G0'}’ >>
+            ‘!f. (f IN G0 /\ f <> fR (Fn 0 []) (fV x))
+                 ==> {x' | x' IN Σ /\ f = ST x x'} <> {}’
+              by (rw[] >> rfs[Abbr‘Σ'’,IMAGE_DEF] >> rw[GSYM MEMBER_NOT_EMPTY] >>
+                  metis_tac[]) >>
+            ‘ps SUBSET Σ’
+              by
+              (rw[SUBSET_DEF,Abbr‘ps’] >>
+               ‘CHOICE {x' | x' ∈ Σ ∧ f = ST x x'} IN
+                                             {x' | x' ∈ Σ ∧ f = ST x x'}’
+                 suffices_by fs[] >>
+               ‘{x' | x' ∈ Σ ∧ f = ST x x'} <> {}’
+                 suffices_by metis_tac[CHOICE_DEF] >>
+               fs[Abbr‘G0'’] >> metis_tac[]) >>
+            ‘FINITE ps’
+              by (‘FINITE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'} /\
+                   ps = IMAGE CHOICE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'}’
+                    suffices_by metis_tac[IMAGE_FINITE] >>
+                  rw[Once EXTENSION,EQ_IMP_THM,IMAGE_DEF,Abbr‘ps’] (* 3 *)
+                  >- (‘{{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0'} =
+                       IMAGE (\f. {x' | x' ∈ Σ ∧ f = ST x x'}) G0' /\
+                       FINITE G0'’ suffices_by metis_tac[IMAGE_FINITE] >>
+                      rw[IMAGE_DEF,Once EXTENSION,Abbr‘G0'’] >>
+                      qabbrev_tac ‘a = fR (Fn 0 []) (fV x)’ >>
+                      fs[INSERT_DELETE]
+                     )
+                  >> metis_tac[]
+                 ) >>
+            ‘∃x. (x ∈ M.frame.world ∧ M.frame.rel w x) ∧
+                 ∀form. form ∈ ps ⇒ satis M x form’ by metis_tac[] >>
+            qexists_tac ‘\n. x'’ >> rw[fsatis_def] (* 5 *)
+            >- (rw[Abbr‘MA’] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def])
+            >- fs[IMAGE_DEF,SUBSET_DEF,Abbr‘MA’,valuation_def,mm2folm_def]
+            >- (fs[] >> rw[feval_def,termval_def,Abbr‘MA’,
                            valuation_def,mm2folm_def])
-        >- (`IMAGE (λn. x') 𝕌(:num) ⊆ MA.Dom`
-             by (rw[Abbr`MA`] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def]) >>
-            rw[valuation_def] >> fs[IMAGE_DEF,SUBSET_DEF])
-        >- (`∃t. phi = ST x t ∧ t ∈ ps`
-             by
-              (fs[Abbr`G0'`] (*2*)
-               >- metis_tac[]
-               >- (`phi IN Σ'` by fs[SUBSET_DEF] >>
-                   fs[Abbr`ps`,Abbr`Σ'`] (* 2 *)
+            >- (‘IMAGE (λn. x') 𝕌(:num) ⊆ MA.Dom’
+                  by (rw[Abbr‘MA’] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def]) >>
+                rw[valuation_def] >> fs[IMAGE_DEF,SUBSET_DEF])
+            >- (‘∃t. phi = ST x t ∧ t ∈ ps’
+                  by
+                  (fs[Abbr‘G0'’] (*2*)
+                   >- metis_tac[]
+                   >- (‘phi IN Σ'’ by fs[SUBSET_DEF] >>
+                       fs[Abbr‘ps’,Abbr‘Σ'’] (* 2 *)
+                       >- fs[] >>
+                       fs[PULL_EXISTS] >>
+                       qexists_tac ‘ST x x''’ >>
+                       rw[] >>
+                       ‘CHOICE {x' | x' ∈ Σ ∧ ST x x'' = ST x x'} IN
+                           {x' | x' ∈ Σ ∧ ST x x'' = ST x x'}’
+                         suffices_by fs[] >>
+                       ‘{x' | x' ∈ Σ ∧ ST x x'' = ST x x'} <> {}’
+                         suffices_by metis_tac[CHOICE_DEF] >>
+                       rw[GSYM MEMBER_NOT_EMPTY] >> metis_tac[])
+                  ) >>
+                ‘satis M x' t’ by metis_tac[] >>
+                ‘(λn. x') x = x'’ by fs[] >>
+                ‘IMAGE (λn. x') 𝕌(:num) ⊆ M.frame.world’
+                  by fs[Abbr‘MA’,mm2folm_def,IMAGE_DEF,SUBSET_DEF] >>
+                imp_res_tac prop_2_47_i >>
+                ‘satis M ((λn. x') x) t’ by metis_tac[] >>
+                ‘fsatis (mm2folm M) (λn. x') (ST x t)’ by fs[] >>
+                ‘feval (mm2folm M) (λn. x') phi <=>
+                 feval MA (λn. x') phi’
+                  suffices_by metis_tac[fsatis_def] >>
+                ‘!phi. form_functions (ST x phi) = {}’
+                  by metis_tac[ST_form_functions_EMPTY] >>
+                ‘!phi. form_functions phi = {} ==>
+                       !M1 M2 σ. M1.Dom = M2.Dom /\
+                                 M1.Pred = M2.Pred ==>
+                                 (feval M1 σ phi <=> feval M2 σ phi)’
+                  by metis_tac[form_functions_EMPTY_feval] >>
+                ‘(mm2folm M).Dom = MA.Dom’ by fs[mm2folm_def,Abbr‘MA’] >>
+                ‘(mm2folm M).Pred = MA.Pred’ by fs[mm2folm_def,Abbr‘MA’] >>
+                metis_tac[]))
+        >- (‘!f. f IN G0 ==> f IN (IMAGE (ST x) Σ)’
+              by (rpt strip_tac >>
+                  ‘f IN Σ'’ by fs[SUBSET_DEF] >> fs[Abbr‘Σ'’] (* 2 *)
+                  >- fs[] >- metis_tac[]) >>
+            fs[satisfiable_in_def] >>
+            qabbrev_tac
+            ‘ps =
+             {CHOICE {x' | x' IN Σ /\ f = ST x x'} |
+             f IN G0}’ >>
+            ‘!f. f IN G0
+                 ==> {x' | x' IN Σ /\ f = ST x x'} <> {}’
+              by
+              (rw[] >> rfs[Abbr‘Σ'’,IMAGE_DEF] >> rw[GSYM MEMBER_NOT_EMPTY] >>
+               metis_tac[]) >>
+            ‘ps SUBSET Σ’
+              by
+              (rw[SUBSET_DEF,Abbr‘ps’] >>
+               ‘CHOICE {x' | x' ∈ Σ ∧ f = ST x x'} IN
+                  {x' | x' ∈ Σ ∧ f = ST x x'}’
+                 suffices_by fs[] >>
+               ‘{x' | x' ∈ Σ ∧ f = ST x x'} <> {}’
+                 suffices_by metis_tac[CHOICE_DEF] >>
+               metis_tac[]) >>
+            ‘FINITE ps’
+              by (‘FINITE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0} /\
+                   ps = IMAGE CHOICE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0}’
+                    suffices_by metis_tac[IMAGE_FINITE] >>
+                  rw[Once EXTENSION,EQ_IMP_THM,IMAGE_DEF,Abbr‘ps’] (* 3 *)
+                  >- (‘{{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0} =
+                       IMAGE (\f. {x' | x' ∈ Σ ∧ f = ST x x'}) G0 /\
+                       FINITE G0’ suffices_by metis_tac[IMAGE_FINITE] >>
+                      rw[IMAGE_DEF,Once EXTENSION])
+                  >> metis_tac[]
+                 ) >>
+            ‘∃x. (x ∈ M.frame.world ∧ M.frame.rel w x) ∧
+                 ∀form. form ∈ ps ⇒ satis M x form’ by metis_tac[] >>
+            qexists_tac ‘\n. x'’ >> rw[fsatis_def] (* 3 *)
+            >- (rw[Abbr‘MA’] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def])
+            >- fs[IMAGE_DEF,SUBSET_DEF,Abbr‘MA’,valuation_def,mm2folm_def]
+            >- (‘∃t. phi = ST x t ∧ t ∈ ps’
+                  by
+                  (‘phi IN Σ'’ by fs[SUBSET_DEF] >>
+                   fs[Abbr‘ps’,Abbr‘Σ'’] (* 2 *)
                    >- fs[] >>
                    fs[PULL_EXISTS] >>
-                   qexists_tac `ST x x''` >>
+                   qexists_tac ‘ST x x''’ >>
                    rw[] >>
-                   `CHOICE {x' | x' ∈ Σ ∧ ST x x'' = ST x x'} IN
-                    {x' | x' ∈ Σ ∧ ST x x'' = ST x x'}` suffices_by fs[] >>
-                   `{x' | x' ∈ Σ ∧ ST x x'' = ST x x'} <> {}`
+                   ‘CHOICE {x' | x' ∈ Σ ∧ ST x x'' = ST x x'} IN
+                      {x' | x' ∈ Σ ∧ ST x x'' = ST x x'}’ suffices_by fs[] >>
+                   ‘{x' | x' ∈ Σ ∧ ST x x'' = ST x x'} <> {}’
                      suffices_by metis_tac[CHOICE_DEF] >>
-                   rw[GSYM MEMBER_NOT_EMPTY] >> metis_tac[])
-              ) >>
-            `satis M x' t` by metis_tac[] >>
-            `(λn. x') x = x'` by fs[] >>
-            `IMAGE (λn. x') 𝕌(:num) ⊆ M.frame.world`
-              by fs[Abbr`MA`,mm2folm_def,IMAGE_DEF,SUBSET_DEF] >>
-            imp_res_tac prop_2_47_i >>
-            `satis M ((λn. x') x) t` by metis_tac[] >>
-            `fsatis (mm2folm M) (λn. x') (ST x t)` by fs[] >>
-            `feval (mm2folm M) (λn. x') phi <=>
-             feval MA (λn. x') phi`
-              suffices_by metis_tac[fsatis_def] >>
-            `!phi. form_functions (ST x phi) = {}`
-              by metis_tac[ST_form_functions_EMPTY] >>
-            `!phi. form_functions phi = {} ==>
-               !M1 M2 σ. M1.Dom = M2.Dom /\
-                         M1.Pred = M2.Pred ==>
-               (feval M1 σ phi <=> feval M2 σ phi)`
-              by metis_tac[form_functions_EMPTY_feval] >>
-            `(mm2folm M).Dom = MA.Dom` by fs[mm2folm_def,Abbr`MA`] >>
-            `(mm2folm M).Pred = MA.Pred` by fs[mm2folm_def,Abbr`MA`] >>
-            metis_tac[]))
-    >- (`!f. f IN G0 ==> f IN (IMAGE (ST x) Σ)`
-          by (rpt strip_tac >>
-              `f IN Σ'` by fs[SUBSET_DEF] >> fs[Abbr`Σ'`] (* 2 *)
-              >- fs[] >- metis_tac[]) >>
-        fs[satisfiable_in_def] >>
-        qabbrev_tac
-         `ps =
-              {CHOICE {x' | x' IN Σ /\ f = ST x x'} |
-                f IN G0}` >>
-        `!f. f IN G0
-               ==> {x' | x' IN Σ /\ f = ST x x'} <> {}`
-          by
-           (rw[] >> rfs[Abbr`Σ'`,IMAGE_DEF] >> rw[GSYM MEMBER_NOT_EMPTY] >>
-            metis_tac[]) >>
-        `ps SUBSET Σ`
-          by
-           (rw[SUBSET_DEF,Abbr`ps`] >>
-            `CHOICE {x' | x' ∈ Σ ∧ f = ST x x'} IN
-              {x' | x' ∈ Σ ∧ f = ST x x'}`
-              suffices_by fs[] >>
-            `{x' | x' ∈ Σ ∧ f = ST x x'} <> {}`
-              suffices_by metis_tac[CHOICE_DEF] >>
-             metis_tac[]) >>
-        `FINITE ps`
-          by (`FINITE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0} /\
-               ps = IMAGE CHOICE {{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0}`
-                suffices_by metis_tac[IMAGE_FINITE] >>
-              rw[Once EXTENSION,EQ_IMP_THM,IMAGE_DEF,Abbr`ps`] (* 3 *)
-              >- (`{{x' | x' ∈ Σ ∧ f = ST x x'} | f ∈ G0} =
-                   IMAGE (\f. {x' | x' ∈ Σ ∧ f = ST x x'}) G0 /\
-                  FINITE G0` suffices_by metis_tac[IMAGE_FINITE] >>
-                  rw[IMAGE_DEF,Once EXTENSION])
-              >> metis_tac[]
-              ) >>
-        `∃x. (x ∈ M.frame.world ∧ M.frame.rel w x) ∧
-         ∀form. form ∈ ps ⇒ satis M x form` by metis_tac[] >>
-        qexists_tac `\n. x'` >> rw[fsatis_def] (* 3 *)
-        >- (rw[Abbr`MA`] >> rw[IMAGE_DEF,SUBSET_DEF,mm2folm_def])
-        >- fs[IMAGE_DEF,SUBSET_DEF,Abbr`MA`,valuation_def,mm2folm_def]
-        >- (`∃t. phi = ST x t ∧ t ∈ ps`
-             by
-              (`phi IN Σ'` by fs[SUBSET_DEF] >>
-               fs[Abbr`ps`,Abbr`Σ'`] (* 2 *)
-               >- fs[] >>
-               fs[PULL_EXISTS] >>
-               qexists_tac `ST x x''` >>
-               rw[] >>
-               `CHOICE {x' | x' ∈ Σ ∧ ST x x'' = ST x x'} IN
-                 {x' | x' ∈ Σ ∧ ST x x'' = ST x x'}` suffices_by fs[] >>
-               `{x' | x' ∈ Σ ∧ ST x x'' = ST x x'} <> {}`
-                  suffices_by metis_tac[CHOICE_DEF] >>
-               rw[GSYM MEMBER_NOT_EMPTY] >> metis_tac[]) >>
-            `satis M x' t` by metis_tac[] >>
-            `(λn. x') x = x'` by fs[] >>
-            `IMAGE (λn. x') 𝕌(:num) ⊆ M.frame.world`
-              by fs[Abbr`MA`,mm2folm_def,IMAGE_DEF,SUBSET_DEF] >>
-            imp_res_tac prop_2_47_i >>
-            `satis M ((λn. x') x) t` by metis_tac[] >>
-            `fsatis (mm2folm M) (λn. x') (ST x t)` by fs[] >>
-            `feval (mm2folm M) (λn. x') phi <=>
-             feval MA (λn. x') phi`
-              suffices_by metis_tac[fsatis_def] >>
-            `!phi. form_functions (ST x phi) = {}`
-              by metis_tac[ST_form_functions_EMPTY] >>
-            `!phi. form_functions phi = {} ==>
-               !M1 M2 σ. M1.Dom = M2.Dom /\
-                         M1.Pred = M2.Pred ==>
-               (feval M1 σ phi <=> feval M2 σ phi)`
-              by metis_tac[form_functions_EMPTY_feval] >>(* cheated lemma*)
-            `(mm2folm M).Dom = MA.Dom` by fs[mm2folm_def,Abbr`MA`] >>
-            `(mm2folm M).Pred = MA.Pred` by fs[mm2folm_def,Abbr`MA`] >>
-            metis_tac[]))) >>
-`FINITE {w}` by fs[] >>
-`CARD {w} <= 1` by fs[] >>
-`{w} SUBSET (mm2folm M).Dom` by fs[SUBSET_DEF,mm2folm_def] >>
-`MA = expand (mm2folm M) {w} (\n.w)`
-  by (rw[expand_def,folModelsTheory.model_component_equality,mm2folm_def,Abbr`MA`,FUN_EQ_THM] >>
-      Cases_on `x' = 0 ∧ x'' = []` >> fs[] >>
-      Cases_on ‘x' = 0’ >- (first_x_assum drule >>
-      strip_tac >> rw[]) >>
-      rw[]
-      ) >>
+                   rw[GSYM MEMBER_NOT_EMPTY] >> metis_tac[]) >>
+                ‘satis M x' t’ by metis_tac[] >>
+                ‘(λn. x') x = x'’ by fs[] >>
+                ‘IMAGE (λn. x') 𝕌(:num) ⊆ M.frame.world’
+                  by fs[Abbr‘MA’,mm2folm_def,IMAGE_DEF,SUBSET_DEF] >>
+                imp_res_tac prop_2_47_i >>
+                ‘satis M ((λn. x') x) t’ by metis_tac[] >>
+                ‘fsatis (mm2folm M) (λn. x') (ST x t)’ by fs[] >>
+                ‘feval (mm2folm M) (λn. x') phi <=>
+                 feval MA (λn. x') phi’
+                  suffices_by metis_tac[fsatis_def] >>
+                ‘!phi. form_functions (ST x phi) = {}’
+                  by metis_tac[ST_form_functions_EMPTY] >>
+                ‘!phi. form_functions phi = {} ==>
+                       !M1 M2 σ. M1.Dom = M2.Dom /\
+                                 M1.Pred = M2.Pred ==>
+                                 (feval M1 σ phi <=> feval M2 σ phi)’
+                  by metis_tac[form_functions_EMPTY_feval] >>
+                ‘(mm2folm M).Dom = MA.Dom’ by fs[mm2folm_def,Abbr‘MA’] >>
+                ‘(mm2folm M).Pred = MA.Pred’ by fs[mm2folm_def,Abbr‘MA’] >>
+                metis_tac[]))) >>
+  ‘FINITE {w}’ by fs[] >>
+  ‘CARD {w} <= 1’ by fs[] >>
+  ‘{w} SUBSET (mm2folm M).Dom’ by fs[SUBSET_DEF,mm2folm_def] >>
+  ‘MA = expand (mm2folm M) {w} (\n.w)’
+    by rw[expand_def,folModelsTheory.model_component_equality,mm2folm_def,
+          Abbr‘MA’,FUN_EQ_THM]  >>
 (*
 `expansion (mm2folm M) {w} MA (\n.w)`
   by (rw[expansion_def] (* 4 *)
@@ -358,67 +335,73 @@ qabbrev_tac `MA = <| Dom := (mm2folm M).Dom;
       >- (fs[BIJ_DEF,INJ_DEF,SURJ_DEF,Abbr`MA`] >> simp[FUN_EQ_THM] >> rw[] >>
           fs[])
       >- fs[mm2folm_def,Abbr`MA`]) >>*)
-`ftype x Σ'`
-  by (rw[ftype_def,SUBSET_DEF] >> fs[Abbr`Σ'`] (* 2 *)
-      >- (`FV (fR (Fn 0 []) (fV x)) = {x}`
-            by rw[FV_def,FVT_def] >>
-          `x'' IN {x}` by metis_tac[] >> fs[])
-      >- (`FV (ST x x''') SUBSET {x}` by metis_tac[ST_FV_singleton] >>
-          `x'' IN {x}` by metis_tac[SUBSET_DEF] >> fs[])) >>
-`frealizes MA x Σ'`
-  by (rw[] >> first_x_assum irule >> rw[] (* 3 *)
-      (*map_every qexists_tac [`{w}`,`\n.w`,`1`] >> rw[]*) (* 4 *)
-      >- (Cases_on `phi = fR (Fn 0 []) (fV x)` (* 2 *)
-          >- fs[form_functions_def,FST] >>
-          fs[Abbr`Σ'`] >>
-          metis_tac[ST_form_functions_EMPTY,MEMBER_NOT_EMPTY,SUBSET_DEF])
-      >- rw[SUBSET_DEF,mm2folm_def,IMAGE_DEF]
-      >- rw[BIJ_DEF,INJ_DEF,SURJ_DEF]
-     ) >>
-fs[frealizes_def] >>
-rw[satisfiable_in_def] (* 2 *)
->- rw[SUBSET_DEF]
->- (qexists_tac `w'` >> rw[] (* 3 *)
-    >- fs[expand_def,mm2folm_def]
-    >- (`(fR (Fn 0 []) (fV x)) IN Σ'` by fs[Abbr`Σ'`] >>
-        `IMAGE (\n. w') univ(:num) SUBSET  (expand (mm2folm M) {w} (λn. w)).Dom`
-          by fs[SUBSET_DEF,IMAGE_DEF,expand_def,mm2folm_def] >>
-        `fsatis  (expand (mm2folm M) {w} (λn. w)) ((x =+ w') (λn. w')) (fR (Fn 0 []) (fV x))`
-          by metis_tac[] >>
-        fs[fsatis_def,feval_def,APPLY_UPDATE_THM,termval_def,expand_def,mm2folm_def])
-    >- (`IMAGE (\n. w') univ(:num) SUBSET  (expand (mm2folm M) {w} (λn. w)).Dom`
-          by fs[SUBSET_DEF,IMAGE_DEF,expand_def,mm2folm_def] >>
-        `(ST x form) IN Σ'` by fs[Abbr`Σ'`] >>
-        `fsatis  (expand (mm2folm M) {w} (λn. w)) ((x =+ w') (λn. w')) (ST x form)` by metis_tac[] >>
-        `(IMAGE ((x =+ w') (λn. w')) univ(:num)) SUBSET M.frame.world`
-          by (rw[IMAGE_DEF,SUBSET_DEF] >> Cases_on `x'' = x` (* 2 *) >> rw[] >>
-              fs[APPLY_UPDATE_THM,expand_def,mm2folm_def]) >>
-        `fsatis (mm2folm M) ((x =+ w') (λn. w')) (ST x form)`
-             by (rw[fsatis_def] (* 2 *)
-                 >- (rw[mm2folm_def,valuation_def] >>
+  ‘ftype x Σ'’
+    by (rw[ftype_def,SUBSET_DEF] >> fs[Abbr‘Σ'’] (* 2 *)
+        >- (‘FV (fR (Fn 0 []) (fV x)) = {x}’
+              by rw[FV_def,FVT_def] >>
+            ‘x'' IN {x}’ by metis_tac[] >> fs[])
+        >- (‘FV (ST x x''') SUBSET {x}’ by metis_tac[ST_FV_singleton] >>
+            ‘x'' IN {x}’ by metis_tac[SUBSET_DEF] >> fs[])) >>
+  ‘frealizes MA x Σ'’
+    by (rw[] >> first_x_assum irule >> rw[] (* 3 *)
+        (*map_every qexists_tac [`{w}`,`\n.w`,`1`] >> rw[]*) (* 4 *)
+        >- (Cases_on ‘phi = fR (Fn 0 []) (fV x)’ (* 2 *)
+            >- fs[form_functions_def,FST] >>
+            fs[Abbr‘Σ'’] >>
+            metis_tac[ST_form_functions_EMPTY,MEMBER_NOT_EMPTY,SUBSET_DEF])
+        >- rw[SUBSET_DEF,mm2folm_def,IMAGE_DEF]
+        >- rw[BIJ_DEF,INJ_DEF,SURJ_DEF]
+       ) >>
+  fs[frealizes_def] >>
+  rw[satisfiable_in_def] (* 2 *)
+  >- rw[SUBSET_DEF]
+  >- (qexists_tac ‘w'’ >> rw[] (* 3 *)
+      >- fs[expand_def,mm2folm_def]
+      >- (‘(fR (Fn 0 []) (fV x)) IN Σ'’ by fs[Abbr‘Σ'’] >>
+          ‘IMAGE (\n. w') univ(:num) ⊆ (expand (mm2folm M) {w} (λn. w)).Dom’
+            by fs[SUBSET_DEF,IMAGE_DEF,expand_def,mm2folm_def] >>
+          ‘fsatis (expand (mm2folm M) {w} (λn. w)) ((x =+ w') (λn. w'))
+                  (fR (Fn 0 []) (fV x))’
+            by metis_tac[] >>
+          fs[fsatis_def,feval_def,APPLY_UPDATE_THM,termval_def,expand_def,
+             mm2folm_def])
+      >- (‘IMAGE (\n. w') univ(:num) ⊆ (expand (mm2folm M) {w} (λn. w)).Dom’
+            by fs[SUBSET_DEF,IMAGE_DEF,expand_def,mm2folm_def] >>
+          ‘(ST x form) IN Σ'’ by fs[Abbr‘Σ'’] >>
+          ‘fsatis (expand (mm2folm M) {w} (λn. w)) ((x =+ w') (λn. w'))
+                  (ST x form)’ by metis_tac[] >>
+          ‘(IMAGE ((x =+ w') (λn. w')) univ(:num)) SUBSET M.frame.world’
+            by (rw[IMAGE_DEF,SUBSET_DEF] >> Cases_on ‘x'' = x’ (* 2 *) >> rw[] >>
+                fs[APPLY_UPDATE_THM,expand_def,mm2folm_def]) >>
+          ‘fsatis (mm2folm M) ((x =+ w') (λn. w')) (ST x form)’
+            by (rw[fsatis_def] (* 2 *)
+                >- (rw[mm2folm_def,valuation_def] >>
                     fs[SUBSET_DEF,IMAGE_DEF] >>
                     metis_tac[]) >>
-                 `feval  (expand (mm2folm M) {w} (λn. w)) (λn. w')⦇x ↦ w'⦈ (ST x form) <=>
-                 feval (mm2folm M) (λn. w')⦇x ↦ w'⦈ (ST x form)`
-                 suffices_by metis_tac[fsatis_def] >>
-                 irule holds_functions >> rw[] (* 3 *)
-                 >- rw[expand_def]
-                 >- (`form_functions (ST x form) = {}`
+                ‘feval (expand (mm2folm M) {w} (λn. w)) (λn. w')⦇x ↦ w'⦈
+                       (ST x form) <=>
+                 feval (mm2folm M) (λn. w')⦇x ↦ w'⦈ (ST x form)’
+                  suffices_by metis_tac[fsatis_def] >>
+                irule holds_functions >> rw[] (* 3 *)
+                >- (qpat_x_assum ‘_ = expand _ {w} _’ (assume_tac o SYM) >>
+                    simp[])
+                >- (‘form_functions (ST x form) = {}’
                       suffices_by metis_tac[MEMBER_NOT_EMPTY] >>
-                     metis_tac[L1tau_def,ST_L1tau])
-                 >- rw[expand_def]) >>
-        `(x =+ w') (λn. w') x = w'` by fs[APPLY_UPDATE_THM] >>
-        metis_tac[prop_2_47_i])));
+                    metis_tac[L1tau_def,ST_L1tau])
+                >- (qpat_x_assum ‘_ = expand _ {w} _’ (assume_tac o SYM) >>
+                    simp[])) >>
+          ‘(x =+ w') (λn. w') x = w'’ by fs[APPLY_UPDATE_THM] >>
+          metis_tac[prop_2_47_i]))
+QED
 
-
-
-val thm_2_65_corollary = store_thm(
-  "thm_2_65_corollary",
-  ``∀M M' w:'b w':'c.
+Theorem thm_2_65_corollary:
+    ∀M M' w:'b w':'c.
        countably_saturated (mm2folm M) /\ countably_saturated (mm2folm M') ∧ w ∈ M.frame.world ∧ w' ∈ M'.frame.world ⇒
        modal_eq M M' w w' ⇒
-       bisim_world M M' w w'``,
-   rw[] >> `M_sat M /\ M_sat M'` by metis_tac[thm_2_65] >> metis_tac[prop_2_54_DIST_TYPE]);
+       bisim_world M M' w w'
+Proof
+   rw[] >> `M_sat M /\ M_sat M'` by metis_tac[thm_2_65] >> metis_tac[prop_2_54_DIST_TYPE]
+QED
 
 
 
@@ -922,8 +905,6 @@ irule holds_valuation >> rw[] >>
 rw[EXTENSION,EQ_IMP_THM] >> metis_tac[Uequiv_SYM]
 QED
 
-
-
 Theorem mm2folm_folm2mm_Pred0:
 !M wl.
     (LENGTH wl = 2 /\
@@ -1129,7 +1110,7 @@ fs[Abbr`MS`,Abbr`MS'`] >>
 fs[models2worlds_def,folm2mm_def,mm2folm_def]
 QED
 
-val invar4bisim_def = Define`
+Definition invar4bisim_def:
   invar4bisim x (t1: μ itself) (t2: ν itself) phi <=>
      (FV phi ⊆ {x} /\ L1tau phi /\
      !(M:μ modalBasics$model) (N:ν modalBasics$model) v w.
@@ -1137,7 +1118,8 @@ val invar4bisim_def = Define`
            (!(σm: num -> μ) (σn: num -> ν).
              (valuation (mm2folm M) σm /\ valuation (mm2folm N) σn) ==>
                     (fsatis (mm2folm M) σm(|x |-> w|) phi <=>
-                    fsatis (mm2folm N) σn(|x |-> v|) phi )))`
+                    fsatis (mm2folm N) σn(|x |-> v|) phi )))
+End
 
 Theorem invar4bisim_def':
  ∀x phi.
@@ -1543,7 +1525,7 @@ QED
 
 
 
-Theorem ultraproduct_comm_feval':
+Theorem ultraproduct_comm_feval2:
 !phi U I MS.
   ultrafilter U I ==>
   L1tau phi ==>
@@ -1741,48 +1723,50 @@ QED
 
 
 Theorem example_2_64_iii:
-¬(countably_saturated <|Dom:= univ(:num); Fun:= \f l. (CHOICE univ(:num)) ;
-                        Pred := \n v. ?x. v = [x] /\ n < x|>)
+  ¬countably_saturated <|Dom:= univ(:num); Fun:= \f l. (CHOICE univ(:num)) ;
+                         Pred := \n v. ?x. v = [x] /\ n < x|>
 Proof
-rw[countably_saturated_def,expand_def,consistent_def,ftype_def,frealizes_def,n_saturated_def] >>
-qabbrev_tac `M= <|Dom:= univ(:num); Fun:= \f l. (CHOICE univ(:num)) ;
-                        Pred := \n v. ?x. v = [x] /\ n < x|>` >>
-map_every qexists_tac [`0`,`{}`,`{fP n (fV a) | n | T}`,`a`,`\v.0`] >> rw[] (* 4 *)
->- fs[Abbr`M`]
->- (fs[FV_def,FVT_def,SUBSET_DEF] >> rw[] >> fs[FV_def])
->- (rw[] >>
-   qabbrev_tac ` n = MAX_SET {n | (fP n (fV a)) IN G0}` >>
-   qexists_tac `\v. n + 1` >> rw[] (* 1 *) >>
-   fs[SUBSET_DEF] >> first_x_assum drule >> rw[] >> rw[fsatis_def] (* 2 *)
-      >- rw[valuation_def,Abbr`M`]
-      >- (rw[Abbr`M`] >> fs[Abbr`n`] >>
-         `n' <= MAX_SET {n | fP n (fV a) ∈ G0}` suffices_by fs[] >> irule in_max_set >>
-         rw[] >>
-         `?f. INJ f {n | fP n (fV a) ∈ G0} G0` suffices_by metis_tac[FINITE_INJ] >>
-         qexists_tac `\n. fP n (fV a)` >> rw[INJ_DEF])) >>
-map_every qexists_tac [`\v.0`,`fP (w + 1) (fV a)`] >> rw[fsatis_def] >>
-`¬M.Pred (w + 1) [(λv. 0)⦇a ↦ w⦈ a]` suffices_by metis_tac[] >>
-rw[Abbr`M`,combinTheory.APPLY_UPDATE_THM]
+  rw[countably_saturated_def,expand_def,consistent_def,ftype_def,frealizes_def,
+     n_saturated_def] >>
+  qabbrev_tac ‘M = <|Dom:= univ(:num); Fun:= \f l. (CHOICE univ(:num)) ;
+                     Pred := \n v. ?x. v = [x] /\ n < x|>’ >>
+  map_every qexists_tac [‘0’,‘{}’,‘{fP n (fV a) | n | T}’,‘a’,‘\v.0’] >>
+  rw[] (* 4 *)
+  >- fs[Abbr‘M’]
+  >- (fs[FV_def,FVT_def,SUBSET_DEF] >> rw[] >> fs[FV_def])
+  >- (rw[] >>
+      qabbrev_tac ‘ n = MAX_SET {n | (fP n (fV a)) IN G0}’ >>
+      qexists_tac ‘\v. n + 1’ >> rw[] (* 1 *) >>
+      fs[SUBSET_DEF] >> first_x_assum drule >> rw[] >> rw[fsatis_def] (* 2 *)
+      >- rw[valuation_def,Abbr‘M’]
+      >- (rw[Abbr‘M’] >> fs[Abbr‘n’] >>
+          ‘n' <= MAX_SET {n | fP n (fV a) ∈ G0}’ suffices_by fs[] >>
+          irule in_max_set >>
+          rw[] >>
+          ‘?f. INJ f {n | fP n (fV a) ∈ G0} G0’ suffices_by
+            metis_tac[FINITE_INJ] >>
+         qexists_tac ‘\n. fP n (fV a)’ >> rw[INJ_DEF])) >>
+  map_every qexists_tac [‘\v.0’,‘fP (w + 1) (fV a)’] >> rw[fsatis_def] >>
+  ‘¬M.Pred (w + 1) [w]’ suffices_by metis_tac[] >>
+  rw[Abbr‘M’,combinTheory.APPLY_UPDATE_THM]
 QED
 
-
 Theorem feq_thm_2_68_half2:
-∀phi a x. (FV a ⊆ {x} ∧ L1tau a /\ feq (:α) a (ST x phi)) ==>
-invar4bisim x (:α) (:α) a
+  ∀phi a x. (FV a ⊆ {x} ∧ L1tau a /\ feq (:α) a (ST x phi)) ==>
+            invar4bisim x (:α) (:α) a
 Proof
-rw[] >> `invar4bisim x (:α) (:α) (ST x phi)` by metis_tac[thm_2_68_half2'] >>
-fs[feq_def,invar4bisim_def,fsatis_def] >> metis_tac[]
+  rw[] >> `invar4bisim x (:α) (:α) (ST x phi)` by metis_tac[thm_2_68_half2'] >>
+  fs[feq_def,invar4bisim_def,fsatis_def] >> metis_tac[]
 QED
 
 
 Theorem thm_2_68_half1':
-∀a x.
-            (INFINITE 𝕌(:α) /\
-            invar4bisim x (:(num -> α) -> bool) (:(num -> α) -> bool) a) ⇒
-            ∃(phi:modalBasics$form). feq (:α) a (ST x phi)
+  ∀a x.
+    (INFINITE 𝕌(:α) /\
+     invar4bisim x (:(num -> α) -> bool) (:(num -> α) -> bool) a) ⇒
+    ∃(phi:modalBasics$form). feq (:α) a (ST x phi)
 
 Proof
-rw[] >> drule thm_2_68_half1 >>  rw[feq_def] >> metis_tac[]
+  rw[] >> drule thm_2_68_half1 >>  rw[feq_def] >> metis_tac[]
 QED
 
-val _ = export_theory();

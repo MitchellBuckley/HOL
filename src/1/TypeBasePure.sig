@@ -21,6 +21,7 @@ sig
          case_def  : thm,
          case_cong : thm,
          case_eq   : thm,
+         case_elim : thm,
          nchotomy  : thm,
          size      : (term * shared_thm) option,
          encode    : (term * shared_thm) option,
@@ -61,6 +62,7 @@ sig
    val case_cong_of    : tyinfo -> thm
    val case_def_of     : tyinfo -> thm
    val case_eq_of      : tyinfo -> thm
+   val case_elim_of    : tyinfo -> thm
    val nchotomy_of     : tyinfo -> thm
    val distinct_of     : tyinfo -> thm option
    val one_one_of      : tyinfo -> thm option
@@ -72,6 +74,16 @@ sig
    val encode_of       : tyinfo -> (term * thm) option
    val lift_of         : tyinfo -> term option
    val extra_of        : tyinfo -> ThyDataSexp.t list
+
+   (* The induction principle as the construction states it, with a
+      nested type's hypotheses phrased through the operators' set
+      functions.  induction_of gives the principle a reader is meant
+      to see, which a development may have normalised out of all
+      recognition; this is the one code reads, and its shape is the
+      package's own.  NONE for a type that was not built with one. *)
+   val set_induction_tag : string
+   val set_induction_of : tyinfo -> thm option
+   val put_set_induction : thm -> tyinfo -> tyinfo
 
    val axiom_of0       : tyinfo -> shared_thm
    val induction_of0   : tyinfo -> shared_thm
@@ -106,7 +118,7 @@ sig
    val fetch           : typeBase -> hol_type -> tyinfo option
    val prim_get        : typeBase -> string * string -> tyinfo option
    val get             : typeBase -> string -> tyinfo list
-                       (* get returns list of tyinfos for types with that tyop *)
+                    (* get returns list of tyinfos for types with that tyop *)
 
    val listItems       : typeBase -> tyinfo list
    val toPmatchThry    : typeBase -> {Thy:string,Tyop:string} ->
@@ -121,7 +133,8 @@ sig
                          (hol_type -> term option) *
                          (hol_type -> term) -> hol_type -> term
 
-   val type_size_pre   : (hol_type -> term option) -> typeBase -> hol_type -> term
+   val type_size_pre   : (hol_type -> term option) -> typeBase -> hol_type ->
+                         term
    val type_size       : typeBase -> hol_type -> term
    val type_encode     : typeBase -> hol_type -> term
    val type_lift       : typeBase -> hol_type -> term

@@ -65,7 +65,7 @@ fun add_sptree_compset compset =
     let
       open sptreeTheory
     in
-      computeLib.add_thms [
+      compset |> computeLib.add_thms [
         delete_compute,
         difference_def,
         filter_v_def,
@@ -79,29 +79,31 @@ fun add_sptree_compset compset =
         lookup_compute,
         lrnext_thm,
         map_def,
+        mapi_def,
+        mapi0_def,
         mk_BN_def,
         mk_BS_def,
         mk_wf_def,
         size_def,
+        spt_center_def,
+        spt_left_def,
+        spt_right_def,
+        spts_to_alist_def,
         toListA_def,
         toList_def,
+        toSortedAList_def,
         union_def,
         wf_def
-      ] compset
-    ; computeLib.add_conv (sptreeSyntax.foldi_tm, 4, foldi_CONV) compset
-    ; computeLib.add_conv (sptreeSyntax.domain_tm, 1, domain_CONV) compset
-    ; computeLib.add_conv (sptreeSyntax.toAList_tm, 1, toAList_CONV) compset
-    ; computeLib.add_datatype_info compset
-            (Option.valOf (TypeBase.fetch ``:'a sptree$spt``))
+      ]
+      |> computeLib.add_conv (sptreeSyntax.foldi_tm, 4, foldi_CONV)
+      |> computeLib.add_conv (sptreeSyntax.domain_tm, 1, domain_CONV)
+      |> computeLib.add_conv (sptreeSyntax.toAList_tm, 1, toAList_CONV)
+      |> (fn cs => computeLib.add_datatype_info cs
+            (Option.valOf (TypeBase.fetch ``:'a sptree$spt``)))
     end
 
 val SPTREE_CONV =
-   let
-      val c = reduceLib.num_compset ()
-   in
-       add_sptree_compset c
-     ; computeLib.CBV_CONV c
-   end
+   computeLib.CBV_CONV (add_sptree_compset (reduceLib.num_compset))
 
 (* ------------------------------------------------------------------------- *)
 

@@ -5,9 +5,9 @@ struct
 open HolKernel boolLib bossLib
 open utilsLib armTheory
 
-val () = (numLib.prefer_num (); wordsLib.prefer_word ())
+val () = (numLib.temp_prefer_num (); wordsLib.prefer_word ())
 
 fun arm_compset thms =
-   utilsLib.theory_compset (thms, armTheory.inventory)
+   utilsLib.theory_compset (thms, Import.gen_inventory{thyname="arm"})
 
 end

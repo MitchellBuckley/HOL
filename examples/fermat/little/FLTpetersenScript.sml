@@ -23,33 +23,19 @@ This is a combinatorial using Group action, via Orbit-Stabilizer Theorem.
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "FLTpetersen";
+Theory FLTpetersen
+Ancestors
+  arithmetic divides gcd logroot number pred_set combinatorics
+  group cycle
 
 (* ------------------------------------------------------------------------- *)
-
-
-(* open dependent theories *)
-(* val _ = load "FLTactionTheory"; *)
-open helperNumTheory helperSetTheory;
-open arithmeticTheory pred_setTheory;
-open dividesTheory; (* for PRIME_POS *)
-
-open necklaceTheory; (* for multicoloured_finite *)
-
-open groupTheory;
-open groupActionTheory;
-
 
 (* ------------------------------------------------------------------------- *)
 (* Fermat's Little Theorem by Action Documentation                           *)
 (* ------------------------------------------------------------------------- *)
 (* Overloading:
 *)
-(*
+(* Definitions and Theorems (# are exported, ! are in compute):
 
    From groupInstances:
    Zadd_group          |- !n. 0 < n ==> Group (Zadd n)
@@ -87,9 +73,6 @@ open groupActionTheory;
 (* ------------------------------------------------------------------------- *)
 
 (* Part 1: Basic ----------------------------------------------------------- *)
-
-val Zadd_group = groupInstancesTheory.Zadd_group;
-(* |- !n. 0 < n ==> Group (Zadd n) *)
 
 val necklace_cycle = FLTnecklaceTheory.necklace_cycle;
 (* |- !n a ls k. ls IN necklace n a ==> cycle k ls IN necklace n a *)
@@ -183,8 +166,4 @@ QED
 (* Part 4: End ------------------------------------------------------------- *)
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

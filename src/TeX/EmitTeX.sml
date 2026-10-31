@@ -53,6 +53,7 @@ fun definition_prefix() = prefix_string() ^ "Definitions";
 fun theorem_prefix()    = prefix_string() ^ "Theorems";
 fun date_prefix()       = prefix_string() ^ "Date";
 fun time_prefix()       = prefix_string() ^ "Time";
+fun hash_prefix()       = prefix_string() ^ "Hash";
 
 (* ------------------------------------------------------------------------- *)
 (* datatype_theorems : string -> (string * thm) list                         *)
@@ -174,7 +175,7 @@ in
   let val dtype_thms = matchp is_datatype_thm [s]
       fun dtype_name s = String.extract(s, 9, NONE)
   in
-    map (fn x => (dtype_name (snd (fst x)), fst (snd x))) dtype_thms
+    map (fn ((thy,thname), (th,cl,i)) => (dtype_name thname, th)) dtype_thms
   end
 
   fun non_type_definitions s =
@@ -263,7 +264,7 @@ local
      | c     => c
 
   fun string_map (s,sz) =
-      case Binarymap.peek(TexTokenMap.the_map(), s) of
+      case Symtab.lookup (TexTokenMap.the_map()) s of
         SOME {info = result, ...} => result
       | NONE => (UTF8.translate char_map s,
                  case sz of NONE => String.size s | SOME sz => sz)
@@ -309,10 +310,21 @@ local
           (core_s, digitstr ^ prime_str)
         end
 
-  val stringmunge =
-    UTF8.translate (fn "\\" => "\\HOLTokenBackslash{}"
-                     | "~" => "\\HOLTokenTilde{}"
-                     | s => s)
+  fun stringmunge s =
+      let
+        fun removebsdq [] = []
+          | removebsdq [c] = [c]
+          | removebsdq (#"\\" :: #"\"" :: rest) = #"\"" :: removebsdq rest
+          | removebsdq (c::cs) = c::removebsdq cs
+        val s = implode (removebsdq (explode s))
+      in
+        UTF8.translate (fn "\\" => "\\HOLTokenBackslash{}"
+                       | "~" => "\\HOLTokenTilde{}"
+                       | "{" => "\\{"
+                       | "}" => "\\}"
+                       | s => s) s
+      end
+
 
   fun ann_string overrides (s,sz_opt,ann) = let
     open PPBackEnd
@@ -360,9 +372,10 @@ local
             end
           | Literal FldName => apfst (addann "FieldName") (smapper s)
           | Literal NumLit => (addann "NumLit" s, unmapped_sz)
-          | Literal CharList => (addann "CharLit"
-                                        (String.substring(s, 2, size s - 3)),
-                                 unmapped_sz)
+          | Literal CharLit => (addann "CharLit"
+                                       (stringmunge
+                                          (String.substring(s, 2, size s - 3))),
+                                unmapped_sz)
           | _ => smapper s
   in
     smpp.add_stringsz (dollarpfx ^ string_to_print ^ dollarsfx, sz + szdelta)
@@ -533,7 +546,7 @@ val datatype_thm_to_string =
 
 fun print_datatypes s =
   app (fn (_,x) =>
-          HOLPP.prettyPrint(print,!Globals.linewidth)
+          HOLPP.prettyPrint(Feedback.HOL_INFO,!Globals.linewidth)
                            (Parse.mlower
                               (pp_datatype_theorem PPBackEnd.raw_terminal x)))
       (datatype_theorems s);
@@ -588,7 +601,7 @@ fun pp_theorem_as_tex ostrm =
     raw_pp_theorem_as_tex (K NONE) ostrm |> UnicodeOff
                                          |> trace ("pp_dollar_escapes", 0)
 
-fun pprint f = PP.prettyPrint (print, !Globals.linewidth) o f
+fun pprint f = PP.prettyPrint (Feedback.HOL_INFO, !Globals.linewidth) o f
 val pp_type_as_tex = fn ty => Parse.mlower (pp_type_as_tex ty)
 val pp_term_as_tex = fn tm => Parse.mlower (pp_term_as_tex tm)
 val pp_theorem_as_tex = fn th => Parse.mlower (pp_theorem_as_tex th)
@@ -672,7 +685,11 @@ fun pp_theory_as_tex name =
       val typs = datatype_theorems name
       val defns = non_type_definitions name
       val thms = non_type_theorems name
-      val time = Date.fromTimeLocal (stamp name handle HOL_ERR _ => Time.now())
+      val hash = Theory.hash name
+                 handle HOL_ERR _ => "<exporting current theory: no hash>"
+      val time = Date.fromTimeLocal $
+                                    (Theory.mod_time name
+                                     handle NotFound => Time.now())
       val u = current_trace "Unicode"
       val _ = set_trace "Unicode" 0
   in
@@ -684,6 +701,7 @@ fun pp_theory_as_tex name =
         S (Date.fmt "%d %B %Y" time), S "}", NL,
         pp_newcommand (time_prefix()),
         S (Date.fmt "%H:%M" time), S "}", NL,
+        pp_newcommand (hash_prefix()), S hash, S "}", NL,
         pp_datatypes_as_tex typs,
         pp_defnitions_as_tex defns,
         pp_theorems_as_tex thms
@@ -721,6 +739,7 @@ fun pp_parents_as_tex_doc names =
       else [
         S "\\begin{flushleft}", NL,
         S ("\\textbf{Built:} " ^ "\\" ^ date_prefix() ^ " \\\\[2pt]"), NL,
+        S ("\\textbf{Hash:} " ^ "\\" ^ hash_prefix() ^ " \\\\[2pt]"), NL,
         S "\\textbf{Parent Theories:} ",
         B (PP.pr_list S [S ",", PP.add_break(1,0)] names), NL,
        S "\\end{flushleft}", NL
@@ -798,6 +817,7 @@ fun pp_theories_as_tex_doc names =
   B [
     S "\\documentclass[", S texOptions, S "]{article}", NL,
     S "\\usepackage{holtex}", NL, NL,
+    S "\\usepackage{makeidx}", NL, NL,
     S "\\makeindex", NL, NL,
     S "\\begin{document}", NL, NL,
     B (PP.pr_list (fn x => (S ("\\input{" ^ (prefix_escape x) ^ "}")))

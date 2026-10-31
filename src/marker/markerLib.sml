@@ -163,12 +163,12 @@ in
    val () = Feedback.register_btrace
                ("PAT_ABBREV_TAC: match var/const", match_var_or_const)
 
-   fun PAT_ABBREV_TAC fv_set eq (g as (asl, w)) =
+   fun PAT_ABBREV_TAC fv_set eq (g as (asl, w)) ctxt =
       let
          open HOLset
          val (l, r) = dest_eq eq
          val rvs = FVL [r] empty_tmset
-         val l' = gen_variant Parse.is_constname ""
+         val l' = gen_variant (Parse.get_is_constname ctxt) ""
                               (listItems(union(fv_set, rvs))) l
          fun matchr t =
            case raw_match [] fv_set r t ([],[]) of
@@ -197,7 +197,7 @@ in
       in
          case gen_find_term finder w of
             NONE => raise ERR "PAT_ABBREV_TAC" "No matching term found"
-          | SOME (t, tysub) => ABB (Term.inst tysub l') t g
+          | SOME (t, tysub) => ABB (Term.inst tysub l') t g ctxt
       end
 end
 
@@ -220,26 +220,27 @@ val safe_inst_sort =
     Listsort.sort safe_inst_cmp
 
 fun MATCH_ABBREV_TAC fv_set pattern (g as (asl, w)) = let
-  val ctxt = HOLset.listItems fv_set
-  val (tminst,_) = match_terml (fixed_tyvars ctxt pattern) fv_set pattern w
+  val fvl = HOLset.listItems fv_set
+  val (tminst,_) = match_terml (fixed_tyvars fvl pattern) fv_set pattern w
 in
   MAP_EVERY ABB' (safe_inst_sort tminst) g
 end
 
-fun MATCH_ASSUM_ABBREV_TAC fv_set pattern (g as (asl, w)) = let
-  val ctxt = HOLset.listItems fv_set
-  val fixed = fixed_tyvars ctxt pattern
+fun MATCH_ASSUM_ABBREV_TAC fv_set pattern (g as (asl, w)) ctxt = let
+  val fvl = HOLset.listItems fv_set
+  val fixed = fixed_tyvars fvl pattern
   fun find [] = raise ERR "MATCH_ASSUM_ABBREV_TAC" "No matching assumption found"
     | find (asm::tl) =
       case total (match_terml fixed fv_set pattern) asm of
         NONE => find tl
-      | SOME (tminst,_) => MAP_EVERY ABB' (safe_inst_sort tminst) g
+      | SOME (tminst,_) => MAP_EVERY ABB' (safe_inst_sort tminst) g ctxt
                            handle HOL_ERR e => find tl
 in find asl end
 
 fun HO_MATCH_ABBREV_TAC fv_set pattern (gl as (asl,w)) =
- let val ctxt = HOLset.listItems fv_set
-     val (tminst, tyinst) = ho_match_term (fixed_tyvars ctxt pattern) fv_set pattern w
+ let val fvl = HOLset.listItems fv_set
+     val (tminst, tyinst) =
+         ho_match_term (fixed_tyvars fvl pattern) fv_set pattern w
      val unbeta_goal =
         Tactical.default_prover(mk_eq(w, subst tminst (inst tyinst pattern)),
                                 BETA_TAC THEN REFL_TAC)
@@ -247,10 +248,13 @@ in
   CONV_TAC (K unbeta_goal) THEN MAP_EVERY ABB' (safe_inst_sort tminst)
 end gl;
 
-fun UNABBREV_TAC s =
+fun UNABBREV_TAC s gl ctxt =
  FIRST_X_ASSUM(SUBST_ALL_TAC o
                assert(equal s o fst o dest_var o lhs o concl) o
-               DeAbbrev);
+               DeAbbrev) gl ctxt
+ handle HOL_ERR _ =>
+   raise ERR "UNABBREV_TAC"
+         ("No assumption of the form `Abbrev (" ^ s ^ " = ...)`");
 
 val UNABBREV_ALL_TAC =
  let fun ttac th0 =
@@ -361,7 +365,30 @@ val DEST_LABELS_TAC = CONV_TAC DEST_LABELS_CONV THEN RULE_ASSUM_TAC DEST_LABELS
 
 fun MK_LABEL(s, th) = EQ_MP (SYM (SPECL [mk_label_var s, concl th] label_def)) th
 
-fun ASSUME_NAMED_TAC s bth : tactic = ASSUME_TAC (MK_LABEL(s, bth))
+local
+fun splitp p [] = ([], [])
+  | splitp p (x::xs) =
+    if p x then
+      ([], x::xs)
+    else
+      let
+        val (ys, zs) = splitp p xs
+      in
+        (x::ys, zs)
+      end
+in
+fun ASSUME_NAMED_TAC s bth (g as (asl,w)) (_ : Context.t) =
+  let
+    val label_thm = MK_LABEL(s, bth)
+    val (xs,ys) = splitp (not o is_label) (List.rev (asl))
+    val asl' = List.revAppend (ys,(concl label_thm::(List.rev xs)))
+  in
+   ([(asl',w)],(fn resths => PROVE_HYP label_thm (hd resths)))
+  end
+end;
+
+val assume_named_tac = ASSUME_NAMED_TAC;
+val mk_asm = ASSUME_NAMED_TAC;
 
 (*---------------------------------------------------------------------------*)
 (* Given an LB encoded label reference, finds a corresponding term in the    *)
@@ -381,6 +408,9 @@ end;
 
 fun LABEL_ASSUM s ttac (asl, w) =
    ttac (find_labelled_assumption (L s) asl) (asl, w)
+
+val label_assum = LABEL_ASSUM;
+val asm = LABEL_ASSUM;
 
 (*---------------------------------------------------------------------------*)
 (* LABEL_X_ASSUM is almost identical to LABEL_ASSUM. But it is not applied   *)
@@ -402,6 +432,9 @@ fun LABEL_X_ASSUM s ttac : tactic =
      | SOME(named_tm,_)
          => ttac (DEST_LABEL(ASSUME named_tm))
                  (op_set_diff aconv asl [named_tm],w);
+
+val label_x_assum = LABEL_X_ASSUM;
+val asm_x = LABEL_X_ASSUM;
 
 (*---------------------------------------------------------------------------*)
 (* Given a list of theorems thl and a list of assumptions asl, return a list *)
@@ -516,19 +549,19 @@ fun hide_pp (tyg,tmg) backend printer ppfns gravs depth t =
       )
     end
 
+val hide_pat = list_mk_comb(hidec, [sv,tv])
 fun install_hidepp() =
-    Parse.temp_add_user_printer ("hide-printer", list_mk_comb(hidec, [sv,tv]),
-                                 hide_pp)
+    Parse.temp_add_user_printer ("hide-printer", hide_pat, hide_pp)
 val _ = install_hidepp()
 fun remove_hidepp() =
-    ignore (Parse.temp_remove_user_printer "hide-printer")
+    ignore (Parse.temp_remove_user_printer ("hide-printer", hide_pat))
 
 fun mk_hide s t = list_mk_comb(hidec, [mk_var(s,bool), t])
 fun MK_HIDE s th =
     EQ_MP (SYM (SPECL [mk_var(s,bool), concl th] hide_def)) th
 val UNHIDE = CONV_RULE (REWR_CONV hide_def)
 
-fun hide_tac s th (asl,w) =
+fun hide_tac s th (asl,w) (_ : Context.t) =
     ([(asl @ [mk_hide s (concl th)], w)],
      fn ths => PROVE_HYP (MK_HIDE s th) (hd ths))
 
@@ -546,7 +579,7 @@ fun dest_hide t =
 
 val is_hide = can dest_hide
 
-fun unignoring_hide f x = unignoringc hidec f x
+fun unignoring_hide tac = unignoringc hidec tac
 
 fun unhide_tac s =
     let fun do1 th =
@@ -580,5 +613,934 @@ val unhide_assum = unhide_assum0 first_x_assum assume_tac
 val unhide_x_assum = unhide_assum0 first_x_assum (K all_tac)
 val use_hidden_assum = unhide_assum0 first_assum (K all_tac)
 
+val NoAsms = EQT_ELIM markerTheory.NoAsms
+val NoAsms_t = concl NoAsms
 
+fun q2str [] = ""
+  | q2str (QUOTE s :: rest) = s ^ q2str rest
+  | q2str (ANTIQUOTE t :: rest) =
+        raise ERR "IgnAsm"
+              "Pattern quotation must not include antiquotes"
+val IgnAsm_t = mk_thy_const {Thy = "marker", Name = "IgnAsm",
+                             Ty = alpha --> bool}
+fun IgnAsm qpat =
+    let val s = q2str qpat
+        val s_t = mk_var(s, alpha)
+    in
+      EQT_ELIM (SPEC s_t IgnAsm_def)
+    end
+
+fun print_ignasm (tyg,tmg) backend printer ppfns (pgr,lgr,rgr) depth tm =
+    let
+      open term_pp_types smpp
+      val (f, x) = dest_comb tm
+      val {add_string, ...} = ppfns:ppstream_funs
+      val _ = same_const IgnAsm_t f andalso is_var x andalso type_of x = alpha
+              orelse raise UserPP_Failed
+    in
+      add_string ("IgnAsm" ^ UnicodeChars.lsquo ^ #1 (dest_var x) ^
+                  UnicodeChars.rsquo)
+    end
+
+val _ = Parse.temp_add_user_printer("markerLib.IgnAsm",
+                                    mk_comb(IgnAsm_t, mk_var("x", alpha)),
+                                    print_ignasm)
+
+(*---------------------------------------------------------------------------*)
+(* The theorem-list directive vocabulary.  Hypothesis-carried wrappers are  *)
+(* reported first: they enclose whatever the conclusion says, and a         *)
+(* consumer strips them before looking at the payload.                      *)
+(*---------------------------------------------------------------------------*)
+
+datatype directive =
+    DAC of thm * thm
+  | DCong of thm
+  | DExcl of string
+  | DExclSF of string
+  | DFRAG of string
+  | DReq0 of thm
+  | DReqD of thm
+  | DBounded of thm * int
+  | DNoAsms
+  | DIgnAsm of string
+  | DAbbr of string
+  | DLabel of string
+
+fun has_marker_head marker th =
+    same_const marker (#1 (strip_comb (concl th)))
+    handle HOL_ERR _ => false
+
+fun dest_directive th =
+    let
+      fun wrapper () =
+          case dest_Req0 th of
+              SOME p => SOME (DReq0 p)
+            | NONE =>
+              case dest_ReqD th of
+                  SOME p => SOME (DReqD p)
+                | NONE => Option.map DBounded
+                                     (total BoundedRewrites.DEST_BOUNDED th)
+      fun head () =
+          if has_marker_head AC_tm th then SOME (DAC (unAC th))
+          else if has_marker_head Cong_tm th then SOME (DCong (unCong th))
+          else if aconv (concl th) NoAsms_t then SOME DNoAsms
+          else if has_marker_head IgnAsm_t th then
+            SOME (DIgnAsm (#1 (dest_var (rand (concl th)))))
+          else if is_abbr th then SOME (DAbbr (dest_abbr th))
+          else NONE
+      val named = [(destExcl, DExcl), (destExclSF, DExclSF),
+                   (destFRAG, DFRAG), (total dest_label_ref, DLabel)]
+    in
+      case wrapper () of
+          SOME d => SOME d
+        | NONE =>
+          case head () of
+              SOME d => SOME d
+            | NONE => get_first (fn (dest, mk) => Option.map mk (dest th))
+                                named
+    end
+
+val is_directive = Option.isSome o dest_directive
+
+datatype tacoptions = TO_NoAsms | TO_IgnAsm of string |
+                      TO_Abbr of string | TO_Label of string |
+                      TO_thm of thm
+datatype aslP = AP_NoAsms | AP_Ign of string
+
+fun dest_tacmarked th =
+    case dest_directive th of
+        SOME DNoAsms => TO_NoAsms
+      | SOME (DIgnAsm s) => TO_IgnAsm s
+      | SOME (DAbbr s) => TO_Abbr s
+      | SOME (DLabel s) => TO_Label s
+      | _ => TO_thm th
+
+fun optcons NONE l = l
+  | optcons (SOME x) xs = x::xs
+
+fun matching_asm lnm t =
+    (#1 (dest_label t) = lnm) handle HOL_ERR _ => false
+
+fun process_tacoption to asl =
+    case to of
+        TO_thm th => (NONE, NONE, SOME th)
+      | TO_NoAsms => (NONE, SOME AP_NoAsms, NONE)
+      | TO_IgnAsm s => (NONE, SOME (AP_Ign s), NONE)
+      | TO_Abbr s => (SOME (UNABBREV_TAC s), NONE, NONE)
+      | TO_Label s => (NONE, NONE,
+                       case List.find (matching_asm s) asl of
+                           NONE => raise ERR "process_taclist"
+                                         ("No assumption with label "^s)
+                         | SOME t => SOME (DEST_LABEL (ASSUME t)))
+
+fun asl_match ctxt s =
+    let
+      val q0 = [QUOTE s]
+      val (q, comment_opt) = apsnd (Option.map Portable.remove_wspace)
+                                   (HOLquotation.dest_last_comment q0)
+      val pat = Parse.parse_in_context ctxt q
+      val ctxt_s = HOLset.fromList Term.compare ctxt
+      fun basematch t = Term.raw_match [] ctxt_s pat t ([],[])
+    in
+      case comment_opt of
+          NONE => can basematch
+        | SOME "sa" => can (find_term (can basematch))
+        | SOME s => can basematch
+    end
+
+fun apply_aslPs ctxt aps asl =
+    case aps of
+        [] => asl
+      | (AP_NoAsms :: _) => []
+      | (AP_Ign s :: rest) =>
+        apply_aslPs ctxt rest (List.filter (not o asl_match ctxt s) asl)
+
+fun process_tacoptions tos asl pretacs aslPs asms =
+    case tos of
+        [] => {pre = EVERY (List.rev pretacs), asms = List.rev asms,
+               aslPs = aslPs}
+      | to::rest =>
+        let val (tac_opt, aslP_opt, asm_opt) = process_tacoption to asl
+        in
+          process_tacoptions rest asl
+                             (optcons tac_opt pretacs)
+                             (optcons aslP_opt aslPs)
+                             (optcons asm_opt asms)
+        end
+
+fun filter_then asms aslPs thltac (gl as (asl0,g)) =
+    let
+      val asl = apply_aslPs (free_varsl (g::asl0)) aslPs
+                            (filter (not o is_label) asl0)
+    in
+      thltac (map ASSUME asl @ asms) gl
+    end
+
+fun process_taclist_then {arg} thltac (gl as (asl,g)) =
+    let val tacoptions = map dest_tacmarked arg
+        val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+    in
+      Tactical.THEN(pre, filter_then asms aslPs (mk_require_tac thltac)) gl
+    end
+
+(* ----------------------------------------------------------------------
+    suspend : string -> tactic
+
+    Cheats the current goal by assuming it under a "named/labelled"
+    hypothesis.
+   ---------------------------------------------------------------------- *)
+
+val susp_t = prim_mk_const{Thy = "marker", Name = "suspendlabel"}
+val (resconj_t, mk_resconj, dest_resconj, is_resconj) =
+    syntax_fns2 "marker" "resconj"
+val list_mk_resconj = list_mk_rbinop (curry mk_resconj)
+val strip_resconj = strip_binop dest_resconj
+
+val (suspimp_t, mk_suspimp, dest_suspimp, is_suspimp) =
+    syntax_fns2 "marker" "suspendimp"
+val strip_suspimp = strip_gen_left dest_suspimp
+
+(* The label variable's name encodes both a closure-variable count and the
+   user-supplied label name in the format "N name" where N is the number of
+   universally quantified closure variables wrapping the goal body.
+   The count is always present, even when 0.
+   Decoding is done by decode_suspend_label from boolLib. *)
+fun encode_label (nm, n) = Int.toString n ^ " " ^ nm
+
+fun dest_slab t =
+    let val (f, xs) = strip_comb t
+        val _ = same_const susp_t f orelse
+                raise ERR "dest_slab" "Term not a suspendlabel"
+    in
+      case xs of
+          [labt, arg] =>
+            let val (raw, _) = dest_var labt
+                               handle HOL_ERR _ =>
+                                      raise ERR "dest_slab"
+                                                "Label argument invalid"
+                val (nm, nclosure) = boolLib.decode_suspend_label raw
+            in
+              (nm, nclosure, arg)
+            end
+        | _ => raise ERR "dest_slab" "Incomplete suspendlabel term"
+    end
+
+(* to keep it tail-recursive, does it "backwards" *)
+fun list_mk_suspimp (asl, g) =
+  case asl of
+      [] => g
+    | a::rest => list_mk_suspimp(rest, mk_suspimp(a,g))
+
+fun sMP simpth th =
+    let val (a, c) = dest_suspimp (concl simpth)
+                     handle HOL_ERR _ =>
+                            raise ERR "sMP" "Th1 not a suspended implication"
+        val impth = EQ_MP (AP_THM (AP_THM suspendimp_def a) c) simpth
+    in
+      MP impth th
+    end
+
+fun spopmp ([], g) (_ : Context.t) = raise ERR "spopmp" "No assumptions"
+  | spopmp (a::rest, g) (_ : Context.t) =
+    ([(rest, list_mk_suspimp([a], g))],
+     fn ths => sMP (hd ths) (ASSUME (lhand (concl (hd ths)))))
+
+fun suspend nm g =
+  let
+    val gl_t = list_mk_suspimp g
+    (* Universally close over free variables in gl_t so that they don't
+       leak into the suspendlabel hypothesis. This prevents GEN from failing
+       when proof reconstruction needs to re-generalise variables that were
+       introduced by GEN_TAC. *)
+    val fvs = free_vars gl_t
+    val closed_gl_t = list_mk_forall(fvs, gl_t)
+    val lab_t = mk_var(encode_label(nm, length fvs), ind)
+    val eqth = SPECL [lab_t,closed_gl_t] suspendlabel_def
+    val th = ASSUME (lhs (concl eqth))
+    val usable_th = SPECL fvs (EQ_MP eqth th)
+    fun foldthis (ath, mpth) = sMP mpth ath
+  in
+    Tactical.THEN(rpt spopmp, ACCEPT_TAC usable_th)
+  end g
+
+val simp_def' = SYM suspendimp_def
+val slab_def' = GSYM suspendlabel_def
+val labty = slab_def' |> concl |> dest_forall |> #1 |> dest_var |> #2
+fun sDISCH t th =
+    CONV_RULE (RATOR_CONV (RATOR_CONV (K simp_def'))) $ DISCH t th
+
+fun add_suspension_label nm th = EQ_MP (SPECL [mk_var(nm, labty), concl th] slab_def') th
+
+val elimrc_conv = RATOR_CONV (RATOR_CONV (REWR_CONV resconj_def))
+val elimsi_conv = RATOR_CONV (RATOR_CONV (REWR_CONV suspendimp_def))
+
+fun RESCONJ_PAIR th =
+    if is_resconj (concl th) then
+      th |> CONV_RULE elimrc_conv |> CONJ_PAIR
+    else raise ERR "RESCONJ_PAIR" "not a resumption conjunction"
+
+fun RESCONJS th =
+    let fun recurse A ths =
+            case ths of
+                [] => A
+              | th::rest =>
+                case total RESCONJ_PAIR th of
+                    NONE => recurse (th::A) rest
+                  | SOME (th1, th2) =>
+                    recurse (th2::th1::A) rest
+    in
+      rev (recurse [] [th])
+    end
+
+fun RESCONJS_TAC g =
+    TRY (CONV_TAC elimrc_conv THEN CONJ_TAC THEN RESCONJS_TAC) g
+
+fun SUSPIMPS_TAC g =
+    TRY (CONV_TAC elimsi_conv THEN DISCH_THEN ASSUME_TAC THEN SUSPIMPS_TAC) g
+
+val RESUME_TAC = RESCONJS_TAC THEN SUSPIMPS_TAC
+
+
+(* th is the theorem corresponding to the suspended goal (which the user has
+   presumably just proved interactively);
+   s_t is the term encoding that goal.
+   nm is the name of the label
+   tgt is the theorem that has a corresponding suspended hypothesis.
+   Then aim is to produce a version of tgt with fewer hypotheses.
+
+   For the simple case, where the user hasn't encoded multiple goals with the
+   same name, we need to generate the theorem |- s_t so that we can PROVE_HYP
+   this against the main, overall theorem.  This is done by prove_suspended0.
+
+   When there are multiple goals, we need to repeat the above having stripped
+   away the "resumption conjunctions".
+ *)
+fun strip_n_foralls_vars 0 t = ([], t)
+  | strip_n_foralls_vars n t =
+    let val (v, body) = dest_forall t
+        val (vs, rest) = strip_n_foralls_vars (n - 1) body
+    in (v :: vs, rest)
+    end
+
+(* Reconstruct |- suspendlabel (encoded_nm) closed_term from a user-proved
+   theorem th whose conclusion matches body (the term under the closure
+   foralls). *)
+fun prove_suspended0 nm nclosure s_t th tgt =
+    let
+      val (closure_vars, body) = strip_n_foralls_vars nclosure s_t
+      val result =
+          if is_suspimp (concl th) then th
+          else
+            let
+              val (imps, c) = strip_suspimp body
+            in
+              itlist sDISCH imps th
+            end
+      val closed_result = GENL closure_vars result
+      val encoded_nm = encode_label(nm, nclosure)
+    in
+      PROVE_HYP (add_suspension_label encoded_nm closed_result) tgt
+    end
+
+(* prove_suspended: handle both single and multi-goal (resconj) cases.
+   ncts is the list of (nclosure, term) pairs from extract_suspended_goal. *)
+fun prove_suspended nm ncts th tgt =
+  case ncts of
+      [(nc, s_t)] => prove_suspended0 nm nc s_t th tgt
+    | _ =>
+      let val ths = RESCONJS th
+          fun foldthis ((nc, s_t), th, tgt) =
+              prove_suspended0 nm nc s_t th tgt
+      in
+        ListPair.foldl foldthis tgt (ncts, ths)
+      end
+
+(* extract_suspended_goal: returns a list of (nclosure, term) pairs,
+   one per hypothesis with the given label. *)
+fun extract_suspended_goal thms label =
+    let
+      fun myhyp t =
+          case total dest_slab t of
+              SOME (nm,nc,t0) => if nm = label then SOME (nc,t0) else NONE
+            | NONE => NONE
+      val to_ncts = List.mapPartial myhyp o hyp
+    in
+      case List.find (not o null) (List.map to_ncts thms) of
+          NONE => raise ERR "extract_suspended_goal"
+                        ("No such label in theorem: " ^ label)
+        | SOME ncts => ncts
+    end
+
+(* resumption_to_goal: given the (nclosure, term) list from
+   extract_suspended_goal, produce the goal to present to the user.
+   For a single hypothesis, strip nclosure foralls then strip suspimps.
+   For multiple hypotheses, strip each one's closure foralls individually,
+   then combine with resconj. *)
+fun resumption_to_goal ncts =
+    case ncts of
+        [(nclosure, r_t)] =>
+          let val (_, body) = strip_n_foralls_vars nclosure r_t
+              val (asl0, g) = strip_suspimp body
+          in
+            (List.rev asl0, g)
+          end
+      | _ => ([], list_mk_resconj
+                    (map (fn (nc, t) => #2 (strip_n_foralls_vars nc t)) ncts))
+
+
+fun prim_resume (th,label,tac) =
+    let val ncts = extract_suspended_goal [th] label
+        val goal = resumption_to_goal ncts
+        val sub_th = prove_goal(goal, tac)
+    in
+      {subresult = sub_th,
+       updated_main = prove_suspended label ncts sub_th th}
+    end
+
+(* ----------------------------------------------------------------------
+    Persistent, ancestor-aware storage for suspended theorems and
+    resumption proofs.
+
+    Two AncestryData stores live here, sharing the "suspension." prefix
+    so their relationship is visible in the theory files:
+
+      suspension.theorems
+        name (string)  ->  the suspended parent theorem
+          (its conclusion is the original statement, and each still-open
+           subgoal is recorded as a suspendlabel hypothesis)
+
+      suspension.resumptions
+        (parent_thy, parent_name, label)  ->  list of proved
+          |- suspendlabel "lab" G  theorems, one per matching
+          hypothesis of the parent.
+
+    Finalise consults both stores (merged across the current theory
+    and its ancestors) to assemble the clean theorem.
+   ---------------------------------------------------------------------- *)
+
+open ThyDataSexp
+
+(* --- suspension.theorems store --- *)
+
+(* Key: kernelname {Thy, Name}.  Theory qualification allows distinct
+   theorems with the same name in different theories.  Strictly a
+   slight bending of the semantics -- kernelnames are usually
+   logical entities like constants and type-operators -- but
+   reusing the existing top-level KNametab avoids defining a
+   parallel structure. *)
+type susp_key = KernelSig.kernelname
+
+datatype susp_delta =
+    AddSuspended of susp_key * thm
+  | RemoveSuspended of susp_key
+
+type susp_table = thm KNametab.table
+
+val empty_susp_table : susp_table = KNametab.empty
+
+fun apply_susp_delta d (tab : susp_table) : susp_table =
+    case d of
+        AddSuspended (k, th) => KNametab.update (k, th) tab
+      | RemoveSuspended k => KNametab.delete_safe k tab
+
+val (susp_enc, susp_dec) = bij_ed (
+      (fn AddSuspended ({Thy,Name}, th) => inl ((Thy,Name), th)
+        | RemoveSuspended {Thy,Name} => inr (Thy,Name)),
+      (fn inl ((Thy,Name), th) =>
+              AddSuspended ({Thy=Thy,Name=Name}, th)
+        | inr (Thy,Name) => RemoveSuspended {Thy=Thy,Name=Name})
+    ) (tagged_sum ("add", pair_ed (pair_ed (string_ed, string_ed), thm_ed))
+                  ("rm", pair_ed (string_ed, string_ed)))
+
+val {record_delta = record_suspension_delta_raw,
+     get_global_value = get_susp_global,
+     update_global_value = update_susp_global,
+     DB = susp_DB,
+     merge = susp_merge, ...} :
+    (susp_delta, susp_table) AncestryData.fullresult =
+    AncestryData.fullmake {
+      adinfo = {tag = "suspension.theorems",
+                initial_values = [("min", empty_susp_table)],
+                apply_delta = apply_susp_delta},
+      uptodate_delta = K true,
+      sexps = {dec = susp_dec, enc = susp_enc},
+      globinfo = {apply_to_global = apply_susp_delta,
+                  thy_finaliser = NONE,
+                  initial_value = empty_susp_table}
+    }
+
+(* Wrapper that both persists the delta and updates the in-memory global *)
+fun record_suspension_delta d =
+    (update_susp_global (apply_susp_delta d);
+     record_suspension_delta_raw d)
+
+(* --- suspension.resumptions store --- *)
+
+(* Key: (parent_thy, parent_name, label).  Theory qualification lets
+   sibling theories resume unrelated parents that happen to share a
+   name. *)
+type res_key = string * string * string
+
+fun triple_compare (c1, c2, c3) ((a1,a2,a3), (b1,b2,b3)) =
+    case Portable.pair_compare (c1, c2) ((a1,a2), (b1,b2)) of
+      EQUAL => c3 (a3, b3)
+    | r => r
+
+val res_key_compare =
+    triple_compare (String.compare, String.compare, String.compare)
+
+structure ResTab = Table(struct
+  type key = res_key
+  val ord = res_key_compare
+  fun pp (s1,s2,s3) = HOLPP.add_string (s1 ^ "$" ^ s2 ^ "$" ^ s3)
+end)
+
+datatype res_delta =
+    AddResumption of res_key * thm
+  | RemoveResumptions of string * string  (* parent_thy, parent_name *)
+
+type res_dict = thm list ResTab.table
+
+val empty_res_dict : res_dict = ResTab.empty
+
+fun apply_res_delta d (dict : res_dict) : res_dict =
+    case d of
+        AddResumption (k, th) =>
+          let val existing =
+                  case ResTab.lookup dict k of
+                      NONE => []
+                    | SOME ths => ths
+          in
+            ResTab.update (k, th :: existing) dict
+          end
+      | RemoveResumptions (thy, nm) =>
+          ResTab.fold
+            (fn (k as (t,n,_), v) => fn acc =>
+                if t = thy andalso n = nm then acc
+                else ResTab.update (k, v) acc)
+            dict
+            empty_res_dict
+
+val reskey_ed : res_key ed = pair3_ed (string_ed, string_ed, string_ed)
+
+val (res_enc, res_dec) = bij_ed (
+      (fn AddResumption p => inl p | RemoveResumptions p => inr p),
+      (fn inl p => AddResumption p | inr p => RemoveResumptions p)
+    ) (tagged_sum ("add", pair_ed (reskey_ed, thm_ed))
+                  ("rm", pair_ed (string_ed, string_ed)))
+
+val {record_delta = record_resumption_delta_raw,
+     get_global_value = get_res_global,
+     update_global_value = update_res_global,
+     DB = res_DB,
+     merge = res_merge, ...} :
+    (res_delta, res_dict) AncestryData.fullresult =
+    AncestryData.fullmake {
+      adinfo = {tag = "suspension.resumptions",
+                initial_values = [("min", empty_res_dict)],
+                apply_delta = apply_res_delta},
+      uptodate_delta = K true,
+      sexps = {dec = res_dec, enc = res_enc},
+      globinfo = {apply_to_global = apply_res_delta,
+                  thy_finaliser = NONE,
+                  initial_value = empty_res_dict}
+    }
+
+(* Wrapper that both persists the delta and updates the in-memory global *)
+fun record_resumption_delta d =
+    (update_res_global (apply_res_delta d);
+     record_resumption_delta_raw d)
+
+(* Public lookup helpers. *)
+
+(* lookup_suspension: look up by (thy, name) key or unqualified name.
+   For unqualified lookup, scans the dictionary keys for any match.
+   Returns (thy, thm) on success so caller knows which theory. *)
+fun lookup_suspension_qualified (thy, nm) =
+    case KNametab.lookup (get_susp_global ()) {Thy = thy, Name = nm} of
+        NONE => NONE
+      | SOME th => SOME (thy, th)
+
+fun lookup_suspension_unqualified nm =
+    let
+      val tab = get_susp_global ()
+      val matches = KNametab.fold
+            (fn ({Thy = t, Name = n}, th) => fn acc =>
+                if n = nm then (t, th) :: acc else acc)
+            tab []
+    in
+      case matches of
+          [] => NONE
+        | [(thy, th)] => SOME (thy, th)
+        | _ =>
+            (* Multiple matches - ambiguous. For now, just pick the first.
+               A future enhancement could raise an error and require
+               qualified syntax. *)
+            SOME (hd matches)
+    end
+
+(* Main entry point: supports both "foo" and "thyname.foo" forms *)
+fun lookup_suspension nm =
+    case String.fields (fn c => c = #".") nm of
+        [thy, n] => lookup_suspension_qualified (thy, n)
+      | _ => lookup_suspension_unqualified nm
+
+fun lookup_resumption {parent_thy, parent_name, label} =
+    case ResTab.lookup (get_res_global ())
+                       (parent_thy, parent_name, label) of
+        NONE => []
+      | SOME ths => ths
+
+(* Install boolLib's shim so that Theorem...suspend...QED routes the
+   suspended theorem into our AncestryData store instead of the normal
+   theorem DB. *)
+val _ = boolLib.suspended_theorem_recorder :=
+    (fn (n, th) => record_suspension_delta
+                     (AddSuspended
+                        ({Thy = Theory.current_theory(), Name = n}, th)))
+
+(* Given a suspendlabel term, return SOME (Thy, Name) for the
+   already-registered suspended theorem that carries it as a hyp, or
+   NONE if no registered theorem owns it -- in which case the slab
+   must be fresh, i.e. introduced by the proof currently in progress.
+   Used both by save_thm_attrs (via the boolLib shim below) and by
+   resume to reject bodies that consume already-suspended theorems. *)
+fun slab_owner_lookup slab =
+    KNametab.get_first
+      (fn ({Thy, Name}, th) =>
+          if HOLset.member (Thm.hypset th, slab) then SOME (Thy, Name)
+          else NONE)
+      (get_susp_global ())
+
+val _ = boolLib.slab_owner_lookup := slab_owner_lookup
+
+(* ----------------------------------------------------------------------
+    Finding the parent theorem for a Resume / Finalise.
+
+    Strategy:
+     1. Look up in the suspension.theorems store (current theory merged
+        with ancestry) -- this is the normal case.
+     2. Fall back to DB.fetch: when Holmake --fast is in effect, the
+        tactic body of Theorem...suspend...QED is not run, so the
+        theorem is saved to DB normally (without any suspendlabel
+        hypothesis) and does not appear in the suspension store.
+        Resume and Finalise both detect this by finding a parent in
+        DB whose hyp set has no relevant suspendlabel -- see callers.
+   ---------------------------------------------------------------------- *)
+
+datatype parent_source =
+    FromStore  (* normal suspended theorem *)
+  | FromDB     (* fallback: likely --fast, possibly already-finalised *)
+
+(* Returns (source, parent_thy, thm) *)
+fun find_parent nm : (parent_source * string * thm) option =
+    case lookup_suspension nm of
+        SOME (thy, th) => SOME (FromStore, thy, th)
+      | NONE =>
+          let
+            val cur = Theory.current_theory ()
+            val thys = cur :: Theory.ancestry cur
+            fun search [] = NONE
+              | search (t::rest) =
+                (case Lib.total (DB.fetch t) nm of
+                     SOME th => SOME (t, th)
+                   | NONE => search rest)
+          in
+            case search thys of
+                NONE => NONE
+              | SOME (t, th) => SOME (FromDB, t, th)
+          end
+
+(* ----------------------------------------------------------------------
+    resume : save one (or more) resumption proofs
+
+    Looks up the parent; under --fast (parent has no suspendlabel hyp
+    matching the label), shortcuts to a placeholder oracle theorem.
+    Otherwise proves the subgoal and records a resumption delta for
+    each matching suspendlabel hypothesis.
+   ---------------------------------------------------------------------- *)
+
+(* Build |- suspendlabel "lab" G_i theorems for each matching
+   hypothesis, reusing the closure-reconstruction logic of
+   prove_suspended0. *)
+fun build_suspendlabel_thms label_nm (ncts, sub_th) =
+    let
+      fun mk_susp_thm (nc, s_t) th =
+        let
+          val (closure_vars, body) = strip_n_foralls_vars nc s_t
+          val result =
+              if is_suspimp (concl th) then th
+              else
+                let val (imps, _) = strip_suspimp body
+                in itlist sDISCH imps th end
+          val closed_result = GENL closure_vars result
+          val encoded_nm = encode_label (label_nm, nc)
+        in
+          add_suspension_label encoded_nm closed_result
+        end
+    in
+      case ncts of
+          [nct] => [mk_susp_thm nct sub_th]
+        | _ =>
+            let val ths = RESCONJS sub_th
+            in ListPair.map (fn (nct, th) => mk_susp_thm nct th)
+                            (ncts, ths)
+            end
+    end
+
+fun fast_shortcut () =
+    Thm.mk_oracle_thm "fast_proof" ([], boolSyntax.T)
+
+fun resume {suspension_name, label_name} tac ctxt =
+    case find_parent suspension_name of
+        NONE => raise ERR "resume"
+                  ("No suspended theorem named " ^ suspension_name ^
+                   " in the current theory or its ancestors")
+      | SOME (_, parent_thy, th) =>
+        let val sths = lookup_resumption {parent_thy = parent_thy,
+                                          parent_name = suspension_name,
+                                          label = label_name}
+        in
+          (case Lib.total (extract_suspended_goal (th::sths)) label_name of
+               NONE =>
+               (* No suspendlabel hypothesis for this label.  This is the
+                  --fast case (or the user is trying to resume a label of
+                  an already-finalised theorem, or making a typo);
+                  shortcut. *)
+               fast_shortcut ()
+             | SOME ncts =>
+               let
+                 val goal = resumption_to_goal ncts
+                 (* `Resume X[lab]` reaches the prover from a plain value
+                    binding rather than `store_thm_at`, so without this
+                    the proof would be anonymous. *)
+                 val sub_th =
+                     boolLib.prove_named ctxt
+                       {name = suspension_name ^ "[" ^ label_name ^ "]",
+                        goal = goal, tac = tac}
+                 (* A resumption proof may consume only finalised
+                    theorems.  A slab in sub_th's hyps whose owner is
+                    some already-registered suspended theorem means
+                    the body cited either another still-suspended
+                    theorem (cross-theorem use) or the parent itself
+                    (self-cycle, #1960); both are forbidden.  Fresh
+                    slabs whose owner is unknown are legitimate
+                    re-suspends -- the user is deferring the subgoal
+                    further. *)
+                 val owned_in_body =
+                     List.mapPartial
+                       (fn h => case slab_owner_lookup h of
+                                    NONE => NONE
+                                  | SOME (t,n) => SOME (h, t, n))
+                       (List.filter (can dest_slab) (hyp sub_th))
+                 val _ =
+                     case owned_in_body of
+                         [] => ()
+                       | owned =>
+                         let val refs = String.concatWith ", "
+                               (map (fn (_,Thy,Name) =>
+                                        KernelSig.name_toString
+                                          {Thy=Thy,Name=Name})
+                                    owned)
+                         in
+                           raise ERR "resume"
+                             ("Resumption proof for " ^ suspension_name ^
+                              "[" ^ label_name ^
+                              "] cites still-suspended theorem(s): " ^
+                              refs ^ ".  Only finalised theorems may \
+                              \appear in a Resume body; finalise the \
+                              \cited theorem(s) first.")
+                         end
+                 (* Build |- suspendlabel "lab" G_i for each hyp i and
+                    record each as its own resumption delta. *)
+                 val susp_thms =
+                     build_suspendlabel_thms
+                         label_name (ncts, sub_th)
+                 fun record_suspend_resumptions rth =
+                     List.app (fn h =>
+                                  case total dest_slab h of
+                                      SOME (nm, _, _) =>
+                                      record_resumption_delta
+                                          (AddResumption
+                                               ((parent_thy, suspension_name, nm),
+                                                rth))
+                                    | NONE => ())
+                              (hyp rth)
+                 val _ =
+                     List.app
+                         (fn rth => (
+                              record_resumption_delta
+                                  (AddResumption
+                                       ((parent_thy, suspension_name, label_name),
+                                        rth));
+                              record_suspend_resumptions rth))
+                         susp_thms
+               in
+                   sub_th
+               end)
+        end
+
+fun prim_set_suspended_goal tacmod {suspension_name, label_name} =
+    case find_parent suspension_name of
+        NONE => raise ERR "set_suspended_goal"
+                  ("No suspended theorem named " ^ suspension_name ^
+                   " in the current theory or its ancestors")
+      | SOME (_, parent_thy, th) =>
+        let val sths = lookup_resumption {parent_thy = parent_thy,
+                                          parent_name = suspension_name,
+                                          label = label_name}
+        in
+          proofManagerLib.new_goalstack (
+              resumption_to_goal (extract_suspended_goal (th::sths) label_name)
+          )
+          tacmod
+          I
+        end
+
+val set_suspended_goal = prim_set_suspended_goal Manager.id_tacm
+
+(* ----------------------------------------------------------------------
+    Finalise support: given a suspended parent theorem, look up a
+    resumption proof for each suspendlabel hypothesis and PROVE_HYP
+    them in.  Save the clean result under the parent's name to the
+    normal theorem DB.  Record a RemoveSuspended delta so the
+    suspension store no longer lists this name as pending.
+
+    Under --fast the parent comes from the DB fallback with no
+    suspendlabel hypotheses; the assembly loop is a no-op and we just
+    re-save the parent with the user-supplied attributes.
+   ---------------------------------------------------------------------- *)
+
+fun assemble_finalised parent_thy parent_nm parent_th =
+    let
+      val susp_hyps =
+          List.filter (Option.isSome o total dest_slab) (hyp parent_th)
+      fun find_res_for hyp_t =
+          case total dest_slab hyp_t of
+              NONE => raise ERR "Finalise"
+                        "internal: non-suspendlabel hyp reached assembly"
+            | SOME (label, _, _) =>
+              let
+                val key = (parent_thy, parent_nm, label)
+                val candidates =
+                    case ResTab.lookup (get_res_global ()) key of
+                        NONE => []
+                      | SOME ths => ths
+                (* Pick the candidate whose conclusion aconv-matches
+                   the parent's hyp.  Multiple candidates can exist
+                   when the same label has multiple hypotheses (the
+                   resconj case): each hyp has a distinct term shape
+                   so one candidate will match. *)
+                val pick =
+                    List.find (fn rth => aconv (concl rth) hyp_t)
+                              candidates
+              in
+                case pick of
+                    SOME rth => rth
+                  | NONE =>
+                      raise ERR "Finalise"
+                        ("No resumption proof found for label " ^ label ^
+                         " of " ^ parent_thy ^ "$" ^ parent_nm)
+              end
+      fun aux current_th current_susp_hyps = let
+          val founds = map find_res_for current_susp_hyps
+          val finalised = List.foldl (fn (rth, acc) => PROVE_HYP rth acc)
+                                     current_th founds
+          val remaining_susp_hyps = List.filter (Option.isSome o total dest_slab)
+                                                (hyp finalised)
+          (* Progress check: every slab from current_susp_hyps must
+             actually disappear in this iteration.  PROVE_HYP only
+             drops the targeted slab, so if any current slab reappears
+             in `remaining_susp_hyps` then some resumption proof
+             reintroduced the slab we were trying to discharge -- a
+             cycle.  New (unrelated) slabs appearing are fine; that's
+             how nested Resume works. *)
+          val any_reintroduced =
+              List.exists (fn h => tmem h remaining_susp_hyps)
+                          current_susp_hyps
+      in
+          if null remaining_susp_hyps then finalised
+          else if any_reintroduced then
+            raise ERR "Finalise"
+              ("Assembly stalled for " ^ parent_thy ^ "$" ^ parent_nm ^
+               ": resumption proofs reintroduce the suspendlabel \
+               \hypotheses they are meant to discharge (likely a \
+               \circular dependency among Resume proofs).")
+          else aux finalised remaining_susp_hyps
+      end
+    in
+      aux parent_th susp_hyps
+    end
+
+fun finalise_suspended_thm loc nm0 =
+    let
+      val attrblock = ThmAttribute.extract_attributes nm0
+      val name = #thmname attrblock
+    in
+      case find_parent name of
+          NONE => raise ERR "finalise_suspended_thm"
+                    ("No such suspended theorem: " ^ name)
+        | SOME (src, parent_thy, parent_th) =>
+          let
+            val clean_th = assemble_finalised parent_thy name parent_th
+            val remaining = boolLib.get_suspended_names clean_th
+            val _ = null remaining orelse
+                    raise ERR "finalise_suspended_thm"
+                       ("Theorem retains unproved subgoals: " ^
+                        String.concatWith ", " remaining)
+            (* Save under the user name.  For FromStore this is the
+               first time the name hits the DB; for FromDB (--fast or
+               re-finalise) it's already there and we need rebind. *)
+            val saved =
+                case src of
+                    FromStore =>
+                      boolLib.save_thm_attrs loc (attrblock, clean_th)
+                  | FromDB =>
+                      Feedback.trace ("Theory.allow_rebinds", 1)
+                        (fn () =>
+                            boolLib.save_thm_attrs loc (attrblock, clean_th)) ()
+            (* Drop this name from the suspension store so it's no
+               longer considered pending.  (For FromDB there was no
+               entry to drop anyway; the delta is harmless.) *)
+            val _ = record_suspension_delta
+                      (RemoveSuspended {Thy = parent_thy, Name = name})
+            (* Also clean up the resumption proofs for this theorem. *)
+            val _ = record_resumption_delta (RemoveResumptions (parent_thy, name))
+          in
+            saved
+          end
+    end
+
+(* ----------------------------------------------------------------------
+    Safety net at export_theory time: no theorem persisted to the
+    current theory's DB may retain a suspendlabel hypothesis.
+
+    save_thm_attrs and resume already block this at the offending
+    line, but DB inserts via Theory.gen_save_thm (or its
+    save_thm/save_private_thm wrappers) bypass save_thm_attrs.  This
+    hook catches anything that slipped through.
+   ---------------------------------------------------------------------- *)
+
+local
+  open Theory TheoryDelta
+  fun fmt_offender (n, th) =
+      if boolLib.has_suspended_subgoals th then
+        SOME (n ^ " [" ^ String.concatWith ", "
+                           (boolLib.get_suspended_names th) ^ "]")
+      else NONE
+in
+val _ = register_hook
+  ("markerLib.no_suspended_in_DB",
+   fn ExportTheory _ =>
+        (case List.mapPartial fmt_offender (current_theorems ()) of
+             [] => ()
+           | offenders =>
+             raise ERR "export_theory"
+               ("Theorems in the current theory retain suspendlabel \
+                \hypotheses: " ^ String.concatWith ", " offenders ^
+                ".  A theorem may only use already-finalised theorems; \
+                \only `Resume X[label]` may consume a still-suspended X."))
+     | _ => ())
 end
+
+end (* struct *)

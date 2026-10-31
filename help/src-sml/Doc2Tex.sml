@@ -51,6 +51,8 @@ fun mktheta (com,argl,argr) =
         (UnicodeChars.rdquo, norm "rdquo"),
         (UnicodeChars.sup_minus ^ UnicodeChars.sup_1,
          com ^ "(" ^ com ^ "sp" ^ argl ^ "-1" ^ argr ^ com ^ ")"),
+        (UnicodeChars.sup_2,
+         com ^ "(" ^ com ^ "sp" ^ argl ^ "2" ^ argr ^ com ^ ")"),
         ("\194\171", norm "guillemotleft"),
         ("\194\172", math "neg"),
         ("\194\187", norm "guillemotright"),
@@ -198,7 +200,7 @@ fun do_the_work dir dmap outstr = let
     (* wait for the first occurrence of section_char, then print it
        as a LaTeX \section{} and search for the next one. *)
     if Char.toLower current_char = section_char then
-        (out(outstr, "\\section{"
+        (out(outstr, "\\section*{"
                      ^ String.str (Char.toUpper section_char) ^ "}\n\n");
          current_section := !current_section + 1)
     else {};

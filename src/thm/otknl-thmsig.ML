@@ -2,8 +2,11 @@ signature Thm =
 sig
 
   include FinalThm
+
   datatype proof =
     Axiom_prf
+  | Disk_prf of string * thm_id
+  | deleted_prf
   | ABS_prf of term * thm
   | ALPHA_prf of term * term
   | AP_TERM_prf of term * thm
@@ -24,6 +27,7 @@ sig
   | EQ_MP_prf of thm * thm
   | EXISTS_prf of term * term * thm
   | GEN_prf of term * thm
+  | GENL_prf of term list * thm
   | GEN_ABS_prf of term option * term list * thm
   | INST_TYPE_prf of (hol_type,hol_type)Lib.subst * thm
   | INST_prf of (term,term)Lib.subst * thm
@@ -37,20 +41,29 @@ sig
   | SYM_prf of thm
   | TRANS_prf of thm * thm
   | Beta_prf of thm
-  | Def_tyop_prf of {Thy:string,Tyop:string} * hol_type list * thm * hol_type
-  | Def_const_prf of {Thy:string,Name:string} * term
-  | Def_const_list_prf of string * (string * hol_type) list * thm
-  | Def_spec_prf of term list * thm
+  | Def_tyop_prf of hol_type list * thm * hol_type
+  | Def_const_prf of term * term
+  | Def_const_list_prf of thm * term list
+  | Def_spec_prf of thm * term list
   | Mk_abs_prf of thm * term * thm
   | Mk_comb_prf of thm * thm * thm
   | Specialize_prf of term * thm
   | deductAntisym_prf of thm * thm
+  | compute_prf of (compute_args * thm list) * term
+  | save_dep_prf of thm
+  | Exported_prf of string * thm_id
+  | Mark_prf of string * thm
 
   val proof : thm -> proof
   val delete_proof : thm -> unit
+  val set_exported : thm -> string * thm_id -> unit
   val mk_proof_thm : proof -> term list * term -> thm
 
   val deductAntisym : thm -> thm -> thm
+
+  (* A no-op inference wrapper whose only purpose is to leave a named marker
+     in the proof trace. Logically an identity on the theorem. *)
+  val mark : string -> thm -> thm
 
   val set_definition_callback   : (thm -> unit) -> unit
   val clear_definition_callback : unit -> unit

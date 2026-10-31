@@ -4,7 +4,7 @@ struct
 open HolKernel boolLib integerTheory
      arithmeticTheory intSyntax int_arithTheory intSimps;
 
-open CooperSyntax CooperThms CooperMath
+open CooperSyntax cooperTheory CooperMath
 open Profile
 open DeepSyntaxTheory;
 
@@ -16,31 +16,22 @@ val ERR = mk_HOL_ERR "Cooper";
 (* Fix the grammar used by this file *)
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars DeepSyntaxTheory.DeepSyntax_grammars
+  val (Type,Term) =
+      parse_from_grammars $ valOf $ grammarDB{thyname="DeepSyntax"}
 end
 open Parse
 
 val REWRITE_CONV = GEN_REWRITE_CONV Conv.TOP_DEPTH_CONV bool_rewrites
 
 
-val tac = REWRITE_TAC [eval_form_def, Aset_def, Bset_def]
-val conjn_rwt = prove(``!f1 f2 x. eval_form f1 x /\ eval_form f2 x =
-                                  eval_form (Conjn f1 f2) x``, tac)
-val disjn_rwt = prove(``!f1 f2 x. eval_form f1 x \/ eval_form f2 x =
-                                  eval_form (Disjn f1 f2) x``, tac)
-val negn_rwt = prove(``!f x. ~eval_form f x = eval_form (Negn f) x``, tac);
-val unrelated_rwt = prove(``!b x. b = eval_form (UnrelatedBool b) x``, tac);
+val conjn_rwt = DeepSyntaxTheory.conjn_rwt
+val disjn_rwt = DeepSyntaxTheory.disjn_rwt
+val negn_rwt = DeepSyntaxTheory.negn_rwt
+val unrelated_rwt = DeepSyntaxTheory.unrelated_rwt
 val binop_rwt_CONV = REWR_CONV conjn_rwt ORELSEC REWR_CONV disjn_rwt
 
-val var_right_rwt = prove(
-  ``!i x. (i < x = eval_form (LTx i) x) /\
-          (i int_divides x = eval_form (xDivided i 0) x)``,
-  REWRITE_TAC [eval_form_def, INT_ADD_RID]);
-val var_nright_rwt = prove(
-  ``!i1 i2 x. ((x = i1) = eval_form (xEQ i1) x) /\
-              (x < i1 = eval_form (xLT i1) x) /\
-              (i1 int_divides x + i2 = eval_form (xDivided i1 i2) x)``,
-  tac);
+val var_right_rwt = DeepSyntaxTheory.var_right_rwt
+val var_nright_rwt = DeepSyntaxTheory.var_nright_rwt
 
 fun convert_to_embedded_syntax tm = let
   (* tm is of form ?x. ..., were x is always bare in the ... *)
@@ -85,7 +76,7 @@ fun form_to_lcm var tm = let
       end handle HOL_ERR _ =>
                  if is_neg tm then recurse acc (rand tm)
                  else if is_divides tm then
-                   lcm (int_of_term (rand (rator tm)), acc)
+                   Arbint.lcm (int_of_term (rand (rator tm)), acc)
                  else acc
 in
   recurse Arbint.one tm
@@ -145,9 +136,15 @@ val aset_thms = CONJUNCTS in_aset
 fun in_set_CONV tm = let
   val (v, body) = dest_exists tm
   val (in_t, _) = dest_conj body
-  val (set_conjn::set_disjn::set_negnt::set_negnf::rest) =
-      if #1 (dest_const (#1 (strip_comb (rand in_t)))) = "Aset" then aset_thms
-      else bset_thms
+  val (set_conjn,set_disjn,set_negnt,set_negnf,rest) =
+      let val l = if #1 (dest_const (#1 (strip_comb (rand in_t)))) = "Aset" then aset_thms
+                  else bset_thms
+      in
+        case l of
+            t1::t2::t3::t4::rest => (t1,t2,t3,t4,rest)
+          | _ => raise mk_HOL_ERR "jrhCore" "in_set_CONV" "Bad thm list"
+      end
+
 
   fun recurse tm = let
     val (v, body) = dest_exists tm
@@ -186,30 +183,8 @@ in
   profile "eb.beta" (EVERY_DISJ_CONV (TRY_CONV BETA_CONV))
 end tm
 
-val eval_form_neginf = prove(
-  ``(eval_form (neginf (Conjn f1 f2)) x = eval_form (neginf f1) x /\
-                                          eval_form (neginf f2) x) /\
-    (eval_form (neginf (Disjn f1 f2)) x = eval_form (neginf f1) x \/
-                                          eval_form (neginf f2) x) /\
-    (eval_form (neginf (Negn f)) x = ~eval_form (neginf f) x) /\
-    (eval_form (neginf (UnrelatedBool b)) x = b) /\
-    (eval_form (neginf (xLT i)) x = T) /\
-    (eval_form (neginf (LTx i)) x = F) /\
-    (eval_form (neginf (xEQ i)) x = F) /\
-    (eval_form (neginf (xDivided i1 i2)) x = i1 int_divides x + i2)``,
-  REWRITE_TAC [eval_form_def, neginf_def]);
-val eval_form_posinf = prove(
-  ``(eval_form (posinf (Conjn f1 f2)) x = eval_form (posinf f1) x /\
-                                          eval_form (posinf f2) x) /\
-    (eval_form (posinf (Disjn f1 f2)) x = eval_form (posinf f1) x \/
-                                          eval_form (posinf f2) x) /\
-    (eval_form (posinf (Negn f)) x = ~eval_form (posinf f) x) /\
-    (eval_form (posinf (UnrelatedBool b)) x = b) /\
-    (eval_form (posinf (xLT i)) x = F) /\
-    (eval_form (posinf (LTx i)) x = T) /\
-    (eval_form (posinf (xEQ i)) x = F) /\
-    (eval_form (posinf (xDivided i1 i2)) x = i1 int_divides x + i2)``,
-  REWRITE_TAC [eval_form_def, posinf_def]);
+val eval_form_neginf = DeepSyntaxTheory.eval_form_neginf
+val eval_form_posinf = DeepSyntaxTheory.eval_form_posinf
 
 val phase5_CONV  = let
   (* have something of the form

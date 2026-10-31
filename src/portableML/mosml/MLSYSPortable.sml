@@ -32,6 +32,8 @@ structure HOLSusp = Susp
 
 fun reraise e = raise e
 
+fun display_exn f e = (f e; raise e)
+
 fun make_counter {inc,init} =
   let
     val n = ref init
@@ -47,5 +49,11 @@ fun syncref init =
       upd = fn f => let val (res,nv) = f (!r) in r := nv; res end
     }
   end
+
+(* Mosml builds are never run in parallel, so a "real" pid is unnecessary;
+   tmpName gives us a fresh unique string per call. *)
+fun unique_tmp_suffix () = OS.Path.file (OS.FileSys.tmpName ())
+
+fun save_heap (_:string) = ()
 
 end (* struct *)

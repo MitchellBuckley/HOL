@@ -3,11 +3,9 @@
      "The Weak Call-by-Value 𝜆-Calculus Is Reasonable for Both Time and Space", POPL 2020
    for inspiration
  *)
-open HolKernel Parse boolLib bossLib;
-open arithmeticTheory;
-open listTheory relationTheory;
-
-val _ = new_theory "Prelims";
+Theory Prelims
+Ancestors
+  arithmetic list relation
 
 (* ------------------
          Natural numbers
@@ -278,13 +276,13 @@ QED
 (* reduce while keeping track of the maximum size of terms *)
 Inductive redWithMaxSize:
 [~R:]
-        (∀size step (m: num) s. m = size s ⇒ redWithMaxSize size step m s s) ∧
+  ∀size step (m: num) s. m = size s ⇒ redWithMaxSize size step m s s
 [~C:]
-        (∀size step (s: 'a) (s': 'a) (t: 'a) (m: num) (m':num).
-                step s s' ∧
-                redWithMaxSize size step m' s' t ∧
-                m = MAX (size s) m' ⇒
-                redWithMaxSize size step m s t)
+  ∀size step (s: 'a) (s': 'a) (t: 'a) (m: num) (m':num).
+    step s s' ∧
+    redWithMaxSize size step m' s' t ∧
+    m = MAX (size s) m' ⇒
+    redWithMaxSize size step m s t
 End
 
 Theorem redWithMaxSize_ge:
@@ -340,4 +338,3 @@ Proof
   rw[MAX_ASSOC]
 QED
 
-val _ = export_theory ()

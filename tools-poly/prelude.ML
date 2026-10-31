@@ -1,3 +1,20 @@
+(* prelude.ML - Poly/ML Interactive Session Prelude
+   =================================================
+
+   This file is loaded when starting an interactive HOL session with Poly/ML.
+   It establishes the basic environment including:
+   - Installing pretty-printers for terms, types, theorems, etc.
+   - Setting up help paths
+   - Loading holinteractive.ML (defines HOL_Interactive structure)
+   - Running tools/check-intconfig.sml for user configuration
+
+   For full HOL sessions (the default), prelude2.ML is loaded after this
+   to add bossLib and additional libraries.
+
+   For Moscow ML, the equivalent is tools/std.prelude.
+
+   This file is loaded by hol.ML when running in REPL mode.
+*)
 
 (* this is an -*- sml -*- file *)
 val () = PolyML.print_depth 0;
@@ -118,10 +135,13 @@ in
   PolyML.addPrettyPrinter (pp2polypp ppgrules);
   PolyML.addPrettyPrinter (pp2polypp proofManagerLib.pp_proof);
   PolyML.addPrettyPrinter (pp2polypp proofManagerLib.pp_proofs);
-  PolyML.addPrettyPrinter (pp2polypp type_grammar.prettyprint_grammar)
+  PolyML.addPrettyPrinter (pp2polypp type_grammar.prettyprint_grammar);
+  PolyML.addPrettyPrinter (pp2polypp Feedback.pp_trace_elt);
+  PolyML.addPrettyPrinter (pp2polypp Feedback.pp_hol_error)
 end
 
 val _ = PolyML.use (OS.Path.concat(HOLDIR, "tools-poly/holinteractive.ML"));
+(* holinteractive.ML sets HOL_REPL.resetOpenHook *)
 
 (*---------------------------------------------------------------------------*
  * Set up the help paths.                                                    *
@@ -141,17 +161,21 @@ local
     ; use (nm ^ ".sml")
     end
 in
-  val _ = HOL_Interactive.print_banner()
-  val lpsize0 = length (!loadPath)
+  val _ = HOL_Interactive.print_banner print
   val () =
     ( hol_use ("help" ++ "src-sml") "Database"
     ; hol_use ("tools-poly" ++ "poly") "Help"
-    ; ReadHMF.extend_path_with_includes {verbosity = 0, lpref = loadPath}
-    ; if length (!loadPath) <> lpsize0 then
-        print ("** Load path (see loadPath variable) now contains " ^
-               Int.toString (length (!loadPath)) ^
-               " entries\n** after consulting Holmakefiles\n\n")
-      else ()
+    (* Meta.loadPath is populated by hol.ML post-loadState -- from
+       cwd's Holmakefile INCLUDES and (if in a holproject.toml
+       scope) every project_dir + external_includes entry.  It
+       starts life (poly-init2.ML) as the singleton [sigobj], so
+       anything longer means those sources contributed. *)
+    ; (case !loadPath of
+           [_] => ()
+         | l => print ("** Load path (see loadPath variable) now contains " ^
+                       Int.toString (length l) ^ " entries\n" ^
+                       "** after consulting Holmakefiles and any " ^
+                       "holproject.toml\n\n"))
     ; List.app Meta.fakeload ["PP", "PolyML", "Posix"]
     ; Globals.interactive := true
     ; Parse.current_backend := Parse.interactive_ppbackend ()
@@ -178,5 +202,11 @@ local
 in
   val help = Help.help
 end
+
+(* Establish a working "scratch" segment for the interactive session.
+   Non-interactive entry points (RUN, LSP, BUILDHEAP) leave Thm.getCT
+   as NONE so that `current_theory ()` raises visibly on any caller
+   that forgot to open a segment first. *)
+val _ = Thm.setCT "scratch"
 
 val _ = HOL_Interactive.toggle_quietdec ()

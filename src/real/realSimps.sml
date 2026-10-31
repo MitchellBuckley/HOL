@@ -9,7 +9,7 @@ open HolKernel Parse boolLib realTheory simpLib realSyntax
 (* Fix the grammar used by this file *)
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars realTheory.real_grammars
+  val (Type,Term) = parse_from_grammars $ valOf $ grammarDB {thyname = "real"}
 end
 
 open Parse
@@ -19,7 +19,7 @@ val arith_ss = boolSimps.bool_ss ++ pairSimps.PAIR_ss ++ numSimps.ARITH_ss ++
 
 val SSFRAG = simpLib.register_frag o simpLib.SSFRAG
 
-val real_SS = simpLib.SSFRAG
+val real_SS = SSFRAG
   {name = SOME"real",
    ac = [],
    congs = [],
@@ -65,7 +65,7 @@ val real_SS = simpLib.SSFRAG
      "REAL_MAX_REFL", "REAL_LE_MAX1", "REAL_LE_MAX2", "REAL_MAX_ADD",
      "REAL_MAX_SUB"]};
 
-val real_ac_SS = simpLib.SSFRAG {
+val real_ac_SS = SSFRAG {
   name = SOME"real_ac",
   ac = [(SPEC_ALL REAL_ADD_ASSOC, SPEC_ALL REAL_ADD_SYM),
         (SPEC_ALL REAL_MUL_ASSOC, SPEC_ALL REAL_MUL_SYM)],
@@ -93,9 +93,7 @@ val real_ac_SS = simpLib.SSFRAG {
 
 
 
-val num_eq_0 = prove(
-  Term`~(NUMERAL (BIT1 n) = 0n) /\ ~(NUMERAL (BIT2 n) = 0n)`,
-  REWRITE_TAC [numeralTheory.numeral_distrib, numeralTheory.numeral_eq]);
+val num_eq_0 = realTheory.num_eq_0;
 
 fun two_nats  rv nv th = let
   open numSyntax
@@ -229,9 +227,21 @@ val m = mk_var("m", numSyntax.num)
 fun to_numeraln th = INST [n |-> mk_comb(numSyntax.numeral_tm, n),
                            m |-> mk_comb(numSyntax.numeral_tm, m)] th
 
+val ltnb12 = realTheory.ltnb12
+val let_id = realTheory.let_id
+
+val clg0 = SIMP_RULE boolSimps.bool_ss [flr, LET_THM]
+                     (SPEC “0r” NUM_CEILING_NUM_FLOOR)
 val op_rwts =
-  [to_numeraln mult_ints, to_numeraln add_ints, flr, NUM_CEILING_NUM_FLOOR,
+  [to_numeraln mult_ints, to_numeraln add_ints, flr, clg0,
    REAL_DIV_LZERO, REAL_NEGNEG] @
+  (transform [(x,posneg)] $ SPEC x NUM_CEILING_NUM_FLOOR) @
+  (transform [(x,posneg), (y,nb12)] (
+    SPEC (mk_div(x,y)) NUM_CEILING_NUM_FLOOR)
+             |> map (SIMP_RULE arith_ss [REAL_LE_LDIV_EQ, REAL_LT, REAL_LE,
+                                         REAL_MUL_LZERO, REAL_NEG_LE0,
+                                         ltnb12, flr, let_id])) @
+
    transform [(x,posneg0)] (SPEC_ALL REAL_ADD_LID) @
    transform [(x,posneg)] (SPEC_ALL REAL_ADD_RID) @
    transform [(x,posneg0)] (SPEC_ALL REAL_MUL_LZERO) @
@@ -312,8 +322,8 @@ val rel_rwts = [eq_ints, le_int, lt_int] @
 
 val rwts = pow_rat :: (op_rwts @ rel_rwts)
 
-val n_compset = reduceLib.num_compset()
-val _ = computeLib.add_thms (mult_ints:: mult_rats) n_compset
+val n_compset = reduceLib.num_compset
+                |> computeLib.add_thms (mult_ints:: mult_rats)
 
 fun elim_common_factor t = let
   open realSyntax Arbint
@@ -360,20 +370,17 @@ val REAL_REDUCE_ss = SSFRAG
    ac = [], congs =[],
    convs = simpset_convs,
    dprocs = [], filter = NONE,
-   rewrs = map (fn th => (NONE, th)) rwts}
+   rewrs = map (fn th => (NONE, th)) rwts };
 
 val real_ss = arith_ss ++ real_SS ++ REAL_REDUCE_ss
 
 val real_ac_ss = real_ss ++ real_ac_SS
 
-fun real_compset () = let
-  open computeLib
-  val compset = reduceLib.num_compset()
-  val _ = add_thms rwts compset
-  val _ = add_conv (div_tm, 2, elim_common_factor) compset
-in
-  compset
-end
+val real_compset =
+  reduceLib.num_compset
+  |> computeLib.add_thms rwts
+  |> computeLib.add_conv (div_tm, 2, elim_common_factor)
+  |> computeLib.seal
 
 (* add real calculation facilities to global functionality *)
 val _ = let open computeLib in
@@ -578,7 +585,7 @@ val (CACHED_ARITH,arith_cache) = let
        (ty=Type.bool andalso (is_arith tm orelse Feq tm))
     end;
 in
-  RCACHE (dpvars, check,CTXT_ARITH)
+  RCACHE {capacity=2000, per_key_cap=50} (dpvars, check, CTXT_ARITH)
   (* the check function determines whether or not a term might be handled
      by the decision procedure -- we want to handle F, because it's possible
      that we have accumulated a contradictory context. *)
@@ -636,7 +643,7 @@ val neg1_t = mk_negated one_tm
 val NEG1_MUL = SPEC neg1_t REAL_MUL_ASSOC
 val Flor = OR_CLAUSES |> SPEC_ALL |> CONJUNCTS |> el 3
 
-val realreduce_cs = real_compset()
+val realreduce_cs = real_compset
 fun REPORT_ALL_CONV t =
     ((*print ("\nGiving up on " ^ term_to_string t ^ "\n"); *) NO_CONV t)
 val REAL_REDUCE =
@@ -654,7 +661,8 @@ fun is_literalish t =
       | SOME t0 => is_literalish t0
 
 val NORMLIT_phase1 =
-    PURE_REWRITE_CONV [NEG_FRAC, NEG_DENOM, NEG_INV, REAL_NEGNEG, INV_1OVER]
+    PURE_REWRITE_CONV [NEG_FRAC, NEG_DENOM, NEG_INV, REAL_NEGNEG, INV_1OVER,
+                       REAL_OVER1]
 val GCDELIM = REAL_REDUCE
 
 fun is_real_posliteral t =

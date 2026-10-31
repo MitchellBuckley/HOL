@@ -4,12 +4,22 @@
 
 \documentclass[12pt,fleqn]{book}
 %\usepackage{amsmath}
+\usepackage{amssymb}     % \ggg, \mathbb, \preccurlyeq, \leftrightarrows, etc.,
+                         % referenced by ../Description/desc-unicode.sty
 \usepackage{alltt}
 \usepackage{../LaTeX/layout}
 \usepackage{imakeidx}
 \usepackage{alltt}
 \usepackage{fancyvrb}
 \usepackage{graphicx}
+
+% Packages and definitions emitted (or referenced) by pandoc-generated
+% entries.tex.  In particular, Markdown tables become longtables.
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{calc}
+\newcounter{none}                 % referenced by pandoc longtable captions
 
 % ---------------------------------------------------------------------
 % Read in defined macros and commands
@@ -28,7 +38,41 @@
 
 \indexsetup{level=\chapter}
 \makeindex
+% Shared Unicode -> LaTeX codepoint mapping (also used by Description
+% and Tutorial); the support packages it depends on -- amssymb above,
+% stix via layout.sty, stmaryrd via ../LaTeX/commands.tex -- are all
+% loaded by this point.
+\usepackage{../Description/desc-unicode}
 
+\usepackage{titlesec}
+\usepackage[english]{babel}
+\usepackage{underscore}
+
+
+\newcommand{\currentstruct}{}
+\newcommand{\mysec}[1]{%
+  \phantomsection%
+  \makebox[\linewidth]{%
+    \fbox{%
+      \makebox[\dimexpr\linewidth-2\fboxsep][l]{\strut\hspace{0.4em}#1\hfill(\texttt{\currentstruct})\hspace{0.2em}}%
+    }%
+  }}
+\titleformat{\section}{\normalfont\LARGE}{}{0pt}{\mysec}
+
+% pandoc generates \tightlist command for itemizes that don't have blank
+% lines between the items
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% pandoc's generated .tex file uses \section, \subsection etc, so this turns
+% off numbering for them.
+\setcounter{secnumdepth}{0}
+
+% latex wants to use a "curly left single quote" when interpreting backtick `
+% in verbatim environments; upquote stops this.  (Of course, many such uses
+% should be replaced by the "modern" curly quotes that HOL also uses, but you
+% certainly don't want to be confusing one for the other given how both are
+% meaningful.
+\usepackage{upquote}
 \begin{document}
 
    \emergencystretch=14pt
@@ -46,7 +90,7 @@
    \include{title}                        % reference title page
    \include{preface}                      % preface to reference manual
    \input{../LaTeX/ack}                   % global acknowledgements
-   \tableofcontents                       % table of contents
+%   \tableofcontents                       % table of contents
 
    % ---------------------------------------------------------------------
    %

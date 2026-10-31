@@ -1,0 +1,380 @@
+Theory set_lemmata
+Ancestors
+  pred_set
+Libs
+  Sanity
+
+(*
+quietdec := true;
+map load ["pred_setTheory"];
+*)
+
+val _ = hide "S";
+val _ = hide "I";
+
+(*
+show_assums := false;
+show_assums := true;
+show_types := true;
+show_types := false;
+quietdec := false;
+*)
+
+
+val _ = ParseExtras.temp_loose_equality()
+
+
+Theorem DIFF_OVER_INTER:
+     (!S1 S2 S3. (S1 INTER (S2 DIFF S3) = (S1 INTER S2) DIFF S3)) /\
+     (!S1 S2 S3. ((S2 DIFF S3) INTER S1 = (S1 INTER S2) DIFF S3))
+Proof
+
+   SIMP_TAC std_ss [INTER_DEF, DIFF_DEF, EXTENSION, GSPECIFICATION] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem INTER_OVER_DIFF:
+      (!S1 S2 S3. (S1 DIFF (S2 INTER S3) = (S1 DIFF S2) UNION (S1 DIFF S3))) /\
+      (!S1 S2 S3. ((S1 INTER S2) DIFF S3 = (S1 DIFF S3) INTER (S2 DIFF S3)))
+Proof
+
+    REWRITE_TAC [SUBSET_DEF,IN_DIFF,IN_INTER,IN_UNION,DIFF_DEF,EXTENSION,GSPECIFICATION] THEN PROVE_TAC []
+QED
+
+
+Theorem UNION_OVER_DIFF:
+      (!S1 S2 S3. (S1 DIFF (S2 UNION S3) = (S1 DIFF S2) INTER (S1 DIFF S3))) /\
+      (!S1 S2 S3. (((S1 UNION S2) DIFF S3) = ((S1 DIFF S3) UNION (S2 DIFF S3))))
+Proof
+
+    REWRITE_TAC [SUBSET_DEF,IN_DIFF,IN_INTER,IN_UNION,DIFF_DEF,EXTENSION,GSPECIFICATION] THEN PROVE_TAC []
+QED
+
+
+Theorem BIGUNION_OVER_DIFF:
+      !P. (UNIV DIFF (BIGUNION {s | ?(n:num). s = (P n)})) = (BIGINTER {s | ?(n:num). (s = (UNIV DIFF (P n)))})
+Proof
+
+
+      SIMP_TAC std_ss [DIFF_DEF, BIGUNION, BIGINTER, GSPECIFICATION, IMP_DISJ_THM, IN_UNIV] THEN
+      SIMP_TAC std_ss [EXTENSION, GSPECIFICATION] THEN
+      PROVE_TAC[IN_COMPL]
+QED
+
+
+Theorem BIGINTER_OVER_DIFF:
+      !P. (UNIV DIFF (BIGINTER {s | ?(n:num). s = (P n)})) = (BIGUNION {s | ?(n:num). (s = (UNIV DIFF (P n)))})
+Proof
+
+
+      SIMP_TAC std_ss [DIFF_DEF, BIGUNION, BIGINTER, GSPECIFICATION, IMP_DISJ_THM, IN_UNIV] THEN
+      SIMP_TAC std_ss [EXTENSION, GSPECIFICATION] THEN
+      PROVE_TAC[IN_COMPL]
+QED
+
+
+Theorem COMPL_11:
+    !s t. (COMPL s = COMPL t) = (s = t)
+Proof
+  SIMP_TAC std_ss [IN_COMPL,EXTENSION]
+QED
+
+
+Theorem COMPL_SUBSET:
+    !s t. (COMPL s SUBSET COMPL t) = (t SUBSET s)
+Proof
+  SIMP_TAC std_ss [IN_COMPL,SUBSET_DEF] THEN PROVE_TAC[]
+QED
+
+
+Theorem UNION_INSERT:
+     !S1 S2 a. (S1 UNION (a INSERT S2)) = ((a INSERT S1) UNION S2)
+Proof
+
+SIMP_TAC std_ss [UNION_DEF, INSERT_DEF, EXTENSION, GSPECIFICATION] THEN
+PROVE_TAC[]
+QED
+
+
+Theorem UNION_INTER_ABSORPTION:
+     !s1 s2. (((s1 UNION s2) INTER s1) = s1) /\ ((s1 UNION (s2 INTER s1)) = s1)
+Proof
+
+   REPEAT STRIP_TAC THEN
+   REWRITE_TAC [UNION_DEF, INTER_DEF, EXTENSION, GSPECIFICATION] THEN
+   FULL_SIMP_TAC arith_ss [] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem INTER_INTER_ABSORPTION:
+      !S a. S INTER a INTER a = S INTER a
+Proof
+
+       PROVE_TAC[INTER_SUBSET, SUBSET_INTER_ABSORPTION]
+QED
+
+Theorem SUBSET_COMPL_DISJOINT:
+     !s1 s2. (s1 SUBSET (COMPL s2)) = (DISJOINT s1 s2)
+Proof
+
+   SIMP_TAC arith_ss [SUBSET_DEF, COMPL_DEF, DISJOINT_DEF, INTER_DEF, DIFF_DEF, IN_UNIV, GSPECIFICATION, EXTENSION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DIFF_SUBSET_ELIM:
+     !S1 S2 S. (((S1 DIFF S2) SUBSET S) = (S1 SUBSET (S UNION S2))) /\
+               ((S SUBSET (S1 DIFF S2)) = ((S SUBSET S1) /\ (DISJOINT S S2)))
+Proof
+
+   SIMP_TAC arith_ss [DIFF_DEF, SUBSET_DEF, UNION_DEF, GSPECIFICATION, DISJOINT_DEF, INTER_DEF,
+                      NOT_IN_EMPTY, EXTENSION] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem UNION_SING:
+     !S s. (S UNION {s} = s INSERT S) /\ ({s} UNION S = s INSERT S)
+Proof
+
+   SIMP_TAC arith_ss [UNION_DEF, INSERT_DEF, GSPECIFICATION, EXTENSION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem COMPL_CLAUSES_COMM:
+     !s. (s INTER COMPL s = {}) /\ (s UNION COMPL s = UNIV)
+Proof
+
+   METIS_TAC[COMPL_CLAUSES, UNION_COMM, INTER_COMM]
+QED
+
+
+Theorem INTER_COMPL_DIFF:
+     !S1 S2. (S1 INTER COMPL S2 = S1 DIFF S2)
+Proof
+
+   SIMP_TAC arith_ss [DIFF_DEF, INTER_DEF, COMPL_DEF, GSPECIFICATION, EXTENSION, IN_UNIV]
+QED
+
+
+
+Theorem COMPL_OVER_UNION:
+     !S1 S2. (((COMPL S1) UNION S2) = COMPL(S1 INTER COMPL S2)) /\
+             ((S2 UNION (COMPL S1)) = COMPL(COMPL S2 INTER S1))
+Proof
+
+   SIMP_TAC arith_ss [INTER_DEF, UNION_DEF, GSPECIFICATION, EXTENSION, IN_UNIV, IN_COMPL]
+QED
+
+
+Theorem DIFF_SUBSET_EMPTY:
+     !S1 S2. (S1 DIFF S2 = EMPTY) = (S1 SUBSET S2)
+Proof
+
+   SIMP_TAC arith_ss [DIFF_DEF, SUBSET_DEF, EXTENSION, NOT_IN_EMPTY, GSPECIFICATION] THEN
+   PROVE_TAC[]
+QED
+
+
+
+Theorem INTER_DIFF_EMPTY:
+     (!S1 S2. (S1 INTER S2) DIFF S1 = EMPTY) /\ (!S1 S2. (S1 INTER S2) DIFF S2 = EMPTY)
+Proof
+
+   SIMP_TAC std_ss [INTER_DEF, DIFF_DEF, EXTENSION, GSPECIFICATION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DISJOINT_DIFF_ELIM:
+     !S1 S2. DISJOINT S1 (S2 DIFF S1) /\ DISJOINT (S2 DIFF S1) S1
+Proof
+
+   SIMP_TAC arith_ss [DISJOINT_DEF, DIFF_DEF, INTER_DEF, EXTENSION, GSPECIFICATION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DISJOINT_DIFF_ELIM_SYM:
+     !S1 S2 S3. (DISJOINT S1 S3 \/ DISJOINT S3 S1) ==>
+      ((DISJOINT S1 (S2 DIFF S3) = DISJOINT S1 S2) /\
+       (DISJOINT (S2 DIFF S3) S1 = DISJOINT S2 S1))
+Proof
+
+   SIMP_TAC arith_ss [DISJOINT_DEF, DIFF_DEF, INTER_DEF, EXTENSION, GSPECIFICATION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DISJOINT_INSERT_SYM:
+     !s S1 S2. DISJOINT S1 (s INSERT S2) = ((DISJOINT S1 S2) /\ ~(s IN S1))
+Proof
+
+   PROVE_TAC[DISJOINT_INSERT, DISJOINT_SYM]
+QED
+
+
+Theorem DISJOINT_DIFF_SYM:
+     !S1 S2 S3. DISJOINT S1 (S2 DIFF S3) = DISJOINT (S1 DIFF S3) S2
+Proof
+
+   SIMP_TAC arith_ss [DISJOINT_DEF, DIFF_DEF, INTER_DEF, EXTENSION, GSPECIFICATION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DISJOINT_DISJ_THM:
+      !S1 S2.
+        DISJOINT S1 S2 = !x. ~(x IN S1) \/ ~(x IN S2)
+Proof
+
+SIMP_TAC std_ss [GSYM SUBSET_COMPL_DISJOINT, SUBSET_DEF, IN_COMPL] THEN
+PROVE_TAC[]
+QED
+
+
+Theorem DIFF_DISJOINT:
+     !S1 S2. (S1 DIFF S2 = S1) = DISJOINT S1 S2
+Proof
+
+   SIMP_TAC arith_ss [DISJOINT_DEF, DIFF_DEF, INTER_DEF, EXTENSION, GSPECIFICATION, NOT_IN_EMPTY] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem DIFF_UNION_ELIM:
+     !S1 S2. (((S1 DIFF S2) UNION S2) = (S1 UNION S2)) /\
+             ((S2 UNION (S1 DIFF S2)) = (S2 UNION S1))
+Proof
+
+      SIMP_TAC std_ss [UNION_DEF, DIFF_DEF, EXTENSION, GSPECIFICATION] THEN
+      METIS_TAC[]
+QED
+
+
+Theorem IMAGE_DIFF:
+
+     !f S1 S2. (INJ f (S1 UNION S2) UNIV) ==> ((IMAGE f (S1 DIFF S2)) = ((IMAGE f S1) DIFF (IMAGE f S2)))
+Proof
+
+   SIMP_TAC std_ss [INJ_DEF,
+                  IN_UNION,
+                  IN_UNIV,
+                  IMAGE_DEF,
+                  DIFF_DEF,
+                  EXTENSION,
+                  GSPECIFICATION] THEN
+   METIS_TAC[]
+QED
+
+
+Theorem IMAGE_ID_SUBSET:
+
+     !f S. (!x. (x IN S) ==> (f x = x)) ==> (IMAGE f S = S)
+Proof
+
+   REPEAT STRIP_TAC THEN
+   SIMP_TAC std_ss [IMAGE_DEF, EXTENSION, GSPECIFICATION] THEN
+   METIS_TAC[]
+QED
+
+Theorem INJ_SUBSET_DOMAIN:
+     !f S1 S2 S. (S2 SUBSET S1) ==> (INJ f S1 S) ==> (INJ f S2 S)
+Proof
+
+   REWRITE_TAC[INJ_DEF, SUBSET_DEF] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem INJ_INVERSE:
+
+    !S1 S2 f. INJ f S1 S2 ==> (?g. !x. (x IN S1) ==> (g(f(x)) = x))
+Proof
+
+  REPEAT STRIP_TAC THEN
+  EXISTS_TAC ``\S:'b. (@x:'a. ((x IN S1 /\ ((f x) = S))))`` THEN
+  REPEAT STRIP_TAC THEN
+  SIMP_TAC std_ss [] THEN
+  `!x'. (x' IN S1 /\ (f x' = f x)) = (x' = x)` by METIS_TAC[INJ_DEF] THEN
+  ASM_SIMP_TAC std_ss []
+QED
+
+
+Theorem INSERT_SING:
+      !x t s. (x INSERT t = {s}) = ((x = s) /\ ((t = {}) \/ (t = {s})))
+Proof
+    SIMP_TAC std_ss [INSERT_DEF, NOT_IN_EMPTY, EXTENSION, GSPECIFICATION] THEN
+    PROVE_TAC[]
+QED
+
+
+
+Theorem DIFF_DIFF_INTER:
+      !A B. (A DIFF (A DIFF B)) = (A INTER B)
+Proof
+
+    SIMP_TAC std_ss [DIFF_DEF, INTER_DEF, EXTENSION, GSPECIFICATION] THEN
+    PROVE_TAC[]
+QED
+
+Theorem INJECTIVE_IMAGE_EQ:
+      !f s1 s2. (!x y.  ((x IN (s1 UNION s2) /\ y IN (s1 UNION s2)) ==>
+          ((f x = f y) ==> (x = y)))) ==>
+          ((IMAGE f s1 = IMAGE f s2) = (s1 = s2))
+Proof
+
+    REPEAT STRIP_TAC THEN EQ_TAC THENL [
+      ALL_TAC,
+      SIMP_TAC std_ss []
+    ] THEN
+    FULL_SIMP_TAC std_ss [EXTENSION, IN_IMAGE, IN_UNION] THEN
+    METIS_TAC[]
+QED
+
+
+Theorem SUBSET_IMAGE___ORGINAL_EXISTS:
+    !f os fs. (fs SUBSET (IMAGE f os)) ==>
+          (?s. s SUBSET os /\ (fs = IMAGE f s))
+Proof
+
+  REPEAT STRIP_TAC THEN
+  Q_TAC EXISTS_TAC `os INTER (\x. (f x) IN fs)` THEN
+  REWRITE_TAC[INTER_SUBSET] THEN
+  FULL_SIMP_TAC std_ss [SUBSET_DEF, IN_IMAGE, EXTENSION, IN_INTER,
+    prove (``x IN (\x. P x) = P x``, SIMP_TAC std_ss [IN_DEF]) ] THEN
+  METIS_TAC[]
+QED
+
+
+
+Theorem DISJOINT_SUBSET_BOTH:
+      !s t s' t'. (s SUBSET s' /\ t SUBSET t' /\ DISJOINT s' t') ==>
+                   DISJOINT s t
+Proof
+
+   SIMP_TAC std_ss [DISJOINT_DEF, EXTENSION, SUBSET_DEF, NOT_IN_EMPTY,
+    IN_INTER] THEN
+   PROVE_TAC[]
+QED
+
+
+Theorem FINITE_POW_IFF:
+     !s. FINITE (POW s) = FINITE s
+Proof
+   METIS_TAC[finite_countable, infinite_pow_uncountable, FINITE_POW]
+QED
+
+
+Theorem SUBSET_POW_IFF:
+      !s t. (POW s SUBSET POW t) = s SUBSET t
+Proof
+
+   SIMP_TAC std_ss [SUBSET_DEF, IN_POW] THEN
+   PROVE_TAC[]
+QED
+
+

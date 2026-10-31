@@ -1,0 +1,26 @@
+
+HM = $(protect $(HOLDIR)/bin/Holmake)
+
+ifdef POLY
+CMD = $(HM) --holstate=$(HOLDIR)/bin/hol.state0 --logging
+SMLCMD = $(POLY) -q
+else
+CMD = $(HM) --logging
+SMLCMD = mosml -quietdec -P full
+endif
+
+all: goodlog badlog
+.PHONY: all
+
+goodlog:
+	cd good ; $(CMD) ; $(SMLCMD) < ../checklogfile.sml && touch ../$@
+
+badlog:
+	cd bad ; $(CMD) ; $(SMLCMD) < ../checklogfile.sml && touch ../$@
+
+
+
+# The good/ and bad/ subdir builds are driven inline (not via INCLUDES)
+# so build cleanAll doesn't recurse there.  List their .hol/ trees so
+# build cleanAll removes them.
+EXTRA_CLEANS = goodlog badlog bad/.hol/ good/.hol/

@@ -1,30 +1,35 @@
 structure QUse :> QUse =
 struct
 
-fun use_reader fname (reader as {read = infn0, eof, reset}) =
+val {print = emit, hadError} = HOLSourceParser.trackingPrint print
+val failOnError = ref false
+
+fun use_reader fname {read = infn, fileline, eof} =
   let
-    val lineNo = ref 1
-    fun infn () =
-      case infn0 () of
-          NONE => NONE
-        | SOME (c as #"\n") => (lineNo := !lineNo + 1;
-                                SOME c)
-        | SOME c => SOME c
     open PolyML
+    fun line () = #line (fileline ()) + 1
   in
-    while not (eof()) do
-          compiler (infn, [Compiler.CPFileName fname,
-                           Compiler.CPLineNo (fn () => !lineNo)]) ()
+    while not (eof()) do (
+      compiler (infn, [Compiler.CPFileName fname, Compiler.CPLineNo line]) ();
+      if !failOnError andalso hadError () then
+        OS.Process.exit OS.Process.failure
+      else ()
+    )
   end
 
-fun use fname = use_reader fname (QFRead.fileToReader fname)
+fun prim_use {quietOpen} fname =
+    use_reader fname (HOLSource.fileToReader {quietOpen = quietOpen, print = emit} fname)
+
+val use = prim_use {quietOpen = false}
+
 
 fun useScript fname =
     let
       val istream = TextIO.openIn fname
-      val reader = QFRead.streamToReader true istream
+      val reader =
+        HOLSource.streamToReader {quietOpen = false, print = emit} fname istream
       val _ = use_reader fname reader
-              handle e => (TextIO.closeIn istream; raise e)
+              handle e => (TextIO.closeIn istream; PolyML.Exception.reraise e)
     in
       TextIO.closeIn istream
     end

@@ -264,6 +264,8 @@ val skid_decode = pair_decode (string_decode, kname_decode)
 fun user_delta_encode ud =
     case ud of
       ADD_ABSYN_POSTP {codename} => tag_encode "AAPP" String codename
+    | ADD_USER_STATE {codename,delta} =>
+        tag_encode "AUS" (pair_encode(String, fn s => s)) (codename,delta)
     | ADD_NUMFORM (c,s) =>
         tag_encode "AN" (pair_encode(Char,option_encode String)) (c,s)
     | ADD_STRLIT {tmnm,ldelim} =>
@@ -286,11 +288,15 @@ fun user_delta_encode ud =
     | RMTMTOK {term_name,tok} =>
         tag_encode "RK" (pair_encode(String,String)) (term_name,tok)
     | RMTOK s => tag_encode "RMT" String s
-    | RM_STRLIT {tmnm} => tag_encode "RMS" String tmnm;
+    | RM_STRLIT {tmnm} => tag_encode "RMS" String tmnm
+    | RM_UPRINTER {codename=s,pattern=tm} =>
+        tag_encode "RUP" (pair_encode(String,Term)) (s,tm)
 
 
 val user_delta_decode =
   (tag_decode "AAPP" string_decode >> (fn s => ADD_ABSYN_POSTP{codename = s}))||
+  (tag_decode "AUS" (pair_decode(string_decode, SOME)) >>
+              (fn (c,d) => ADD_USER_STATE{codename = c, delta = d})) ||
   (tag_decode "AN" (pair_decode(char_decode, option_decode string_decode)) >>
               ADD_NUMFORM) ||
   (tag_decode "AS" (pair_decode(string_decode,string_decode)) >>
@@ -311,7 +317,10 @@ val user_delta_decode =
   (tag_decode "RK" (pair_decode(string_decode,string_decode)) >>
               (fn (nm,tok) => RMTMTOK {term_name = nm, tok = tok})) ||
   (tag_decode "RMT" string_decode >> RMTOK) ||
-  (tag_decode "RMS" string_decode >> (fn s => RM_STRLIT{tmnm=s}));
+  (tag_decode "RMS" string_decode >> (fn s => RM_STRLIT{tmnm=s})) ||
+  (tag_decode "RUP"
+        (pair_decode(string_decode,term_decode) >>
+         (fn (s,p) => RM_UPRINTER{codename=s,pattern=p})))
 
 fun grammar_rule_encode grule =
     case grule of
@@ -338,6 +347,7 @@ fun check_delta (d: user_delta) =
     | IOVERLOAD_ON(_, t) => Term.uptodate_term t
     | GRMOVMAP(_, t) => Term.uptodate_term t
     | ADD_UPRINTER{pattern,...} => Term.uptodate_term pattern
+    | RM_UPRINTER{pattern,...} => Term.uptodate_term pattern
     | _ => true
 
 fun nopp s _ = HOLPP.add_string ("<" ^ s ^ ">")
@@ -345,20 +355,31 @@ fun nopp s _ = HOLPP.add_string ("<" ^ s ^ ">")
 fun check_gdelta (TMD tmd) = check_delta tmd
   | check_gdelta (TYD tyd) = check_tydelta tyd
 
-fun other_tds (t, thyevent) =
-    case list_decode gdelta_decode t of
-        NONE => raise Fail ("GrammarDelta: encoding failure: t = \n  " ^
-                            HOLPP.pp_to_string 70
-                             (pp_sexp (nopp"ty") (nopp"tm") (nopp"thm"))
-                             t)
-      | SOME gds =>
-        let
-          val (goodgds, badgds) = Lib.partition check_gdelta gds
-        in
-          if null badgds then NONE
-          else
-            SOME (mk_list gdelta_encode goodgds)
-        end
+(* check_gdelta inspects only retire-state (uptodate_term / prim_mk_const /
+   uptodate_type).  If retire_epoch is unchanged since the last successful
+   scan, every stored grammar delta remains as valid as it was then. *)
+local
+  val last_scan_epoch = ref [~1,~1]
+  fun scan t =
+      case list_decode gdelta_decode t of
+          NONE => raise Fail ("GrammarDelta: encoding failure: t = \n  " ^
+                              HOLPP.pp_to_string 70
+                               (pp_sexp (nopp"ty") (nopp"tm") (nopp"thm"))
+                               t)
+        | SOME gds =>
+          let
+            val (goodgds, badgds) = Lib.partition check_gdelta gds
+          in
+            if null badgds then NONE
+            else SOME (mk_list gdelta_encode goodgds)
+          end
+in
+  fun other_tds (t, _) =
+    let val cur = [Type.type_epoch (), Term.term_epoch()] in
+      if !last_scan_epoch = cur then NONE
+      else scan t before last_scan_epoch := cur
+    end
+end
 
 val {export, segment_data, set} = ThyDataSexp.new {
       thydataty = "grammardelta",

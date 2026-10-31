@@ -4,26 +4,13 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "involuteFix";
+Theory involuteFix
+Ancestors
+  arithmetic pred_set number gcdset combinatorics
+  helperTwosq  (* for doublet_finite, doublet_card *)
+  involute
 
 (* ------------------------------------------------------------------------- *)
-
-
-(* open dependent theories *)
-val _ = load("involuteTheory");
-open helperFunctionTheory; (* for FUNPOW_2 *)
-open helperSetTheory; (* for BIJ_ELEMENT *)
-open helperNumTheory; (* for MOD_EQ *)
-open helperTwosqTheory; (* for doublet_finite, doublet_card *)
-open involuteTheory;
-
-(* arithmeticTheory -- load by default *)
-open arithmeticTheory pred_setTheory;
-
 
 (* ------------------------------------------------------------------------- *)
 (* Involution Fix Documentation                                              *)
@@ -31,7 +18,7 @@ open arithmeticTheory pred_setTheory;
 (* Overloading:
    pair_by f     = \x y. (x fpair y) f
 *)
-(*
+(* Definitions and Theorems (# are exported, ! are in compute):
 
    Helper Theorems:
 
@@ -48,6 +35,8 @@ open arithmeticTheory pred_setTheory;
    pairs_def     |- !f s. pairs f s = {x | x IN s /\ f x <> x}
    fixes_element |- !f s x. x IN fixes f s <=> x IN s /\ f x = x
    pairs_element |- !f s x. x IN pairs f s <=> x IN s /\ f x <> x
+   fixes_empty   |- !f. fixes f {} = {}
+   pairs_empty   |- !f. pairs f {} = {}
    fixes_subset  |- !f s. fixes f s SUBSET s
    pairs_subset  |- !f s. pairs f s SUBSET s
    fixes_finite  |- !f s. FINITE s ==> FINITE (fixes f s)
@@ -262,14 +251,16 @@ Proof
 QED
 
 (* Define the fixed points and pairs of involution. *)
-Definition fixes_def:
+Definition fixes_def[nocompute]:
    fixes f s = {x | x IN s /\ f x = x}
 End
+(* use [nocompute] as this is not effective. *)
 
 (* Define the pairs of involution. *)
-Definition pairs_def:
+Definition pairs_def[nocompute]:
    pairs f s = {x | x IN s /\ f x <> x}
 End
+(* use [nocompute] as this is not effective. *)
 
 (* Theorem: x IN fixes f s <=> x IN s /\ f x = x *)
 (* Proof: by fixes_def *)
@@ -285,6 +276,22 @@ Theorem pairs_element:
   !f s x. x IN pairs f s <=> x IN s /\ f x <> x
 Proof
   rw[pairs_def]
+QED
+
+(* Theorem: fixes f {} = {} *)
+(* Proof: by fixes_def. *)
+Theorem fixes_empty:
+  !f. fixes f {} = {}
+Proof
+  simp[fixes_def]
+QED
+
+(* Theorem: pairs f {} = {} *)
+(* Proof: by pairs_def. *)
+Theorem pairs_empty:
+  !f. pairs f {} = {}
+Proof
+  simp[pairs_def]
 QED
 
 (* Theorem: fixes f s SUBSET s *)
@@ -920,7 +927,7 @@ QED
 
    Therefore, BIGUNION eb = b             by SUBSET_ANTISYM
 *)
-Theorem equiv_pairs_bigunion:
+Theorem equiv_pairs_bigunion[allow_rebind]:
   !f s. f involute s ==> BIGUNION (equiv_pairs f s) = pairs f s
 Proof
   rpt strip_tac >>
@@ -1147,7 +1154,7 @@ QED
     and EVEN b              by mates_card_even
    Thus EVEN a <=> EVEN c   by EVEN_ADD
 *)
-Theorem involute_set_fixes_both_even:
+Theorem involute_set_fixes_both_even[allow_rebind]:
   !f s. FINITE s /\ f involute s ==> (EVEN (CARD s) <=> EVEN (CARD (fixes f s)))
 Proof
   rpt strip_tac >>
@@ -1191,8 +1198,4 @@ QED
 
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

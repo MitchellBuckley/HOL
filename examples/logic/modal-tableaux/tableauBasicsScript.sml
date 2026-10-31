@@ -1,9 +1,6 @@
-open HolKernel Parse boolLib bossLib;
-
-open pairTheory pred_setTheory
-open modalBasicsTheory
-
-val _ = new_theory "tableauBasics";
+Theory tableauBasics
+Ancestors
+  pair pred_set modalBasics
 
 Overload gsize = “λl. SUM (MAP nnfform_size l)”
 Overload form_size = “nnfform_size”
@@ -183,10 +180,8 @@ QED
 Datatype: tmodel = Nd (num list) (tmodel list)
 End
 
-Theorem tmodel_size_def[simp] = definition "tmodel_size_def"
-
 Theorem MEM_tmodel_size:
-  MEM t ts ⇒ tmodel_size t < tmodel1_size ts
+  MEM t ts ⇒ tmodel_size t < list_size tmodel_size ts
 Proof
   Induct_on ‘ts’ >> rw[] >> res_tac >> simp[]
 QED
@@ -195,10 +190,10 @@ Theorem tmodel_ind:
   ∀P. (∀vs ts. (∀t. MEM t ts ⇒ P t) ⇒ P (Nd vs ts)) ⇒
       (∀t. P t)
 Proof
-  rpt strip_tac >>
-  completeInduct_on ‘tmodel_size t’ >> Cases >>
-  rw[] >> fs[PULL_FORALL] >> last_x_assum irule >> rpt strip_tac >>
-  first_x_assum irule >> drule MEM_tmodel_size >> simp[]
+  (* the datatype package proves this shape itself, and quantifies a
+     constructor's other arguments inside the implication *)
+  gen_tac >> strip_tac >>
+  ho_match_mp_tac (TypeBase.induction_of “:tmodel”) >> simp[]
 QED
 
 val _ = TypeBase.update_induction tmodel_ind
@@ -255,4 +250,3 @@ QED
 
 
 
-val _ = export_theory();

@@ -2,6 +2,8 @@ open HolKernel Parse boolLib testutils
 open pairTheory sumTheory optionTheory optionSyntax
 open simpLib BasicProvers boolSimps
 
+val _ = new_theory "scratch"
+
 val _ = set_trace "Unicode" 0
 
 (* testing for sums *)
@@ -177,7 +179,7 @@ val _ = let
                          aconv a ``xx = (aa:bool,bb:bool)``
         | _ => false
 in
-  require (check_result check) split_pair_case_tac g
+  require (check_result check) (runtac split_pair_case_tac) g
 end;
 
 val _ = tprint "split_pair_case_tac (case in assumptions)"
@@ -191,7 +193,8 @@ val _ = let
                               aconv a2 a
         | _ => false
 in
-  require (check_result check) split_pair_case_tac ([a], ``pp /\ qq``)
+  require (check_result check) (runtac split_pair_case_tac)
+          ([a], ``pp /\ qq``)
 end
 
 val _ = Feedback.emit_MESG := false
@@ -300,6 +303,17 @@ val spvcross2_def =
       |> CONV_RULE (RAND_CONV (SIMP_CONV bool_ss [FORALL_PROD]))
 val _ = test "sum+pair, pair components unused" spvcross2_def
 
+val spvcross3_def0 = new_recursive_definition{
+  name = "spvcross3_def",
+  rec_axiom = sumTheory.sum_Axiom,
+  def = “spvcross3 f (INL x) (p:'a # 'b) = f (FST p) /\
+         spvcross3 f (INR y) p = y”};
+(* both clauses must end up with pair patterns: it is the clause that uses
+   its pattern's variables that keeps the column from being vacuous *)
+val spvcross3_def =
+    spvcross3_def0 |> SIMP_RULE bool_ss [FORALL_PROD, FST]
+val _ = test "sum+pair, pair components used in one clause only" spvcross3_def
+
 
 
 val cpairdef = new_definition("cpairdef", “cpair (f,x) = T”)
@@ -325,5 +339,102 @@ val _ = test "already good, simple RHS" already_good1_def
 val already_good2_def = new_definition("already_good2_def",
   “already_good2 p q = case (p,q) of (T,_) => T | (F, q) => q”);
 val _ = test "already good, case on RHS" already_good2_def
+
+val _ = tprint "TypeBase.case_pred_disj_of “:'b # 'c”"
+fun eq_upto_renaming t1 t2 = can (match_term t1) t2 andalso
+                             can (match_term t2) t1
+val desired = “!P. P (pair_CASE p f) <=> ?q r. p = (q,r) /\ P (f q r)”
+val hoelim = require_msg
+               (check_result (eq_upto_renaming desired))
+               term_to_string
+               (concl o TypeBase.case_pred_disj_of) “:'b # 'c”
+
+val _ = let
+  val _ = new_constant ("five", ``:num``)
+  val _ = new_constant ("greater", ``:num -> num -> bool``)
+  val rec1_def = new_definition("rec1_def",“rec1 (x:num+num) = five:num”);
+  val rec2_def = new_definition("rec2_def",“rec2 (x:num) = five:num”);
+  val rec12_thm = prove(
+    “(!m. rec1 (INL m) = if m = five then five else rec2 m) /\
+     (!n. rec2 n = if greater n (SUC five) then rec1 (INL five) else five)”,
+    rewrite_tac [rec1_def,rec2_def,boolTheory.COND_ID])
+  val thms = DefnBase.one_line_ify_mutrec NONE rec12_thm
+  fun test_fail s = (sdie s; false)
+  val _ = length thms = 2
+          orelse test_fail "wrong length of output from DefnBase.one_line_ify_mutrec"
+  val th1 = thms |> el 1
+  val th2 = thms |> el 2
+  val _ = (length (hyp th1) = 1 andalso is_eq (concl th1))
+          orelse test_fail "wrong output from DefnBase.one_line_ify_mutrec"
+  val _ = (length (hyp th2) = 0 andalso is_eq (concl th2))
+          orelse test_fail "wrong output from DefnBase.one_line_ify_mutrec"
+  in () end;
+
+
+val tyg = type_grammar()
+open bnfBase
+
+fun nmf2s (n,b) = "(\"" ^ n ^ "\"," ^ bnfBase_dtype.bnftor_toString b ^ ")"
+
+fun testq2bnf (s,expected) =
+    let val _ = tprint ("parse_bnf: \"" ^ s ^ "\"")
+    in
+      require_msg
+        (check_result (equal expected))
+        (fn nmfs => "[" ^ String.concatWith "," (map nmf2s nmfs) ^ "]")
+        (parse_bnf.parse2ftor o ParseDatatype.hparse tyg)
+        [QUOTE s]
+    end
+
+infix 2 ++
+infix 3 **
+val K = constty
+fun bty1 ++ bty2 = ftor({Thy="sum", Name="sum"}, [bty1,bty2])
+fun bty1 ** bty2 = ftor({Thy="pair", Name="prod"}, [bty1,bty2])
+val _ = List.app testq2bnf [
+      ("foo = C num | D", [("foo",constty “:num + unit”)]),
+      ("foo = C num foo | D bool | E (foo list)",
+       [("foo", K “:num” ** the_arg ++
+                (K “:bool” ++ ftor({Thy="scratch",Name="list"}, [the_arg])))]),
+      ("foo = C num | D bar ; bar = barC (bool -> foo)",
+       [("foo", K“:num” ++ mutrec_var "bar"),
+        ("bar", ftor({Thy = "min", Name = "fun"},
+                     [K“:bool”, mutrec_var "foo"]))])
+    ]
+
+(* github issue #517: type errors in case expressions should report in
+   surface `case ... of ... => ...` syntax and never leak the parser's
+   internal case-magic constants (fakeconst blob, raw `case_arg` /
+   `case_split` / `case_arrow` combinators) into the error message. *)
+local
+  fun parse_msg q =
+      (Parse.Term q; "<unexpected success>")
+      handle Feedback.HOL_ERR err => Feedback.message_of err
+  fun contains needle hay = String.isSubstring needle hay
+  val forbidden = [GrammarSpecials.fakeconst_special,
+                   "case_arg", "case_split", "case_arrow"]
+  fun readable m =
+      contains "case" m andalso contains "=>" m andalso
+      List.all (fn bad => not (contains bad m)) forbidden
+  fun mk_test desc q =
+      (tprint ("Case type-error readable (#517): " ^ desc);
+       require_msg (check_result readable) (fn m => "got: " ^ m)
+                   parse_msg q)
+in
+val _ = mk_test "outer case Comb (bool scrutinee, option pattern)"
+                `case T of NONE => T | SOME x => x`
+val _ = mk_test "outer case Comb (num option scrutinee, bool arms)"
+                `case (NONE : num option) of NONE => T | SOME n => n`
+val _ = mk_test "outer case Comb (bool scrutinee, pair pattern)"
+                `case T of (x,y) => x`
+(* case as a function argument exercises remove_case_magic on a complete
+   case via the safe_decase wrapper *)
+val _ = mk_test "case as function argument"
+                `FST (case (NONE : bool option) of NONE => T | SOME b => b)`
+(* arms with different return types exercises the arms-disagree formatter
+   (case_split-headed Rator) *)
+val _ = mk_test "case arms with disagreeing return types"
+                `case T of T => () | F => T`
+end
 
 val _ = Process.exit Process.success

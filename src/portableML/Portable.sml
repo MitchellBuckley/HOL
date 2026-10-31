@@ -43,6 +43,7 @@ infix 3 ##
 fun (f ## g) (x, y) = (f x, g y)
 fun apfst f (x, y) = (f x, y)
 fun apsnd f (x, y) = (x, f y)
+fun pair_map f (x, y) = (f x, f y)
 infix |> ||> |>> ||->
 fun x |> f = f x
 fun (x,y) |>> f = (f x, y)
@@ -279,6 +280,11 @@ fun assoc2 item =
    in
       assc
    end
+
+fun get_first f l =
+   case l of
+      [] => NONE
+    | h :: t => (case f h of NONE => get_first f t | some => some)
 
 type 'a cmp = 'a * 'a -> order
 
@@ -600,6 +606,15 @@ fun replace_string {from, to} =
     f [] o Substring.full
   end
 
+val remove_wspace =
+    String.translate (fn c => if Char.isSpace c then "" else str c)
+fun remove_external_wspace s =
+    let
+      open Substring
+    in
+      string (dropl Char.isSpace (dropr Char.isSpace (full s)))
+    end
+
 (*---------------------------------------------------------------------------
     System
  ---------------------------------------------------------------------------*)
@@ -622,10 +637,10 @@ type outstream     = TextIO.outstream
 val std_out        = TextIO.stdOut
 val stdin          = TextIO.stdIn
 fun open_in file   = HOLFileSys.openIn file
-                     handle IO.Io{cause=SysErr(s,_),...} => raise (Io s)
+                     handle IO.Io{cause=OS.SysErr(s,_),...} => raise (Io s)
                                    (* handle OS.SysErr (s,_) => raise Io s; *)
 fun open_out file  = HOLFileSys.openOut file
-                     handle IO.Io{cause=SysErr(s,_),...} => raise (Io s)
+                     handle IO.Io{cause=OS.SysErr(s,_),...} => raise (Io s)
                                    (* handle OS.SysErr (s,_) => raise Io s; *)
 val output         = TextIO.output
 fun outputc strm s = output(strm,s)
@@ -821,15 +836,10 @@ fun with_ppstream ppstrm =
  ---------------------------------------------------------------------------*)
 
 type 'a quotation = 'a HOLPP.quotation
-open HOLPP
+open HOLPP HOLquotation
 
-fun pprint f x = prettyPrint(TextIO.print, 72) (f x)
-
-fun norm_quote [] = []
-  | norm_quote [x] = [x]
-  | norm_quote (QUOTE s1 :: QUOTE s2 :: rst) =
-      norm_quote (QUOTE (s1 ^ s2) :: rst)
-  | norm_quote (h :: rst) = h :: norm_quote rst
+val pprint_outstream = ref TextIO.print
+fun pprint f x = prettyPrint(!pprint_outstream, 72) (f x)
 
 local
   fun strip_comments (d, a) s =

@@ -308,10 +308,24 @@ fun EQT_ELIM th =
  *      |- !x1 ... xn. t[xi]                                                 *
  *    --------------------------    SPECL [t1, ..., tn]                      *
  *          |-  t[ti]                                                        *
+ *                                                                           *
+ * OLD CODE: Slow due to SPEC repeatedly traversing the whole term           *
+ * NOTE: Does not speed up expknl due to it not supporting                   *
+ * explicit substitutions                                                    *
+ *                                                                           *
+ * fun SPECL tml th =                                                        *
+ *    rev_itlist SPEC tml th handle HOL_ERR _ => raise ERR "SPECL" ""        *
  *---------------------------------------------------------------------------*)
 
 fun SPECL tml th =
-   rev_itlist SPEC tml th handle HOL_ERR _ => raise ERR "SPECL" ""
+   let
+   fun loop [] tm = tm
+     | loop [x] tm = SPEC x tm
+     | loop (x::xs) tm = loop xs (Specialize x tm)
+   in
+     loop tml th
+     handle HOL_ERR _ => raise ERR "SPECL" ""
+   end
 
 (*---------------------------------------------------------------------------*
  * SELECT introduction                                                       *
@@ -477,22 +491,24 @@ fun CONJUNCTS_AC (t1, t2) =
    let
       fun conjuncts dict th =
          conjuncts (conjuncts dict (CONJUNCT1 th)) (CONJUNCT2 th)
-         handle HOL_ERR _ => Redblackmap.insert (dict, concl th, th)
+         handle HOL_ERR _ => Termtab.update (concl th, th) dict
       fun prove_conj dict t =
          let
             val (l, r) = dest_conj t
          in
             CONJ (prove_conj dict l) (prove_conj dict r)
          end
-         handle HOL_ERR _ => Redblackmap.find (dict, t)
-      val empty = Redblackmap.mkDict compare
+         handle HOL_ERR _ =>
+                (case Termtab.lookup dict t of
+                     SOME th => th
+                   | NONE => raise ERR "CONJUNCTS_AC" "")
+      val empty = Termtab.empty
       val t1_imp_t2 = prove_conj (conjuncts empty (ASSUME t1)) t2
       val t2_imp_t1 = prove_conj (conjuncts empty (ASSUME t2)) t1
    in
       IMP_ANTISYM_RULE (DISCH t1 t1_imp_t2) (DISCH t2 t2_imp_t1)
    end
    handle HOL_ERR _ => raise ERR "CONJUNCTS_AC" ""
-        | Redblackmap.NotFound => raise ERR "CONJUNCTS_AC" ""
 
 (*---------------------------------------------------------------------------*
  * |- t1 = t2  if t1 and t2 are equivalent using idempotence, symmetry and   *
@@ -533,7 +549,7 @@ fun DISJUNCTS_AC (t1, t2) =
          in
             disjuncts (disjuncts dict (l, l_th)) (r, r_th)
          end
-         handle HOL_ERR _ => Redblackmap.insert (dict, t, th)
+         handle HOL_ERR _ => Termtab.update (t, th) dict
       fun prove_from_disj dict t =
          let
             val (l, r) = dest_disj t
@@ -541,15 +557,17 @@ fun DISJUNCTS_AC (t1, t2) =
             DISJ_CASES (ASSUME t) (prove_from_disj dict l)
                                   (prove_from_disj dict r)
          end
-         handle HOL_ERR _ => Redblackmap.find (dict, t)
-      val empty = Redblackmap.mkDict compare
+         handle HOL_ERR _ =>
+                (case Termtab.lookup dict t of
+                     SOME th => th
+                   | NONE => raise ERR "DISJUNCTS_AC" "")
+      val empty = Termtab.empty
       val t1_imp_t2 = prove_from_disj (disjuncts empty (t2, ASSUME t2)) t1
       val t2_imp_t1 = prove_from_disj (disjuncts empty (t1, ASSUME t1)) t2
    in
       IMP_ANTISYM_RULE (DISCH t1 t1_imp_t2) (DISCH t2 t2_imp_t1)
    end
    handle HOL_ERR _ => raise ERR "DISJUNCTS_AC" ""
-        | Redblackmap.NotFound => raise ERR "DISJUNCTS_AC" ""
 
 (*---------------------------------------------------------------------------*
  *           A,t |- t1 = t2                                                  *
@@ -618,14 +636,21 @@ fun NOT_EQ_SYM th =
  *                                                                           *
  * [TFM 90.05.08]                                                            *
  * --------------------------------------------------------------------------*)
-
 local
-   val Fth = ASSUME F
+   val eqF_thm =
+      let
+         val (Bvar, _) = dest_forall (concl boolTheory.EQ_CLAUSES)
+         val thm = el 4 $ CONJUNCTS (SPEC Bvar boolTheory.EQ_CLAUSES)
+      in
+         GEN Bvar (SYM thm)
+      end
 in
    fun EQF_INTRO th =
-      IMP_ANTISYM_RULE (NOT_ELIM th)
-                       (DISCH F (CONTR (dest_neg (concl th)) Fth))
-      handle HOL_ERR _ => raise ERR "EQF_INTRO" ""
+     let val t' = dest_neg (concl th)
+     in
+     EQ_MP (SPEC t' eqF_thm) th
+     end
+     handle HOL_ERR _ => raise ERR "EQF_INTRO" ""
 end
 
 (* --------------------------------------------------------------------------*
@@ -782,7 +807,7 @@ in
       if is_forall (concl th) then
          let
             val (hvs, con) = (HOLset.listItems ## I) (hyp_frees th, concl th)
-            val fvs = free_vars con
+            val fvs = HOLset.listItems (FVL [con] empty_tmset)
             val vars = fst (strip_forall con)
          in
             SPECL (snd (itlist varyAcc vars (hvs @ fvs, []))) th
@@ -1332,7 +1357,7 @@ fun PART_MATCH' f th t =
 
                         [x = y, y = z] |- x = z
         (eg)   -------------------------------- EXISTS_LEFT1 ``y``
-               [∃y. (x = y) ∧ (y = z)] |- x = z                         (UOK)
+               [∃y. (x = y) ∧ (y = z)] |- x = z
 
  * --------------------------------------------------------------------------*)
 
@@ -1684,184 +1709,217 @@ local
       if n = 1 then TRY_CONV BETA_CONV
       else THENC (RATOR_CONV (BETA_CONVS (n - 1))) (TRY_CONV BETA_CONV)
 in
-   fun BETA_VAR v tm =
-      if is_abs tm
-         then let
-                 val (Bvar, Body) = dest_abs tm
-              in
-                 if aconv v Bvar then failwith "BETA_VAR: UNCHANGED"
-                 else ABS_CONV (BETA_VAR v Body) end
-      else case strip_comb tm of
-              (_, []) => failwith "BETA_VAR: UNCHANGED"
-            | (oper, args) =>
-                 if aconv oper v then BETA_CONVS (length args)
-                 else let
-                         val (Rator, Rand) = dest_comb tm
+fun BETA_VAR v tm =
+   if is_abs tm
+      then let
+              val (Bvar, Body) = dest_abs tm
+           in
+              if aconv v Bvar then failwith "BETA_VAR: UNCHANGED"
+              else ABS_CONV (BETA_VAR v Body) end
+   else case strip_comb tm of
+           (_, []) => failwith "BETA_VAR: UNCHANGED"
+         | (oper, args) =>
+              if aconv oper v then BETA_CONVS (length args)
+              else let
+                      val (Rator, Rand) = dest_comb tm
+                   in
+                      let
+                         val lconv = BETA_VAR v Rator
                       in
                          let
-                            val lconv = BETA_VAR v Rator
+                            val rconv = BETA_VAR v Rand
                          in
-                            let
-                               val rconv = BETA_VAR v Rand
-                            in
-                               COMB_CONV2 lconv rconv
-                            end
-                            handle HOL_ERR _ => RATOR_CONV lconv
+                            COMB_CONV2 lconv rconv
                          end
-                         handle HOL_ERR _ => RAND_CONV (BETA_VAR v Rand)
+                         handle HOL_ERR _ => RATOR_CONV lconv
                       end
+                      handle HOL_ERR _ => RAND_CONV (BETA_VAR v Rand)
+                   end
 
-   structure Map = Redblackmap
 
-   (* count from zero to indicate last argument, up to #args - 1 to indicate
-      first argument *)
+(* count from zero to indicate last argument, up to #args - 1 to indicate
+   first argument *)
 
-   fun arg_CONV 0 c = RAND_CONV c
-     | arg_CONV n c = RATOR_CONV (arg_CONV (n - 1) c)
+fun arg_CONV 0 c = RAND_CONV c
+  | arg_CONV n c = RATOR_CONV (arg_CONV (n - 1) c)
 
-   fun foldri f acc list =
-      let
-         fun foldthis (e, (acc, n)) = (f (n, e, acc), n + 1)
-      in
-         #1 (foldr foldthis (acc, 0) list)
-      end
-
-   fun munge_bvars absmap th =
-      let
-         fun recurse curposn bvarposns (donebvars, acc) t =
-            case dest_term t of
-               LAMB (bv, body) =>
-                 let
-                   val newposnmap = Map.insert (bvarposns, bv, curposn)
-                   val (newdonemap, restore) =
-                      (HOLset.delete (donebvars, bv),
-                       fn m => HOLset.add (m, bv))
-                      handle HOLset.NotFound =>
-                              (donebvars, (fn m => HOLset.delete (m, bv)
-                                                   handle HOLset.NotFound => m))
-                   val (dbvars, actions) =
-                      recurse
-                        (curposn o ABS_CONV) newposnmap (newdonemap, acc) body
-                 in
-                    (restore dbvars, actions)
-                 end
-             | COMB _ =>
-                 let
-                   val (f, args) = strip_comb t
-                   fun argfold (n, arg, A) =
-                      recurse (curposn o arg_CONV n) bvarposns A arg
-                 in
-                    case Map.peek (absmap, f) of
-                      NONE => foldri argfold (donebvars, acc) args
-                    | SOME abs_t =>
-                       let
-                          val (abs_bvars, _) = strip_abs abs_t
-                          val paired_up = ListPair.zip (args, abs_bvars)
-                          fun foldthis
-                                ((arg, absv), acc as (dbvars, actionlist)) =
-                             if HOLset.member (dbvars, arg)
-                                then acc
-                             else case Map.peek (bvarposns, arg) of
-                                    NONE => acc
-                                  | SOME p =>
-                                    (HOLset.add (dbvars, arg),
-                                     p (ALPHA_CONV absv) :: actionlist)
-                          val (A as (newdbvars, newacc)) =
-                             List.foldl foldthis (donebvars, acc) paired_up
-                       in
-                          foldri argfold A args
-                       end
-                 end
-             | _ => (donebvars, acc)
-      in
-         recurse I (Map.mkDict Term.compare) (empty_tmset, []) (concl th)
-      end
-
-   (* Modified HO_PART_MATCH by PVH on Apr. 25, 2005: code was broken;
-      repaired by tightening "foldthis" condition for entry to "bound_to_abs";
-      see longish note at bottom for more details. *)
-
-   (* "bound_vars" returns set of bound variables within term t *)
-   (* "t" argument is actual term, "acc" is accumulating set, orig. empty *)
-
-   local
-      fun bound_vars1 t acc =
-         case dest_term t of
-            LAMB (v, b) => bound_vars1 b (HOLset.add (acc, v))
-          | COMB (l, r) => bound_vars1 l (bound_vars1 r acc)
-          | otherwise => acc
+fun foldri f acc list =
+   let
+      fun foldthis (e, (acc, n)) = (f (n, e, acc), n + 1)
    in
-      fun bound_vars t = bound_vars1 t empty_tmset
+      #1 (foldr foldthis (acc, 0) list)
    end
 
-   fun HO_PART_MATCH partfn th =
-      let
-         val sth = SPEC_ALL th
-         val bod = concl sth
-         val pbod = partfn bod
-         val possbetas =
-            mapfilter (fn v => (v, BETA_VAR v bod))
-                      (filter (can dom_rng o type_of) (free_vars bod))
-         fun finish_fn tyin ivs =
-            let
-               val npossbetas =
-                  if null tyin
-                     then possbetas
-                  else map (inst tyin ## I) possbetas
-            in
-               if null npossbetas then Lib.I
-               else
-                 CONV_RULE
-                   (EVERY_CONV
-                      (mapfilter (TRY_CONV o C(op_assoc aconv) npossbetas) ivs))
-            end
-          val lconsts =
-             HOLset.intersection (FVL [pbod] empty_tmset, hyp_frees th)
-          val ltyconsts = HOLset.listItems (hyp_tyvars th)
-      in
-         fn tm =>
-            let
-               val (tmin, tyin) = ho_match_term ltyconsts lconsts pbod tm
-               val tmbvs = bound_vars tm
-               fun foldthis ({redex, residue}, acc) =
-                  if is_abs residue
-                     andalso all (fn v => HOLset.member (tmbvs, v))
-                                 (fst (strip_abs residue))
-                    then Map.insert (acc, redex, residue) else acc
-               val bound_to_abs =
-                  List.foldl foldthis (Map.mkDict Term.compare) tmin
+fun munge_bvars absmap th =
+   let
+      fun recurse curposn bvarposns (donebvars, acc) t =
+         case dest_term t of
+            LAMB (bv, body) =>
+              let
+                val newposnmap = Termtab.update (bv, curposn) bvarposns
+                val (newdonemap, restore) =
+                   (HOLset.delete (donebvars, bv),
+                    fn m => HOLset.add (m, bv))
+                   handle HOLset.NotFound =>
+                           (donebvars, (fn m => HOLset.delete (m, bv)
+                                                handle HOLset.NotFound => m))
+                val (dbvars, actions) =
+                   recurse
+                     (curposn o ABS_CONV) newposnmap (newdonemap, acc) body
+              in
+                 (restore dbvars, actions)
+              end
+          | COMB _ =>
+              let
+                val (f, args) = strip_comb t
+                fun argfold (n, arg, A) =
+                   recurse (curposn o arg_CONV n) bvarposns A arg
+              in
+                 case Termtab.lookup absmap f of
+                   NONE => foldri argfold (donebvars, acc) args
+                 | SOME abs_t =>
+                    let
+                       val (abs_bvars, _) = strip_abs abs_t
+                       val paired_up = ListPair.zip (args, abs_bvars)
+                       fun foldthis
+                             ((arg, absv), acc as (dbvars, actionlist)) =
+                          if HOLset.member (dbvars, arg)
+                             then acc
+                          else case Termtab.lookup bvarposns arg of
+                                 NONE => acc
+                               | SOME p =>
+                                 (HOLset.add (dbvars, arg),
+                                  p (ALPHA_CONV absv) :: actionlist)
+                       val (A as (newdbvars, newacc)) =
+                          List.foldl foldthis (donebvars, acc) paired_up
+                    in
+                       foldri argfold A args
+                    end
+              end
+          | _ => (donebvars, acc)
+   in
+      recurse I Termtab.empty (empty_tmset, []) (concl th)
+   end
+
+(* Modified HO_PART_MATCH by PVH on Apr. 25, 2005: code was broken;
+   repaired by tightening "foldthis" condition for entry to "bound_to_abs";
+   see longish note at bottom for more details. *)
+
+(* "bound_vars" returns set of bound variables within term t *)
+(* "t" argument is actual term, "acc" is accumulating set, orig. empty *)
+
+local
+   fun bound_vars1 t acc =
+      case dest_term t of
+         LAMB (v, b) => bound_vars1 b (HOLset.add (acc, v))
+       | COMB (l, r) => bound_vars1 l (bound_vars1 r acc)
+       | otherwise => acc
+in
+   fun bound_vars t = bound_vars1 t empty_tmset
+end
+
+fun HO_PART_MATCH partfn th =
+    let
+      val sth = SPEC_ALL th
+      val bod = concl sth
+      val pbod = partfn bod
+      val lconsts =
+          HOLset.intersection (FVL [pbod] empty_tmset, hyp_frees th)
+      val ltyconsts = HOLset.listItems (hyp_tyvars th)
+      val flex_candidates_vlist = filter (can dom_rng o type_of) (free_vars bod)
+   in
+      if (null flex_candidates_vlist) then
+         (fn tm =>
+             let
+               val (tmin,tyin) = match_terml ltyconsts lconsts pbod tm
                val sth0 = INST_TYPE tyin sth
                val sth0c = concl sth0
                val (sth1, tmin') =
-                    case match_bvs tm (partfn sth0c) [] of
+                   case match_bvs tm (partfn sth0c) [] of
                        [] => (sth0, tmin)
                      | bvms =>
                        let
-                          val avoids = look_for_avoids bvms sth0c empty_tmset
-                          fun f (v, acc) = (v |-> genvar (type_of v)) :: acc
-                          val newinst = HOLset.foldl f [] avoids
-                          val newthm = INST newinst sth0
-                          val tmin' = map (fn {residue, redex} =>
+                         val avoids = look_for_avoids bvms sth0c empty_tmset
+                         fun f (v, acc) = (v |-> genvar (type_of v)) :: acc
+                         val newinst = HOLset.foldl f [] avoids
+                         val newthm = INST newinst sth0
+                         val tmin' = map (fn {residue, redex} =>
                                              {residue = residue,
                                               redex = Term.subst newinst redex})
-                                          tmin
-                          val thmc = concl newthm
+                                         tmin
+                         val thmc = concl newthm
                        in
-                          (EQ_MP (ALPHA thmc (deep_alpha bvms thmc)) newthm,
-                           tmin')
+                         (EQ_MP (ALPHA thmc (deep_alpha bvms thmc)) newthm,
+                          tmin')
                        end
-               val sth2 =
-                    if Map.numItems bound_to_abs = 0
-                       then sth1
-                    else CONV_RULE
-                           (EVERY_CONV (#2 (munge_bvars bound_to_abs sth1)))
-                           sth1
-               val th0 = INST tmin' sth2
-               val th1 = finish_fn tyin (map #redex tmin) th0
-            in
-               th1
-            end
-      end
+               val th0 = INST tmin' sth1
+             in
+               th0
+             end)
+      else
+        let
+          val possbetas =
+              mapfilter (fn v => (v, BETA_VAR v bod)) flex_candidates_vlist
+          fun finish_fn tyin ivs =
+              let
+                val npossbetas =
+                    if null tyin then possbetas
+                    else map (inst tyin ## I) possbetas
+              in
+                if null npossbetas then Lib.I
+                else
+                  CONV_RULE
+                    (EVERY_CONV
+                       (mapfilter(TRY_CONV o C(op_assoc aconv) npossbetas) ivs))
+              end
+         in
+            fn tm =>
+               let
+                  val (tmin, tyin) = ho_match_term ltyconsts lconsts pbod tm
+                  val tmbvs = bound_vars tm
+                  fun foldthis ({redex, residue}, acc) =
+                     if is_abs residue
+                        andalso all (fn v => HOLset.member (tmbvs, v))
+                                    (fst (strip_abs residue))
+                       then Termtab.update (redex, residue) acc else acc
+                  val bound_to_abs =
+                     List.foldl foldthis Termtab.empty tmin
+                  val sth0 = INST_TYPE tyin sth
+                  val sth0c = concl sth0
+                  val (sth1, tmin') =
+                       case match_bvs tm (partfn sth0c) [] of
+                          [] => (sth0, tmin)
+                        | bvms =>
+                          let
+                             val avoids =
+                                 look_for_avoids bvms sth0c empty_tmset
+                             fun f(v,acc) = (v |-> genvar (type_of v)) :: acc
+                             val newinst = HOLset.foldl f [] avoids
+                             val newthm = INST newinst sth0
+                             val tmin' =
+                                 map (fn {residue, redex} =>
+                                         {residue = residue,
+                                          redex = Term.subst newinst redex})
+                                     tmin
+                             val thmc = concl newthm
+                          in
+                            (EQ_MP(ALPHA thmc (deep_alpha bvms thmc)) newthm,
+                             tmin')
+                          end
+                  val sth2 =
+                       if Termtab.size bound_to_abs = 0
+                          then sth1
+                       else CONV_RULE
+                              (EVERY_CONV
+                                 (#2 (munge_bvars bound_to_abs sth1)))
+                              sth1
+                  val th0 = INST tmin' sth2
+                  val th1 = finish_fn tyin (map #redex tmin) th0
+               in
+                  th1
+               end
+         end
+   end
 end
 
 fun HO_MATCH_MP ith =

@@ -2,7 +2,7 @@ CLINE_OPTIONS = -r
 
 # directories to build under src/
 SRCRELNAMES = \
-  bag Boolify/src \
+  algebra bag Boolify/src \
   coalgebras \
   datatype/inftree \
   emit \
@@ -12,51 +12,75 @@ SRCRELNAMES = \
   monad/more_monads \
   n-bit \
   pred_set/src/more_theories probability \
-  quotient/src \
-  rational real real/analysis res_quan/src ring/src \
+  rational real real/analysis res_quan/src \
   search sort string \
-  temporal/src TeX transfer \
+  TeX transfer \
   update
+
+ifneq ($(KERNELID),otknl)
+SRCRELNAMES += num/theories/cv_compute/automation
+endif
 
 INCLUDES = $(patsubst %,../../%,$(SRCRELNAMES))
 
 ifdef POLY
-INCLUDES += ../../floating-point/native
+INCLUDES += ../../floating-point/native ../../HolRefute
 endif
 
 ifdef HOLSELFTESTLEVEL
+
+AXIOMATIC_THYDIRS = set-theory/vbg set-theory/zfset geometry
+AXIOMATIC_EXAMPLES = $(patsubst %,axiomatic-developments/%,$(AXIOMATIC_THYDIRS))
+
 # example directories to build at selftest level 1
-EXDIRS = arm/arm6-verification arm/armv8-memory-model arm/experimental \
-         CCS Crypto/RSA Hoare-for-divergence MLsyntax \
+EXDIRS = algebra/aat \
+         arm/arm6-verification arm/armv8-memory-model arm/experimental \
+         $(AXIOMATIC_EXAMPLES) \
+	 bnf-datatypes \
+         CCS Crypto/RSA Crypto/SHA-2 Crypto/MD5 \
+         Crypto/pedersenCommitment Crypto/sigmaProtocol \
+         Hoare-for-divergence MLsyntax \
          PSL/1.01/executable-semantics PSL/1.1/official-semantics \
-	 STE algorithms computability dependability dev \
+	 STE algorithms computability countchars \
+         data-structures/ \
+         data-structures/AVL_tree \
+         dependability dev \
          developers/ThmSetData \
 	 fermat \
 	 formal-languages formal-languages/context-free \
-         formal-languages/contig \
-	 formal-languages/lambek formal-languages/regular/regular-play \
-	 fun-op-sem/lprefix_lub fun-op-sem/for \
+         formal-languages/contig formal-languages/json \
+         formal-languages/lambek formal-languages/regular/regular-play \
+         formal-languages/pi-calculus \
+         pl-semantics/coimp pl-semantics/lprefix_lub pl-semantics/for \
          hardware hfs \
          imperative ind_def \
          l3-machine-code/common \
-         lambda/barendregt lambda/wcbv-reasonable \
-         lassie \
+         lambda latex-generation/paper \
          logic logic/folcompactness logic/modal-models logic/modal-tableaux \
          logic/ncfolproofs logic/propositional_logic logic/relevant-logic \
-         misc parity rings set-theory/zfset set-theory/vbg zipper
+         logic/temporal/src \
+         misc \
+         padics parity probability \
+         rings
 
 # selftest directories under src/quotient
-QUOTDIRS = examples examples/lambda examples/sigma
+QUOTDIRS = examples examples/lambda examples/sigma choice
 
 SRCTESTDIRS = \
   integer/testing \
   string/theorytesting \
   TeX/theory_tests TeX/theory_tests/proj1paper \
-  tfl/examples transfer/examples
+  tfl/examples transfer/examples \
+  finite_maps/theory_tests
 
 ifdef POLY
 SRCTESTDIRS += n-bit/interactive_tests
 EXDIRS += RL_Environment
+
+ifneq ($(KERNELID),otknl)
+EXDIRS += cv_compute
+SRCTESTDIRS += num/theories/cv_compute/automation/theory_tests
+endif
 endif
 
 INCLUDES += ../../tfl/examples $(patsubst %,../../quotient/%,$(QUOTDIRS)) \
@@ -67,33 +91,34 @@ INCLUDES += ../../tfl/examples $(patsubst %,../../quotient/%,$(QUOTDIRS)) \
 ifneq($(HOLSELFTESTLEVEL),1)
 EX2DIRS = AKS algebra algorithms/boyer_moore \
             algorithms/unification/triangular/nominal \
-            algorithms/unification/triangular/first-order \
+            algorithms/unification/triangular/first-order/compilation \
             arm/arm6-verification/correctness \
             arm/v4 arm/v7 \
-          balanced_bst \
           category computability/kolmog computability/lambda \
             computability/recdegrees \
-            computability/register computability/turing \
-            Crypto \
+            computability/register computability/turing Crypto \
+          data-structures/balanced_bst \
           decidable_separationLogic/src \
-          formal-languages/regular fun-op-sem \
+          formal-languages/regular pl-semantics \
+          generic_graphs \
           lambda/other-models lambda/typing \
-            logic/ltl logic/ltl-transformations \
+            logic/ltl logic/temporal_deep \
+            logic/ltl-transformations \
             l3-machine-code/decompilers \
-          miller \
-	  probability vector \
-          separationLogic/src separationLogic/src/holfoot simple_complexity \
-          temporal_deep
+          probability/legacy miller \
+          vector \
+          separationLogic/src separationLogic/src/holfoot simple_complexity
 
 ifdef POLY
-EX2DIRS += separationLogic/src/holfoot/poly temporal_deep/src/examples
+EX2DIRS += separationLogic/src/holfoot/poly logic/temporal_deep/src/examples
+SRCTESTDIRS += tactictoe/selftest
+
+ifeq ($(KERNELID),stdknl)
+EX2DIRS += bootstrap
+endif
 endif
 
 INCLUDES += $(patsubst %,../../../examples/%,$(EX2DIRS))
-
-ifeq ($(KERNELID),stdknl)
-INCLUDES += ../../../examples/bootstrap
-endif
 
 endif
 
@@ -102,12 +127,28 @@ EX3DIRS = arm/ARM_security_properties \
           diningcryptos \
           l3-machine-code/cheri/step
 
-
 ifdef POLY
 EX3DIRS += machine-code theorem-prover
 endif
 
 INCLUDES += $(patsubst %,../../../examples/%,$(EX3DIRS))
+endif
+
+# The LSP tests.  Here rather than as directories of their own in the
+# build sequence because each is one job that spends nearly all of its
+# time waiting on a server rather than on the CPU: alone in the
+# sequence that is minutes of one core with everything else stopped,
+# and alongside these it is close to free.  `CLINE_OPTIONS = -r' above
+# builds each one's top target, so naming the directories is enough.
+#
+# `HOLSELFTESTLEVEL' is consulted here and nowhere below: this file is
+# a build-sequence directory and so is passed it, while the directories
+# reached through INCLUDES are scanned into this same Holmake's graph
+# and do not check it at all.  Poly-only, as the LSP is.
+ifdef POLY
+INCLUDES += ../../../tools-poly/lsp/tests \
+            ../../../tools-poly/lsp/tests/integer \
+            ../../../tools-poly/lsp/tests/sorting
 endif
 
 endif

@@ -12,14 +12,13 @@ struct
 
 open Parse HolKernel boolLib;
 
-val _ = set_trace "Unicode" 0;
 open totoTheory reduceLib bossLib
  relationTheory listTheory pairTheory optionTheory enumeralTheory pred_setLib
  totoTacs finite_mapTheory;
 
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars enumeralTheory.enumeral_grammars
+  val (Type,Term) = parse_from_grammars $ valOf $ grammarDB {thyname="enumeral"}
 end
 open Parse
 
@@ -56,8 +55,8 @@ in REWR_CONV REVERSE_REV THENC rev_conv end;
 (* EQ_LESS_CONV converts cpn = LESS to one of T, F *)
 
 val LESS_T = SPEC ``LESS`` (INST_TYPE [alpha |-> ``:cpn``] REFL_CLAUSE);
-val GREATER_F = prove (``(GREATER = LESS) = F``,REWRITE_TAC [all_cpn_distinct]);
-val EQUAL_F = prove (``(EQUAL = LESS) = F``,REWRITE_TAC [all_cpn_distinct]);
+val GREATER_F = enumeralTheory.GREATER_F
+val EQUAL_F   = enumeralTheory.EQUAL_F
 
 val EQ_LESS_CONV = REWR_CONV LESS_T ORELSEC REWR_CONV GREATER_F ORELSEC
                    REWR_CONV EQUAL_F ORELSEC
@@ -66,14 +65,9 @@ val EQ_LESS_CONV = REWR_CONV LESS_T ORELSEC REWR_CONV GREATER_F ORELSEC
 (* A replacement for cpn_REWR_CONV when instead of case <cpn> of LESS => ...
    we have  if <cpn> = LESS then ... else ... .*)
 
-val EQ_LESS_REWR = prove (``!v0 v1:'a. (if LESS = LESS then v0 else v1) = v0``,
-RW_TAC bool_ss []);
-
-val EQ_GREATER_REWR = prove (``!v0 v1:'a.
-(if GREATER = LESS then v0 else v1) = v1``, RW_TAC bool_ss []);
-
-val EQ_EQUAL_REWR = prove (``!v0 v1:'a.
-(if EQUAL = LESS then v0 else v1) = v1``, RW_TAC bool_ss []);
+val EQ_LESS_REWR    = enumeralTheory.EQ_LESS_REWR
+val EQ_GREATER_REWR = enumeralTheory.EQ_GREATER_REWR
+val EQ_EQUAL_REWR   = enumeralTheory.EQ_EQUAL_REWR
 
 val COND_EQ_LESS_CONV = REWR_CONV EQ_LESS_REWR ORELSEC REWR_CONV EQ_GREATER_REWR
                    ORELSEC REWR_CONV EQ_EQUAL_REWR ORELSEC
@@ -241,12 +235,8 @@ REWR_CONV (ISPEC cmp ENUMERAL_set) THENC
 RAND_CONV (RAND_CONV (incr_ssort_CONV keyconv)) THENC
 RAND_CONV list_to_bt_CONV;
 
-val LIST_TO_SET_NIL = prove (
-``{} = set ([]:'a list)``, REWRITE_TAC [LIST_TO_SET_THM]);
-
-val LIST_TO_SET_CONS = prove (
-``!a:'a l s. (s = set l) ==> (a INSERT s = set (a :: l))``,
-REPEAT STRIP_TAC THEN ASM_REWRITE_TAC [LIST_TO_SET_THM]);
+val LIST_TO_SET_NIL  = enumeralTheory.LIST_TO_SET_NIL
+val LIST_TO_SET_CONS = enumeralTheory.LIST_TO_SET_CONS
 
 (* DISPLAY_TO_set_CONV { ... } proves { ... } = set [ ... ] *)
 
@@ -378,9 +368,7 @@ in olc end;
    Improved to check OL_bt first, and if this comes out T, as it always
    should, to use bt_to_list_CONV in place of bt_to_ol_lb/ub_CONV. *)
 
-val [aTT, aTF, aFT, aFF] = CONJUNCTS (prove (
-``(T/\T <=> T) /\ (T/\F <=> F) /\ (F/\T <=> F) /\ (F/\F <=> F)``,
-REWRITE_TAC [AND_CLAUSES]));
+val [aTT, aTF, aFT, aFF] = CONJUNCTS enumeralTheory.AND_CONV_conj;
 
 val AND_CONV = REWR_CONV aTT ORELSEC REWR_CONV aTF ORELSEC
                REWR_CONV aFT ORELSEC REWR_CONV aFF;
@@ -633,165 +621,4 @@ let val eqn = (DISPLAY_TO_set_CONV ORELSEC REFL) setl;
 in CONV_RULE (RAND_CONV (incr_ssort_CONV keyconv) THENC
               RATOR_CONV (RAND_CONV (REWR_CONV (SYM eqn)))) th end;
 
-(* Test Cases: ******************************************************
-load "stringLib"; open stringLib;
-
-REVERS_CONV (Term`REVERSE [1; 2; 3; 4; 5]`);
-(* val it = |- REVERSE [1; 2; 3; 4; 5] = [5; 4; 3; 2; 1] : thm *)
-
-val mg = Term`smerge numto [1; 2; 5] [1; 3]`;
-smerge_CONV numto_CONV mg;
-
-val img = Term`incr_smerge numto [1; 5]
-                                  [SOME [2; 3]]`;
-val imz = Term`incr_smerge numto [3]
-                                  [NONE; SOME [2; 3]]`;
-incr_smerge_CONV numto_CONV img;
-incr_smerge_CONV numto_CONV imz;
-
-val ibl = Term`incr_sbuild numto [3; 1; 3; 4; 2; 1]`;
-incr_sbuild_CONV numto_CONV ibl;
-
-val mo5 = Term`smerge_out numto [5]
-      [NONE; SOME [1; 3]; SOME [1; 2; 3; 4]]`;
-smerge_out_CONV numto_CONV mo5;
-
-incr_ssort_CONV numto_CONV ``incr_ssort numto [3; 1; 3; 4; 2; 1]``;
-
-val blco = Term`BL_CONS 5 (onebl 7 nt (zerbl (onebl 11
-                   (node (node nt 8 nt) 9 (node nt 10 nt)) nbl)))`;
-BL_CONS_CONV blco;
-
-val ltb = Term`list_to_bl [(1,()); (2,()); (3,()); (4,())]`;
-list_to_bl_CONV ltb;
-
-set_TO_ENUMERAL_CONV numto_CONV ``numto``
-                                ``set [10; 9; 8; 7; 6; 5; 4; 3; 2; 1]``;
-
-val bltt = Term`bl_to_bt (onebl (1,()) nt
-         (zerbl
-            (onebl (3,())
-               (node (node nt (5,()) nt) (7,()) (node nt (9,()) nt))
-               nbl)))`;
-bl_to_bt_CONV bltt;
-
-list_to_bt_CONV (Term`list_to_bt [(1,()); (2,()); (3,()); (4,())]`);
-
-DISPLAY_TO_set_CONV (Term`{5; 4; 6; 3; 3; 2}`);
-
-DISPLAY_TO_ENUMERAL_CONV numto_CONV ``numto`` ``{3; 4; 6; 7; 7; 7; 7; 3; 3}``;
-
-DISPLAY_TO_ENUMERAL_CONV numto_CONV ``numto`` ``{5; 6; 4; 8; 8; 8; 3; 1}``;
-
-val s100 = Term`{0;1;2;3;4;5;6;7;8;9;10;19;18;17;16;15;14;13;12;11;
-       20;22;24;26;28;30;29;27;25;23;21;39;38;37;36;35;34;33;32;31;
-       40;41;42;43;44;45;56;57;48;49;50;59;58;57;56;55;54;53;52;51;
-       60;63;66;69;61;64;67;62;65;68;79;75;71;78;74;70;77;73;76;72;
-       99;98;96;93;89;84;80;82;85;88;92;95;97;81;83;87;92;91;90;94}`;
-
-val s50 = Term`{10;19;18;17;16;15;14;13;12;11;
-       40;41;42;43;44;45;56;57;48;49;50;59;58;57;56;55;54;53;52;51;
-       99;98;96;93;89;84;80;82;85;88;92;95;97;81;83;87;92;91;90;94}`;
-
-val t50 = DISPLAY_TO_ENUMERAL_CONV numto_CONV (Term`numto`) s50;
- (* 14977 infs. 0.064s *)
-val qt50 = DISPLAY_TO_ENUMERAL_CONV qk_numto_CONV (Term`qk_numto`) s50;
- (* 13112 infs 0.064s *)
-val t100 = DISPLAY_TO_ENUMERAL_CONV numto_CONV (Term`numto`) s100;
- (* 30873 infs. 0.140s *)
-val qt100 = DISPLAY_TO_ENUMERAL_CONV qk_numto_CONV (Term`qk_numto`) s100;
- (* 29400 infs 0.148s*)
-
-val apft = Term`5 IN ENUMERAL numto (node nt 5 nt)`;
-IN_CONV numto_CONV apft;
-val apgt = Term`6 IN ENUMERAL numto (node nt 5 nt)`;
-IN_CONV numto_CONV apgt;
-IN_CONV REDUCE_CONV ``5 IN {3; 5; 2}``; (* fall-back to pred_setLib *)
-IN_CONV REDUCE_CONV ``6 IN {3; 5; 2}``;
-
-val fake = ASSUME ``OWL numto {5; 4; 3} [3; 4; 5]``;
-   OWL_TO_ENUMERAL fake;
-
-bt_to_list_CONV ``bt_to_list_ac
-     (node (node nt 1 nt) 2 (node (node nt 3 nt) 4 (node nt 5 nt))) []``;
-
-val cmp = ``numto``;
-val tbt = rand (rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                             numto_CONV ``numto`` ``{1;2;3;4;5}``)));
-val bolt =  ``bt_to_ol_lb_ub_ac ^cmp 0 ^tbt 4 []``;
-val bolt' =  ``bt_to_ol_lb_ub_ac ^cmp 0 ^tbt 8 []``;
-val bolt'' =  ``bt_to_ol_lb_ub_ac ^cmp 2 ^tbt 5 []``;
-bt_to_ol_lb_ub_CONV numto_CONV bolt;
-
-val bult =  ``bt_to_ol_ub_ac ^cmp ^tbt 4 []``;
-val bult' =  ``bt_to_ol_ub_ac ^cmp ^tbt 8 []``;
-bt_to_ol_ub_CONV numto_CONV bult;
-
-val bllt =  ``bt_to_ol_lb_ac ^cmp 2 ^tbt []``;
-val bllt' =  ``bt_to_ol_lb_ac ^cmp 0 ^tbt []``;
-bt_to_ol_lb_CONV numto_CONV bllt;
-
-val blt =  ``bt_to_ol numto ^tbt``;
-bt_to_ol_CONV numto_CONV blt;
-val badbt = ``node (node nt 1 nt) 3 (node (node nt 3 nt) 4 (node nt 1 nt))``;
-val badblt = ``bt_to_ol numto ^badbt``;
-bt_to_ol_CONV numto_CONV badblt;
-
-val tet = rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                       numto_CONV ``numto`` ``{4;1;3;5;2}``));
-val owa = ENUMERAL_TO_OWL numto_CONV tet;
-
-set_TO_DISPLAY_CONV ``set [5;4;3;2;1]``;
-ENUMERAL_TO_set_CONV numto_CONV tet;
-ENUMERAL_TO_DISPLAY_CONV numto_CONV tet;
-
-TO_set_CONV numto_CONV tet;
-TO_set_CONV NO_CONV ``{5; 4; 3; 2; 1}``;
-TO_set_CONV NO_CONV ``set [5; 4; 3; 2; 1]``;
-
-val owb = ENUMERAL_TO_OWL numto_CONV (rand (concl
-          (DISPLAY_TO_ENUMERAL_CONV numto_CONV ``numto`` ``{0;3;1;8}``)));
-OWL_UNION numto_CONV owa owb;
-OWL_UNION numto_CONV owb owa;
-
-val wet = rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                       numto_CONV ``numto`` ``{8;3;1;0}``));
-val utwet = ``^tet UNION ^wet``;
-UNION_CONV numto_CONV utwet;
-UNION_CONV REDUCE_CONV ``{1;5} UNION {3;2}``;
-
-val ig = Term`sinter numto [1; 2; 5] [1; 3]`;
-sinter_CONV numto_CONV ig;
-
-OWL_INTER numto_CONV owa owb;
-
-val itwet = ``^tet INTER ^wet``;
-INTER_CONV numto_CONV itwet;
-
-val ig' = Term`sdiff numto [1; 2; 5] [1; 3]`;
-sdiff_CONV numto_CONV ig';
-
-OWL_DIFF numto_CONV owa owb;
-
-val itwet' = ``^tet DIFF ^wet``;
-SET_DIFF_CONV numto_CONV itwet';
-
-val ta = rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                      numto_CONV ``numto`` ``{4;1;3;5;2}``));
-val tb = rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                      numto_CONV ``numto`` ``{3; 4; 6; 7; 3}``));
-val tc = rand (concl (DISPLAY_TO_ENUMERAL_CONV
-                      numto_CONV ``numto``
-                                               ``{5; 6; 4; 8; 3; 1}``));
-
-SET_EXPR_TO_OWL numto_CONV ``(^ta) UNION (^tb) INTER (^tc)``;
-
-SET_EXPR_CONV numto_CONV ``(^ta) UNION (^tb) INTER (^tc)``;
-SET_EXPR_CONV numto_CONV ``(^tb) UNION (^tc) DIFF (^ta)``;
-SET_EXPR_CONV numto_CONV ta; (* expensive identity function, though
-   it would prune unreachable parts of the tree if there could be any. *)
-
-set_TO_OWL numto_CONV ``numto`` ``set [5; 3; 3; 3; 4; 2; 3; 1]``;
-set_TO_OWL numto_CONV ``numto`` ``{5; 3; 3; 3; 4; 2; 3; 1}``;
-********************************************************************* *)
 end;

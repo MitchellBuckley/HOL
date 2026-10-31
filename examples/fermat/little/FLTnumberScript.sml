@@ -68,33 +68,18 @@ Since a prime p cannot divide FACT (p-1), cancellation law applies, giving:
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "FLTnumber";
+Theory FLTnumber
+Ancestors
+  arithmetic pred_set divides gcd number combinatorics
 
 (* ------------------------------------------------------------------------- *)
-
-
-(* Get dependent theories in lib *)
-(* val _ = load "helperFunctionTheory"; *)
-open helperNumTheory helperSetTheory;
-open arithmeticTheory pred_setTheory;
-open helperFunctionTheory; (* for FACT_0, FACT_MOD_PRIME *)
-
-open dividesTheory; (* for PRIME_POS, ONE_LT_PRIME *)
-
-(* val _ = load "EulerTheory"; *)
-open EulerTheory; (* for residue_def *)
-
 
 (* ------------------------------------------------------------------------- *)
 (* Fermat's Little Theorem by Number Theory Documentation                    *)
 (* ------------------------------------------------------------------------- *)
 (* Overloading:
 *)
-(*
+(* Definitions and Theorems (# are exported, ! are in compute):
 
    Mapping residues to a row of residues:
    row_def             |- !n a x. row n a x = (a * x) MOD n
@@ -302,10 +287,14 @@ Proof
   rw[residue_1, PROD_SET_EMPTY, FACT_0] >>
   `0 < n /\ n <= p /\ 0 < p` by decide_tac >>
   `(PROD_SET (IMAGE (row p a) (residue (SUC n)))) MOD p =
-      (((a * n) MOD p) * PROD_SET (IMAGE (row p a) (residue n))) MOD p` by rw[prod_set_image_row_reduction] >>
-  `_ = ((a * n) * PROD_SET (IMAGE (row p a) (residue n))) MOD p` by rw[MOD_TIMES2] >>
-  `_ = ((a * n) MOD p * (PROD_SET (IMAGE (row p a) (residue n))) MOD p) MOD p` by rw[MOD_TIMES2] >>
-  `_ = ((a * n) MOD p * ((a ** (n - 1) * FACT (n - 1))) MOD p) MOD p` by simp[] >>
+      (((a * n) MOD p) * PROD_SET (IMAGE (row p a) (residue n))) MOD p`
+    by rw[prod_set_image_row_reduction] >>
+  `_ = ((a * n) * PROD_SET (IMAGE (row p a) (residue n))) MOD p`
+    by rw[MOD_TIMES2] >>
+  `_ = ((a * n) MOD p * (PROD_SET (IMAGE (row p a) (residue n)) MOD p)) MOD p`
+    by rw[MOD_TIMES2] >>
+  `_ = ((a * n) MOD p * (((a ** (n - 1) * FACT (n - 1))) MOD p)) MOD p`
+    by simp[] >>
   `_ = ((a * n) * (a ** (n - 1) * FACT (n - 1))) MOD p` by rw[MOD_TIMES2] >>
   `_ = ((a * (a ** (n-1))) * (n * FACT (n-1))) MOD p` by simp[] >>
   `_ = (a ** (SUC (n-1)) * (n * FACT (n-1))) MOD p` by rw[EXP] >>
@@ -621,8 +610,4 @@ QED
 
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

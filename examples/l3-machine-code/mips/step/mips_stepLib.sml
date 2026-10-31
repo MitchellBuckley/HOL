@@ -5,22 +5,18 @@
 structure mips_stepLib :> mips_stepLib =
 struct
 
-open HolKernel boolLib bossLib
+open HolKernel Parse boolLib bossLib
 open blastLib mipsTheory mips_stepTheory
 
 local open mips in end
 
-structure Parse =
-struct
-   open Parse
-   val (tyg, tmg) =
-      mipsTheory.mips_grammars
+val ambient_grammars = (type_grammar(), term_grammar())
+
+val _ = temp_set_grammars
+      (valOf (grammarDB{thyname="mips"})
         |> apsnd (#1 o term_grammar.mfupdate_overload_info
                          (Overload.remove_overloaded_form "add"))
-        |> apsnd ParseExtras.grammar_loose_equality
-   val (Type, Term) = parse_from_grammars (tyg, tmg)
-end
-open Parse
+        |> apsnd ParseExtras.grammar_loose_equality)
 
 val ERR = Feedback.mk_HOL_ERR "mips_stepLib"
 
@@ -32,11 +28,11 @@ val rhsc = utilsLib.rhsc
 val st = ``s: mips_state``
 fun mapl x = utilsLib.augment x [[]]
 
-val cond_thms = prove(
-   “(!b c. (if b then T else c) = b \/ c) /\
-    (!b c. (if b then F else c) = ~b /\ c)”,
-   rw []
-   )
+(* These are conjuncts 1 and 3 of boolTheory.COND_BOOL_CLAUSES;
+   derive forward so we don't fire a load-time Tactical.prove. *)
+val cond_thms =
+   let val cs = Drule.CONJUNCTS boolTheory.COND_BOOL_CLAUSES
+   in CONJ (List.nth (cs, 0)) (List.nth (cs, 2)) end
 
 local
    val state_fns = utilsLib.accessor_fns ``:mips_state``
@@ -1096,9 +1092,11 @@ in
                 | [x] => x
                 | l => (List.app (fn x => (Parse.print_thm x; print "\n")) l
                         ; err "more than one valid step theorem"))
-              handle HOL_ERR {message = "not found",
-                              origin_function = "find_rw", ...} =>
-                 err "instruction instance not supported"
+              handle (e as HOL_ERR herr) =>
+                if message_of herr = "not found" andalso
+                   top_function_of herr = "find_rw"
+                  then err "instruction instance not supported"
+                else raise e
             end
       end
 end
@@ -1193,6 +1191,8 @@ fun mips_step_code be =
    end
 
 (* ========================================================================= *)
+
+val _ = temp_set_grammars ambient_grammars
 
 (* Testing
 

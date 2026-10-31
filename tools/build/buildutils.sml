@@ -1,0 +1,1510 @@
+structure buildutils :> buildutils =
+struct
+
+structure Path = OS.Path
+structure Process = OS.Process
+
+
+infix |> ++
+fun x |> f = f x
+fun p1 ++ p2 = Path.concat(p1,p2)
+
+(* path manipulation functions *)
+fun normPath s = Path.toString(Path.fromString s)
+fun itstrings f [] = raise Fail "itstrings: empty list"
+  | itstrings f [x] = x
+  | itstrings f (h::t) = f h (itstrings f t);
+fun fullPath slist = normPath
+   (itstrings (fn chunk => fn path => Path.concat (chunk,path)) slist);
+
+fun quote s = String.concat["\"", s, "\""];
+
+fun safedelete s = HOLFileSys.remove s handle OS.SysErr _ => ()
+
+fun extract_cache_args argv =
+  let
+    fun loop acc [] = List.rev acc
+      | loop acc ("--no-cache" :: rest) = loop ("--no-cache" :: acc) rest
+      | loop acc ("--use-cache" :: rest) = loop ("--use-cache" :: acc) rest
+      | loop acc ("--cache-dir" :: v :: rest) =
+          loop (v :: "--cache-dir" :: acc) rest
+      | loop acc (a :: rest) =
+          if String.isPrefix "--cache-dir=" a then loop (a :: acc) rest
+          else loop acc rest
+  in loop [] argv end
+
+(* message emission *)
+fun die s =
+    let open TextIO
+    in
+      output(stdErr, "*** FATAL: " ^ s ^ "\n");
+      flushOut stdErr;
+      Process.exit Process.failure
+    end
+fun warn s =
+  let open TextIO in output(stdErr, "*** " ^ s ^ "\n"); flushOut stdErr end;
+fun WARN s = (warn s; OS.Process.sleep (Time.fromSeconds 2))
+fun I x = x
+
+
+fun right_distrib_check () =
+  let
+    val me = Systeml.find_my_path()
+  in
+    case Holmake_tools.check_distrib "build" of
+        NONE => ()
+      | SOME whereami =>
+        if whereami = me then ()
+        else die "*** Don't run this instance of build in a foreign HOL directory"
+  end
+
+fun cpp_present() =
+    let val which = internal_functions.which
+        open HOLFileSys
+    in
+      case OS.Process.getEnv "MINISAT_CXX" of
+         SOME p => if OS.Path.isAbsolute p then
+                     if access (p, [A_READ, A_EXEC]) then ()
+                     else
+                       WARN ("MINISAT_CXX environment variable doesn't point "^
+                             "at executable; minisat will fail to build")
+                   else if OS.Path.isAbsolute (which p) then ()
+                   else (
+                     WARN ("MINISAT_CXX environment variable " ^
+                           "points to " ^ p ^
+                           ", which is not in PATH;");
+                     WARN ("minisat will fail to build")
+                   )
+       | NONE => if OS.Path.isAbsolute (which "c++") then ()
+                 else
+                     WARN ("No c++ in PATH; set MINISAT_CXX env. " ^
+                           "variable or minisat will fail to build")
+    end
+
+fun startup_check() = (
+  right_distrib_check();
+  cpp_present()
+)
+
+(* values from the Systeml structure, which is created at HOL configuration
+   time *)
+val OS = Systeml.OS;
+val HOLDIR = Systeml.HOLDIR
+val EXECUTABLE = Systeml.xable_string (fullPath [HOLDIR, "bin", "build"])
+val DEPDIR = Systeml.DEPDIR
+val GNUMAKE = Systeml.GNUMAKE
+val DYNLIB = Systeml.DYNLIB
+
+fun SYSTEML clist = Process.isSuccess (Systeml.systeml clist)
+
+val dfltbuildseq = fullPath [HOLDIR, "tools", "build", "build-sequence"]
+val dfltjobnum = 4
+
+val help_header = let
+  val istrm = TextIO.openIn (fullPath [HOLDIR, "tools", "build", "buildhelp.txt"])
+in
+  TextIO.inputAll istrm before TextIO.closeIn istrm
+end handle IO.Io _ => "\n\n<Build help file missing in action>\n\n"
+
+fun exit_with_help() =
+    (print (GetOpt.usageInfo {header = help_header,
+                              options = buildcline.cline_opt_descrs});
+     Process.exit Process.success)
+
+fun read_buildsequence {kernelname} bseq_fname = let
+  val kernelpath = fullPath [HOLDIR, "src",
+    case kernelname of
+        "stdknl" => "0"
+      | "expk" => "experimental-kernel"
+      | "otknl" => "0"
+      | "trknl" => "0"
+      | _ => die ("Bad kernelname: "^kernelname)
+    ]
+  val readline = TextIO.inputLine
+  fun read_file acc visitedincludes (f as (fstr,fname)) oldstreams =
+      case readline fstr of
+        NONE =>
+        let
+          val _ = TextIO.closeIn fstr
+        in
+          case oldstreams of
+              h::t => read_file acc visitedincludes h t
+            | [] => List.rev acc
+        end
+      | SOME s => let
+          (* drop trailing and leading whitespace *)
+          val ss = Substring.full s
+          val ss = Substring.dropl Char.isSpace ss
+          val ss = Substring.dropr Char.isSpace ss
+
+          (* drop trailing comment *)
+          val (hashpfx, hashsfx) = Substring.position "#" ss
+          fun skip() = read_file acc visitedincludes f oldstreams
+        in
+          if Substring.size hashpfx = 0 then
+            if Substring.isPrefix "#include " hashsfx then
+              let
+                val includefname =
+                    Substring.string
+                      (Substring.slice(hashsfx, size "#include ", NONE))
+                val includefname_opt =
+                    SOME (OS.Path.mkAbsolute
+                            { path = includefname,
+                              relativeTo = fullPath [HOLDIR, "tools"]})
+                    handle OS.Path.Path => NONE
+              in
+                case includefname_opt of
+                    NONE => (warn ("Ignoring bad #include: " ^ includefname);
+                             skip())
+                  | SOME includefname =>
+                    let
+                      val includefname = OS.Path.mkCanonical includefname
+                        (* necessary if user specified a non-canonical absolute
+                           path *)
+                    in
+                      if Binaryset.member(visitedincludes, includefname) then
+                        die ("Recursive request to #include "^
+                             includefname ^ "(in "^fname^")")
+                      else let
+                        val newstr_opt = SOME (TextIO.openIn includefname)
+                                         handle IO.Io _ => NONE
+                      in
+                        case newstr_opt of
+                            SOME strm =>
+                            read_file acc
+                                      (Binaryset.add(visitedincludes,
+                                                     includefname))
+                                      (strm,includefname)
+                                      ((fstr,fname)::oldstreams)
+                          | NONE => die ("Couldn't open #include-d file "^
+                                         includefname ^
+                                         "(included from "^fname^")")
+                      end
+                    end
+              end
+            else skip()
+          else
+            let
+              val s = Substring.string hashpfx
+              fun extract_testcount (s,acc) =
+                  if String.sub(s,0) = #"!" then
+                    extract_testcount (String.extract(s,1,NONE), acc+1)
+                  else (s,acc)
+              fun extract_brackets name l r s =
+                  if String.sub(s,0) = l then let
+                      fun grabsys i =
+                          if String.sub(s,i) = r then
+                            (String.substring(s,1,i-1),
+                             String.extract(s,i+1,NONE))
+                          else grabsys (i + 1)
+                    in
+                      grabsys 1
+                      handle Subscript =>
+                             die ("Malformed "^name^" spec: "^s^
+                                  "  (from "^fname^")")
+                    end
+                  else ("", s)
+              val extract_mlsys = extract_brackets "system" #"[" #"]"
+              val extract_kernel = extract_brackets "kernel" #"(" #")"
+              val (mlsys,s) = extract_mlsys s
+              val (knl,s) = extract_kernel s
+              val (dirname0,testcount) = extract_testcount (s,0)
+              val dirname =
+                  if dirname0 = "**KERNEL**" then kernelpath
+                  else if Path.isAbsolute dirname0 then dirname0
+                  else fullPath [HOLDIR, dirname0]
+              open HOLFileSys
+            in
+              if (mlsys = "" orelse mlsys = Systeml.ML_SYSNAME) andalso
+                 (knl = "" orelse knl = kernelname) then
+                if access (dirname, [A_READ, A_EXEC]) then
+                  if isDir dirname orelse mlsys <> "" then
+                    read_file ((dirname,testcount)::acc)
+                              visitedincludes
+                              f
+                              oldstreams
+                  else
+                    die ("** File "^dirname0^
+                         " from build sequence file "^fname^
+                         " is not a directory")
+                else die ("** File "^s^" from build sequence file "^fname^
+                          " does not \
+                          \exist or is inacessible")
+              else read_file acc visitedincludes f oldstreams
+            end
+        end
+  val bseq_file =
+      TextIO.openIn bseq_fname
+      handle IO.Io _ => die ("Fatal error: couldn't open sequence file: "^
+                             bseq_fname)
+in
+  read_file [] (Binaryset.empty String.compare) (bseq_file,bseq_fname) []
+end
+
+val option_filename = fullPath [HOLDIR, "tools", "lastbuildoptions"]
+
+fun read_earlier_options reader = let
+  val istrm = TextIO.openIn option_filename
+  fun recurse acc =
+      case reader istrm of
+        NONE => List.rev acc
+      | SOME s => recurse (String.substring(s,0,size s - 1)::acc)
+in
+  recurse [] before TextIO.closeIn istrm
+end handle IO.Io _ => []
+
+fun write_options args = let
+  val ostrm = TextIO.openOut option_filename
+in
+  List.app (fn s => TextIO.output(ostrm, s ^ "\n")) args;
+  TextIO.closeOut ostrm
+end
+
+fun mem x xs = List.exists (fn y => x = y) xs
+fun delete x [] = []
+  | delete x (h::t) = if x = h then delete x t else h::delete x t
+
+fun inter [] _ = []
+  | inter (h::t) l = if mem h l then h :: inter t l else inter t l
+
+fun setdiff big small =
+    case small of
+      [] => big
+    | h::t => setdiff (delete h big) t
+
+
+
+fun findseq dflt numseen list = let
+  fun maybewarn () =
+      if numseen = 1 then
+        warn "Multiple build-sequence options; taking last one\n"
+      else ()
+in
+  case list of
+    [] => NONE
+  | ["--seq"] => (warn "Trailing --seq option in last build info ignored";
+                  NONE)
+  | "--seq"::fname::t => let
+      val _ = maybewarn()
+    in
+      case findseq dflt (numseen + 1) t of
+          NONE => SOME fname
+        | v => v
+    end
+  | h :: t => findseq dflt numseen t
+end
+
+fun orlist slist =
+    case slist of
+      [] => ""
+    | [x] => x
+    | [x,y] => x ^ ", or " ^ y
+    | x::xs => x ^ ", " ^ orlist xs
+
+type ircd = {seqname:string,kernelspec:string}
+datatype cline_action =
+         Clean of string
+       | Normal of ircd buildcline_dtype.final_options
+exception DoClean of string
+
+fun write_kernelid s =
+  let
+    val strm = TextIO.openOut Holmake_tools.kernelid_fname
+  in
+    TextIO.output(strm, s ^ "\n");
+    TextIO.closeOut strm
+  end handle IO.Io _ => die "Couldn't write kernelid to HOLDIR"
+
+fun read_kernelid () =
+  let
+    val strm = TextIO.openIn Holmake_tools.kernelid_fname
+    val s = case TextIO.inputLine strm of
+                NONE => ""
+              | SOME s => hd (String.tokens Char.isSpace s)
+                          handle Empty => ""
+  in
+    s before TextIO.closeIn strm
+  end handle IO.Io _ => ""
+
+fun cline_die s = die ("Command line option error: " ^ s)
+fun apply_updates l t =
+  case l of
+      [] => t
+    | {update} :: rest => apply_updates
+                            rest
+                            (update {warn = warn, die = cline_die, arg = t})
+
+fun get_cline () = let
+  open GetOpt
+  val oldopts = read_earlier_options TextIO.inputLine
+  val (opts, rest) = getOpt { argOrder = RequireOrder,
+                              options = buildcline.cline_opt_descrs,
+                              errFn = cline_die } (CommandLine.arguments())
+  val option_record = apply_updates opts buildcline.initial
+  val _ = if #help option_record then exit_with_help() else ()
+  fun lcnorm_mem s list =
+      List.exists (fn s' => CharVector.map Char.toLower s' = s) list
+  val _ =
+      if lcnorm_mem "cleanall" rest then raise DoClean "cleanAll"
+      else if lcnorm_mem "clean" rest then raise DoClean "clean"
+      else if lcnorm_mem "cleanforreloc" rest then raise DoClean "cleanForReloc"
+      else ()
+  val seqspec =
+      case #seqname option_record of
+        NONE =>
+        let
+        in
+          case findseq dfltbuildseq 0 oldopts of
+            NONE => dfltbuildseq
+          | SOME f =>
+            if f = dfltbuildseq then f
+            else (warn ("Using build-sequence file "^f^
+                        " from earlier build command; \n\
+                        \    use -F option to override");
+                  f)
+        end
+      | SOME f => if f = "" then dfltbuildseq else f
+  val knlspec =
+      case #kernelspec option_record of
+          SOME s => String.extract(s,2,NONE)
+        | NONE =>
+          (case
+              List.find (fn s => mem s ["--expk", "--otknl", "--stdknl", "--trknl"]) oldopts
+             of
+                NONE => "stdknl"
+              | SOME s =>
+                (warn ("Using kernel spec "^s^ " from earlier build command;\n\
+                       \    use one of --expk, --stdknl, --otknl, --trknl to override");
+                 String.extract(s,2,NONE)))
+  val _ = write_kernelid knlspec
+  (* Build the theory graph by default; --graph is now redundant
+     (kept for backwards-compatible argv) since the only way to
+     disable graph generation is via --no-mdbook / --no-helpdocs,
+     which build_help consults directly. *)
+  val buildgraph =
+      case #build_theory_graph option_record of
+          NONE => true
+        | SOME b => b
+  val jcount = #jobcount option_record
+  val _ =
+      if seqspec = dfltbuildseq then
+        write_options ["--"^knlspec]
+      else
+        let
+          val seqspec_abs =
+              if OS.Path.isAbsolute seqspec then seqspec
+              else OS.Path.mkAbsolute
+                     {path = seqspec, relativeTo = OS.FileSys.getDir()}
+        in
+          write_options ["--"^knlspec, "--seq", seqspec_abs]
+        end
+  (* Polyscripter `>>` directives in help/Docfiles entries can do
+     things like `load "realLib"`; under a reduced --seq those
+     libraries haven't been built and the help-doc pass aborts on the
+     first miss.  Warn only when actually overriding so the message
+     doesn't double up for `--no-helpdocs --seq ...`. *)
+  val partial_seq = seqspec <> dfltbuildseq
+  val user_no_helpdocs = #no_helpdocs option_record
+  val no_helpdocs = user_no_helpdocs orelse partial_seq
+  val () = if partial_seq andalso not user_no_helpdocs then
+             warn ("Reduced build sequence (" ^ seqspec ^
+                   "); skipping help-doc build.")
+           else ()
+in
+  Normal {build_theory_graph = buildgraph,
+          cmdline = rest,
+          debug = #debug option_record,
+          selftest_level = case #selftest option_record of
+                               NONE => 0
+                             | SOME i => i,
+          extra = {seqname = seqspec, kernelspec = knlspec},
+          jobcount = jcount,
+          keepgoing = #keepgoing option_record,
+          multithread = #multithread option_record,
+          cache_dir = #cache_dir option_record,
+          relocbuild = #relocbuild option_record,
+          thmsrc = #thmsrc option_record,
+          timelimit = #timelimit option_record,
+          no_mdbook = #no_mdbook option_record,
+          no_helpdocs = no_helpdocs}
+end handle DoClean s => (Clean s before safedelete Holmake_tools.kernelid_fname)
+
+(* ----------------------------------------------------------------------
+   Some useful file-system utility functions
+   ---------------------------------------------------------------------- *)
+
+(* map a function over the files in a directory *)
+fun map_dir f dir =
+  let val dstrm = HOLFileSys.openDir dir
+      fun loop () =
+        case HOLFileSys.readDir dstrm
+         of NONE => []
+          | SOME file => (dir,file)::loop()
+      val files = loop()
+      val _ = HOLFileSys.closeDir dstrm
+  in List.app f files
+     handle OS.SysErr(s, erropt)
+       => die ("OS error: "^s^" - "^
+              (case erropt of SOME s' => OS.errorMsg s' | _ => ""))
+       | otherexn => die ("map_dir: "^General.exnMessage otherexn)
+  end;
+
+fun rem_file f =
+  HOLFileSys.remove f
+   handle _ => (warn ("Couldn't remove file "^f); ());
+
+fun copy file path =  (* Dead simple file copy *)
+ let open TextIO
+     val (istrm,ostrm) = (openIn file, openOut path)
+     fun loop() =
+       case input1 istrm
+        of SOME ch => (output1(ostrm,ch) ; loop())
+         | NONE    => (closeIn istrm; flushOut ostrm; closeOut ostrm)
+  in loop()
+  end;
+
+fun bincopy file path =  (* Dead simple file copy - binary version *)
+ let open BinIO
+     val (istrm,ostrm) = (openIn file, openOut path)
+     fun loop() =
+       case input1 istrm
+        of SOME ch => (output1(ostrm,ch) ; loop())
+         | NONE    => (closeIn istrm; flushOut ostrm; closeOut ostrm)
+  in loop()
+  end;
+
+(* f is either bincopy or copy *)
+fun update_copy f src dest = let
+  val t0 = HOLFileSys.modTime src
+in
+  f src dest;
+  HOLFileSys.setTime(dest, SOME t0)
+end
+
+fun cp b = if b then update_copy bincopy else update_copy copy
+
+fun mv0 s1 s2 = let
+  val s1' = normPath s1
+  val s2' = normPath s2
+in
+  HOLFileSys.rename{old=s1', new=s2'}
+end
+
+fun mv b = if b then mv0 else cp b
+
+fun moveTo dir action = let
+  val here = HOLFileSys.getDir()
+  val b = (HOLFileSys.chDir dir; true) handle _ => false
+  fun normalise s = OS.Path.mkAbsolute {path = s, relativeTo = dir}
+in
+  if b then (map normalise (action ()) before HOLFileSys.chDir here)
+            handle e => (HOLFileSys.chDir here; raise e)
+  else []
+end
+
+(* this function only used for finding information used by clean-ing actions;
+   we want cleaning to follow all links, even those hidden by conditionals
+   that look at HOLSEFLTESTLEVEL.  On the assumption that the INCLUDES
+   set grows monotonically, we set to 3 to get all extra INCLUDES.
+
+   Also set the kernel-id to "stdknl".
+*)
+fun hmakefile_data HOLDIR =
+    if HOLFileSys.access ("Holmakefile", [HOLFileSys.A_READ]) then let
+        open Holmake_types
+        fun quietly s = ()
+        val qdiags = {info = quietly, die = quietly, warn = quietly}
+        val env0 =
+            base_environment()
+              |> env_extend ("HOLSELFTESTLEVEL", [LIT "3"])
+              |> env_extend ("KERNELID", [LIT "stdknl"])
+        val (env, _, _, _) = ReadHMF.diagread qdiags "Holmakefile" env0
+        val envlist = Holmake_types.envlist qdiags env
+      in
+        {includes = envlist "PRE_INCLUDES" @ envlist "INCLUDES",
+         extra_cleans = envlist "EXTRA_CLEANS",
+         holheap = case envlist "HOLHEAP" of
+                       [x] => SOME x
+                     | _ => NONE}
+      end
+    else {includes = [], extra_cleans = [], holheap = NONE}
+
+fun clean0 HOLDIR = let
+  val {includes,extra_cleans,...} = hmakefile_data HOLDIR
+  open Holmake_tools
+in
+  clean_dir default_ofns {extra_cleans = extra_cleans}
+    handle Interrupt => raise Interrupt
+         | e => warn ("Couldn't clean in directory " ^ OS.FileSys.getDir() ^
+                      ": " ^ General.exnMessage e);
+  includes
+end
+
+fun cleanAll0 HOLDIR = let
+  val {includes,extra_cleans,...} = hmakefile_data HOLDIR
+  open Holmake_tools
+in
+  clean_dir default_ofns {extra_cleans = extra_cleans @ [".hol/"]};
+  includes
+end
+
+fun cleanForReloc0 HOLDIR =
+  let
+    val {includes,holheap,...} = hmakefile_data HOLDIR
+    open Holmake_tools
+  in
+    clean_forReloc {holheap = holheap};
+    clean_depdir {depdirname = Systeml.DEPDIR};
+    clean_depdir {depdirname = Systeml.LOGDIR};
+    includes
+  end
+
+fun maybe_gmakeclean dirname owise () =
+    if OS <> "winNT" then
+      let
+        val gnumake =
+            case List.rev (#arcs (OS.Path.fromString dirname)) of
+              "minisat" :: "sat_solvers" :: "HolSat" :: "src" :: _ => true
+            | "zc2hs" :: "sat_solvers" :: "HolSat" :: "src" :: _ => true
+            | _ => false
+      in
+        if gnumake then (Systeml.systeml [Systeml.GNUMAKE, "clean"]; [])
+        else owise()
+      end
+    else owise()
+
+fun clean HOLDIR dirname =
+    moveTo dirname (maybe_gmakeclean dirname (fn () => clean0 HOLDIR))
+fun cleanAll HOLDIR dirname =
+    moveTo dirname (maybe_gmakeclean dirname (fn () => cleanAll0 HOLDIR))
+fun cleanForReloc HOLDIR dirname =
+    moveTo dirname (maybe_gmakeclean dirname (fn () => cleanForReloc0 HOLDIR))
+
+(* Holmake and its supporting tech under tools/Holmake are built by
+   configure, not by the build sequence, so `clean` must leave them
+   alone: stripping e.g. tools/Holmake/core/Holmake_tools.uo makes the
+   next Moscow ML build fail (nothing in the sequence can remake it,
+   and src/parse/testutils.sml needs it via sigobj).  The tests subtree
+   is ordinary buildable material and is still cleaned.
+
+   Paths are canonicalised (.. and symlinks resolved) and compared by
+   arc so the check is robust to however a Holmakefile spelled its
+   INCLUDES; moveTo only lexically absolutises them. *)
+fun is_holmake_infra HOLDIR d =
+    let
+      fun canonical p = OS.FileSys.fullPath p handle OS.SysErr _ => normPath p
+      fun arcs_of p = #arcs (Path.fromString (canonical p))
+      fun is_prefix [] _ = true
+        | is_prefix _ [] = false
+        | is_prefix (x::xs) (y::ys) = x = y andalso is_prefix xs ys
+      val darcs = arcs_of d
+      val infra = arcs_of (fullPath [HOLDIR, "tools", "Holmake"])
+      val infra_tests = arcs_of (fullPath [HOLDIR, "tools", "Holmake", "tests"])
+    in
+      is_prefix infra darcs andalso not (is_prefix infra_tests darcs)
+    end
+
+fun clean_dirs {HOLDIR,action} dirs = let
+  val seen = Binaryset.empty String.compare
+  fun recurse sofar todo =
+      case todo of
+        [] => ()
+      | d::ds => let
+        in
+          if Binaryset.member(sofar, d) orelse is_holmake_infra HOLDIR d then
+            recurse sofar ds
+          else let
+              val newincludes = action HOLDIR d
+            in
+              recurse (Binaryset.add(sofar,d)) (newincludes @ ds)
+            end
+        end
+in
+  recurse seen dirs
+end
+
+(* ----------------------------------------------------------------------
+    In clean_sigobj, we need to avoid removing the systeml stuff that
+    will have been put into sigobj by the action of configure.sml
+   ---------------------------------------------------------------------- *)
+
+fun equal x y = (x=y);
+val SIGOBJ = fullPath [HOLDIR, "sigobj"];
+
+fun clean_sigobj() = let
+  open Systeml
+  val _ = print ("Cleaning out "^SIGOBJ^"\n")
+  val lowcase = String.map Char.toLower
+  fun sigobj_rem_file s = let
+    val f = Path.file s
+    val n = lowcase (hd (String.fields (equal #".") f))
+  in
+    if mem n (["systeml", "readme"]) then () else rem_file s
+  end
+  val toolsuffix = if ML_SYSNAME = "poly" then "-poly" else ""
+  fun write_initial_srcfiles () = let
+    open TextIO
+    val outstr = openOut (fullPath [HOLDIR,"sigobj","SRCFILES"])
+  in
+    output(outstr,
+           fullPath [HOLDIR, "tools" ^ toolsuffix, "Holmake", "Systeml"]);
+    output(outstr, "\n");
+    closeOut(outstr)
+  end
+in
+  map_dir (sigobj_rem_file o normPath o OS.Path.concat) SIGOBJ;
+  write_initial_srcfiles ();
+  print (SIGOBJ ^ " cleaned\n")
+end;
+
+val EXECUTABLE = Systeml.xable_string (fullPath [HOLDIR, "bin", "build"])
+
+fun full_clean (SRCDIRS:(string*int) list)  f =
+    clean_sigobj() before
+    (* clean all kernel directories, regardless of which was actually built,
+       the help src directory too, and all the src directories, including
+       those with ! annotations  *)
+    clean_dirs {HOLDIR=HOLDIR, action = f}
+               (fullPath [HOLDIR, "help", "src-sml"] ::
+                fullPath [HOLDIR, "src", "0"] ::
+                fullPath [HOLDIR, "src", "experimental-kernel"] ::
+                fullPath [HOLDIR, "src", "logging-kernel"] ::
+                map #1 SRCDIRS)
+
+fun app_sml_files f {dirname} =
+  let
+    open HOLFileSys OS.Path
+    val dstrm = openDir dirname
+    fun recurse () =
+      case readDir dstrm of
+          NONE => closeDir dstrm
+        | SOME p => ((case ext p of
+                          SOME "sml" => f (concat(dirname,p))
+                        | SOME "sig" => f (concat(dirname,p))
+                        | _ => ());
+                     recurse())
+  in
+    recurse ()
+  end
+
+fun check_against executable s = let
+  open Time
+  val p = if OS.Path.isRelative s then fullPath [HOLDIR, s]
+          else s
+  val cfgtime = HOLFileSys.modTime p
+in
+  if HOLFileSys.modTime executable < cfgtime then
+    (warn ("WARNING! WARNING!");
+     warn ("  The executable "^executable^" is older than " ^ s ^ ";");
+     warn ("  this suggests you should reconfigure the system.");
+     warn ("  Press Ctl-C now to abort the build; <RETURN> to continue.");
+     warn ("WARNING! WARNING!");
+     if Systeml.POLY_VERSION = 551 orelse Systeml.POLY_VERSION = 552 then
+       ignore(TextIO.inputLine TextIO.stdIn)
+       (* see PolyML bug report at
+            https://www.mail-archive.com/polyml@inf.ed.ac.uk/msg00982.html *)
+     else ();
+     ignore (TextIO.inputLine TextIO.stdIn))
+  else ()
+end handle OS.SysErr _ => die ("File "^s^" has disappeared.");
+
+
+(* uploadfn is of type : bool -> string -> string -> unit
+     the boolean is whether or not the arguments are binary files
+     the strings are source and destination file-names, in that order
+*)
+fun transfer_file uploadfn targetdir (df as (dir,file)) = let
+  fun transfer binaryp (dir,file1,file2) =
+    uploadfn binaryp (fullPath [dir,file1]) (fullPath [targetdir,file2])
+  fun idtransfer binaryp (dir,file) =
+      case Path.base file of
+        "selftest" => ()
+      | _ => transfer binaryp (dir,file,file)
+  fun digest_sig file =
+      let val b = Path.base file
+      in if (String.extract(b,String.size b -4,NONE) = "-sig"
+             handle _ => false)
+         then SOME (String.extract(b,0,SOME (String.size b - 4)))
+         else NONE
+      end
+  fun augmentSRCFILES file = let
+    open TextIO
+    val ostrm = openAppend (Path.concat(SIGOBJ,"SRCFILES"))
+  in
+    output(ostrm,fullPath[dir,file]^"\n") ;
+    closeOut ostrm
+  end
+
+in
+  case Path.ext file of
+    SOME"ui"     => idtransfer true df
+  | SOME"uo"     => idtransfer true df
+  | SOME"so"     => idtransfer true df   (* for dynlibs *)
+  | SOME"xable"  => idtransfer true df   (* for executables *)
+  | SOME"sig"    => (idtransfer false df; augmentSRCFILES (Path.base file))
+  | SOME"sml"    => (case digest_sig file of
+                       NONE => ()
+                     | SOME file' =>
+                       (transfer false (dir,file, file' ^".sig");
+                        augmentSRCFILES file'))
+  |    _         => ()
+end;
+
+fun Gnumake dir =
+  if SYSTEML [GNUMAKE] then true
+  else (WARN ("Build failed in directory "^dir ^" ("^GNUMAKE^" failed).");
+        false)
+
+exception BuildExit
+fun build_dir Holmake selftest_level (dir, regulardir) = let
+  val _ = if selftest_level >= regulardir then ()
+          else raise BuildExit
+  val _ = HOLFileSys.chDir dir
+  val truncdir = if String.isPrefix HOLDIR dir then
+                   String.extract(dir, size HOLDIR + 1, NONE)
+                   (* +1 to drop directory slash after holdir *)
+                 else dir
+  val now_d = Date.fromTimeLocal (Time.now())
+  val now_s = Date.fmt "%d %b, %H:%M:%S" now_d
+  val bold = Holmake_tools.bold
+  val _ = print (bold ("Building directory "^truncdir^" ["^now_s^"]\n"))
+in
+  case #file(OS.Path.splitDirFile dir) of
+    "muddyC" => let
+    in
+      case OS of
+        "winNT" => bincopy (fullPath [HOLDIR, "tools", "win-binaries",
+                                      "muddy.so"])
+                           (fullPath [HOLDIR, "examples", "muddy", "muddyC",
+                                      "muddy.so"])
+      | other => if not (Gnumake dir) then
+                   print(String.concat
+                           ["\nmuddyLib has NOT been built!! ",
+                            "(continuing anyway).\n\n"])
+                 else ()
+    end
+  | "minisat" => let
+    in case OS of
+	   "winNT" => bincopy (fullPath [HOLDIR, "tools", "win-binaries",
+					 "minisat.exe"])
+                              (fullPath [HOLDIR, "src","HolSat","sat_solvers",
+                                         "minisat", "DELTHISminisat.exe"])
+	 | other => if not (Gnumake dir) then
+			WARN (String.concat
+				["\nMiniSat has NOT been built!! ",
+				 "(continuing anyway).\n\n"])
+                    else ()
+    end
+  | "zc2hs" => let
+    in case OS of
+	   "winNT" => bincopy (fullPath [HOLDIR, "tools", "win-binaries",
+					 "zc2hs.exe"])
+                              (fullPath [HOLDIR, "src","HolSat","sat_solvers","zc2hs", "zc2hs.exe"])
+	 | other => if not (Gnumake dir) then
+			print(String.concat
+				  ["\nzc2hs has NOT been built!! ",
+				   "(continuing anyway).\n\n"])
+                    else ()
+    end
+  | _ => Holmake dir
+end
+handle OS.SysErr(s, erropt) =>
+       die ("OS error: "^s^" - "^
+            (case erropt of SOME s' => OS.errorMsg s' | _ => ""))
+     | BuildExit => ()
+
+val theorygraph_dir = fullPath [HOLDIR, "help", "theorygraph"]
+
+(* Scan sigobj/ for the production theories — anything matching *Theory.sig
+   except "FinalTheory.sig" and *_emitTheory.sig.  Each entry is a symlink
+   to <src>/.hol/objs/<thy>Theory.sig; rewriting the extension gives us the
+   .dat file paths to feed theorytool via --paths-from. *)
+fun list_sigobj_dats () =
+  let
+    val sigobj = fullPath [HOLDIR, "sigobj"]
+    val ds = HOLFileSys.openDir sigobj
+    fun close () = HOLFileSys.closeDir ds
+    fun is_thy_sig f =
+        if String.isSuffix "Theory.sig" f then
+          let val base = String.substring (f, 0, size f - 10)
+          in
+            base <> "" andalso base <> "Final" andalso
+            not (String.isSuffix "_emit" base)
+          end
+        else false
+    fun dat_of_link sigobj_path =
+        (* sigobj/<thy>Theory.sig → <src>/.hol/objs/<thy>Theory.sig.
+           Return the *logical* "<src>/<thy>Theory.dat" path; HFS_NameMunge
+           routes that back through .hol/objs at access time. *)
+        let val tgt =
+                if OS.FileSys.isLink sigobj_path
+                then SOME (OS.FileSys.readLink sigobj_path)
+                else NONE
+        in case tgt of
+               NONE => NONE
+             | SOME t =>
+               let val {dir, file} = OS.Path.splitDirFile t
+                   val src = OS.Path.dir (OS.Path.dir dir)
+                   val {base, ...} = OS.Path.splitBaseExt file
+               in SOME (OS.Path.concat (src, base ^ ".dat")) end
+        end handle OS.SysErr _ => NONE
+    fun loop acc =
+        case HOLFileSys.readDir ds of
+            NONE => acc
+          | SOME f =>
+            if is_thy_sig f then
+              loop (case dat_of_link (OS.Path.concat (sigobj, f)) of
+                        SOME p => p :: acc | NONE => acc)
+            else loop acc
+  in
+    loop [] before close ()
+    handle e => (close (); raise e)
+  end
+
+fun write_lines (path, lines) =
+  let val ostrm = HOLFileSys.openOut path
+  in
+    List.app (fn s => (HOLFileSys.output (ostrm, s);
+                       HOLFileSys.output (ostrm, "\n")))
+             lines;
+    HOLFileSys.closeOut ostrm
+  end
+
+fun write_theorygraph_html () =
+  let
+    val ostrm = HOLFileSys.openOut (theorygraph_dir ++ "theories.html")
+    fun out s = HOLFileSys.output (ostrm, s)
+  in
+    out "<!DOCTYPE html>\n\
+        \<html lang=\"en\">\n\
+        \<head>\n\
+        \<meta charset=\"utf-8\">\n\
+        \<meta name=\"viewport\" \
+             \content=\"width=device-width, initial-scale=1\">\n\
+        \<title>HOL Theory Hierarchy</title>\n\
+        \<style>\n\
+        \  body { font-family: system-ui, -apple-system, sans-serif;\n\
+        \         color: #1f2328; margin: 1.5rem; }\n\
+        \  h1 { font-size: 1.5rem; }\n\
+        \  object { display: block; max-width: 100%; }\n\
+        \  @media (prefers-color-scheme: dark) {\n\
+        \    body { background: #1b1d23; color: #d6d6d6; }\n\
+        \    /* the graph is black-on-white with a transparent backing;\n\
+        \       invert it (re-rotating hue) so its edges and labels stay\n\
+        \       visible against the dark page */\n\
+        \    object { filter: invert(1) hue-rotate(180deg); }\n\
+        \  }\n\
+        \</style>\n\
+        \</head>\n\
+        \<body>\n\
+        \<h1>HOL Theory Hierarchy (clickable)</h1>\n\
+        \<object data=\"theories.svg\" type=\"image/svg+xml\">\
+                \HOL Theory Map</object>\n\
+        \</body>\n\
+        \</html>\n";
+    HOLFileSys.closeOut ostrm
+  end
+
+fun write_theory_graph () =
+  case Systeml.DOT_PATH of
+      SOME dotexec =>
+      if not (HOLFileSys.access (dotexec, [HOLFileSys.A_EXEC])) then
+        (* of course, this will likely be the case on Windows *)
+        warn ("Can't see dot executable at "^dotexec^"; not generating \
+              \theory-graph\n\
+              \*** You can try reconfiguring and providing an explicit path \n\
+              \*** (val DOT_PATH = \"....\") in\n\
+              \***    tools-poly/poly-includes.ML (Poly/ML)\n\
+              \***  or\n\
+              \***    config-override           (Moscow ML)\n\
+              \***\n\
+              \*** (Under Poly/ML you will have to delete bin/hol.state0 as \
+              \well)\n***\n\
+              \*** (Or: build with --no-mdbook or --no-helpdocs to \
+              \stop this message from appearing again)\n")
+      else
+        let
+          val _ = print "Generating theory-graph.\n"
+          val theorytool =
+              fullPath [HOLDIR, "src", "portableML", "rawtheory", "theorytool"]
+          val svgfile = theorygraph_dir ++ "theories.svg"
+          val pathsfile = theorygraph_dir ++ "thypaths.txt"
+          val () = write_lines (pathsfile, list_sigobj_dats ())
+          val protect = Systeml.protect
+          val cmd =
+              String.concatWith " " [
+                "cd", protect HOLDIR, "&&",
+                protect theorytool, "--quiet", "--thygraph",
+                "--url-base=" ^ protect theorygraph_dir,
+                "--paths-from=" ^ protect pathsfile,
+                "|", protect dotexec, "-Tsvg", "-o", protect svgfile
+              ]
+          val result = OS.Process.system cmd
+        in
+          if OS.Process.isSuccess result then write_theorygraph_html ()
+          else warn "Theory graph construction failed.\n"
+        end
+    | NONE => warn "If you had a copy of the dot tool installed, I might try\n\
+                   \*** to build a theory graph at this point"
+
+val HOLMAKE = fullPath [HOLDIR, "bin/Holmake"]
+val ML_SYSNAME = Systeml.ML_SYSNAME
+
+(* Holmake all in help/src-sml/ builds the per-SML-implementation set
+   of help tools: AliasGen.exe, makebase.exe under both, plus
+   process_docfiles under poly (which needs bin/hol.state for
+   polyscripter and is therefore declared inside an `ifdef POLY`
+   block in help/src-sml/Holmakefile).  `all` also runs AliasGen, so
+   help/generated-alias-docs is populated on return. *)
+fun compile_help_tools () =
+  if SYSTEML [HOLMAKE, "all"] then ()
+  else die "Couldn't build help tools"
+
+fun build_adoc_files () = true
+  (* for the moment, use markdown files as our "ASCII" documentation *)
+
+(* old code: let
+  val docdirs = let
+    val instr = TextIO.openIn(fullPath [HOLDIR, "tools",
+                                        "documentation-directories"])
+    val wholefile = TextIO.inputAll instr before TextIO.closeIn instr
+  in
+    map normPath (String.tokens Char.isSpace wholefile)
+  end handle _ => (print "Couldn't read documentation directories file\n";
+                   [])
+  val doc2txt = fullPath [HOLDIR, "help", "src-sml", "Doc2Txt.exe"]
+  fun make_adocs dir = let
+    val fulldir = fullPath [HOLDIR, dir]
+  in
+    if SYSTEML [doc2txt, fulldir, fulldir] then true
+    else
+      (print ("Generation of ASCII doc files failed in directory "^dir^"\n");
+       false)
+  end
+in
+  List.all make_adocs docdirs
+end *)
+
+(* Does an executable of the given name exist on PATH? *)
+fun which arg =
+  let
+    open OS.FileSys
+    val sepc = if Systeml.isUnix then #":" else #";"
+    fun check p =
+      let val fname = OS.Path.concat(p, arg)
+      in if access (fname, [A_READ, A_EXEC]) then SOME fname else NONE end
+    fun first [] = NONE
+      | first (p::ps) = (case check p of NONE => first ps | sm => sm)
+  in
+    case OS.Process.getEnv "PATH" of
+        NONE => if Systeml.isUnix then NONE else check "."
+      | SOME path =>
+        let val paths = (if Systeml.isUnix then [] else ["."]) @
+                        String.fields (fn c => c = sepc) path
+        in first paths end
+  end
+
+(* Oldest mdbook we can render the manuals with.  The floor is set by
+   Manual/theme/index.hbs, a vendored copy of the mdbook 0.5.x default
+   theme: it uses the {{fa ...}} FontAwesome Handlebars helper (and the
+   mdbook-menu-bar / mdbook-sidebar element ids), all introduced in
+   mdbook 0.5.0.  An older mdbook aborts rendering index.hbs with
+   "Helper not found fa".  Bump this if the theme comes to rely on a
+   newer feature. *)
+val min_mdbook = (0, 5, 0)
+
+fun mdbook_verstr (a,b,c) =
+    Int.toString a ^ "." ^ Int.toString b ^ "." ^ Int.toString c
+
+(* SML's < / >= aren't polymorphic, so compare the triples by hand. *)
+fun mdbook_ge ((a1,b1,c1), (a2,b2,c2)) =
+    a1 > a2 orelse
+    (a1 = a2 andalso (b1 > b2 orelse (b1 = b2 andalso c1 >= c2)))
+
+(* Ask `mdbook --version` (output looks like "mdbook v0.5.2") and pull
+   out the leading MAJOR.MINOR.PATCH.  NONE if mdbook can't be run or
+   prints nothing version-shaped. *)
+fun mdbook_version () =
+  let
+    val tmp = OS.FileSys.tmpName ()
+    val ran = OS.Process.isSuccess
+                (OS.Process.system ("mdbook --version > " ^ quote tmp))
+  in
+    if not ran then (safedelete tmp; NONE)
+    else
+      let
+        val is = TextIO.openIn tmp
+        val s = TextIO.inputAll is before TextIO.closeIn is
+        val () = safedelete tmp
+        val nums = List.mapPartial Int.fromString
+                     (String.tokens (not o Char.isDigit) s)
+      in
+        case nums of
+            (a :: b :: c :: _) => SOME (a, b, c)
+          | [a, b] => SOME (a, b, 0)
+          | _ => NONE
+      end handle IO.Io _ => (safedelete tmp; NONE)
+  end
+
+fun build_help {graph, no_mdbook, no_helpdocs} =
+ (* Skip the theory graph alongside any other doc-build skip:
+    `--no-mdbook` and `--no-helpdocs` are the only ways to opt out
+    of doc work now, and the theory graph is doc work. *)
+ let val want_graph = graph andalso not no_mdbook andalso not no_helpdocs
+ in
+ if no_helpdocs then
+   (print "Skipping help documentation build (--no-helpdocs).\n";
+    if want_graph then write_theory_graph() else ())
+ else
+ let val dir = OS.Path.concat(OS.Path.concat (HOLDIR,"help"),"src-sml")
+     val _ = HOLFileSys.chDir dir
+
+     val _ = compile_help_tools()
+
+     val process_docfiles = fullPath [dir, "process_docfiles"]
+     val docpath          = fullPath [HOLDIR, "help", "Docfiles"]
+     val aliaspath        = fullPath [HOLDIR, "help", "generated-alias-docs"]
+     val processed_dir    = fullPath [HOLDIR, "Manual", "build",
+                                       "Docfiles-processed"]
+     val htmlpath         = fullPath [docpath, "HTML"]
+
+     (* Alias stubs are build products, generated into aliaspath from
+        the `aliases:` frontmatter of the canonical entries.  The rule
+        lives in help/src-sml/Holmakefile and so has already run, as
+        part of compile_help_tools above; process_docfiles below picks
+        the results up as a second source directory. *)
+
+     val poly = ML_SYSNAME = "poly"
+     val mdbook_present = poly andalso
+                          (case which "mdbook" of SOME _ => true
+                                                | NONE => false)
+     val mdbook_ver = if mdbook_present then mdbook_version () else NONE
+     val mdbook_new_enough =
+         case mdbook_ver of
+             SOME v => mdbook_ge (v, min_mdbook)
+           | NONE => false
+     val mdbook_desc =
+         case mdbook_ver of
+             SOME v => "v" ^ mdbook_verstr v ^ " is too old"
+           | NONE => "version could not be determined"
+     (* Present but too old (or unreadable version) => warn and fall
+        back rather than aborting the whole doc build on a template
+        error deep inside mdbook. *)
+     val () =
+         if mdbook_present andalso not no_mdbook andalso not mdbook_new_enough
+         then
+           (WARN ("mdbook " ^ mdbook_desc ^ "; the manuals need mdbook >= " ^
+                  mdbook_verstr min_mdbook ^ ".");
+            WARN "Falling back to per-entry HTML for the Reference manual.")
+         else ()
+     val use_mdbook = poly andalso not no_mdbook andalso mdbook_new_enough
+     val use_html_fallback = poly andalso not use_mdbook
+
+     (* URL bases relative to Manual/book/htmlsigs/<struct>.html (where
+        the sig-page links from -- makebase writes the htmlsigs tree
+        there as part of the unified Manual/book/ deploy snapshot).
+        See help/src-sml/Htmlsigs.sml. *)
+     val entry_url_base =
+         if use_mdbook then "../Reference/"
+         else if use_html_fallback then "../../../help/Docfiles/HTML/"
+         else ""  (* mosml: sig-pages omit per-entry hrefs *)
+     (* Theory URL base.  Empty -> Htmlsigs computes a source-tree
+        relative path (legacy/local).  "../theories/" matches where
+        stage_references.py stages per-theory pages under book/. *)
+     val theory_url_base =
+         if use_mdbook then "../theories/" else ""
+
+     (* "Source File" URL base.  The htmlsigs are deployed outside the
+        source tree, so the legacy file:// path is dead on the web.
+        For the mdbook/deploy build, point the links at GitHub, pinned
+        to the commit the docs were built from when this is a git
+        checkout; fall back to the release tag (the release-tarball
+        case, where that tag is exactly the right ref).  Empty for
+        local builds, where Htmlsigs keeps the file:// path. *)
+     val source_url_base =
+         if not use_mdbook then ""
+         else
+           let
+             val tmp = OS.FileSys.tmpName ()
+             val ok = OS.Process.isSuccess
+                        (OS.Process.system
+                           ("git -C \"" ^ HOLDIR ^ "\" rev-parse HEAD > \"" ^
+                            tmp ^ "\" 2>/dev/null"))
+             val sha =
+                 if ok then
+                   (let val is = TextIO.openIn tmp
+                        val l = TextIO.inputLine is
+                        val () = TextIO.closeIn is
+                    in case l of
+                           SOME s =>
+                             let val s = Substring.string
+                                   (Substring.dropr Char.isSpace
+                                                    (Substring.full s))
+                             in if s = "" then NONE else SOME s end
+                         | NONE => NONE
+                    end handle _ => NONE)
+                 else NONE
+             val () = (OS.FileSys.remove tmp handle _ => ())
+             val gitref =
+                 case sha of
+                     SOME s => s
+                   | NONE => CharVector.map Char.toLower Systeml.release ^
+                             "-" ^ Int.toString Systeml.version
+           in
+             "https://github.com/HOL-Theorem-Prover/HOL/blob/" ^ gitref ^ "/"
+           end
+
+     local
+       open Holmake_types
+       fun quietly _ = ()
+       val qdiags = {info = quietly, die = quietly, warn = quietly}
+     in
+       fun mdbook_manuals () =
+         let
+           val path = fullPath [HOLDIR, "Manual", "mdbook.mk"]
+           val (env, _, _, _) =
+               ReadHMF.diagread qdiags path (base_environment())
+         in
+           case envlist qdiags env "MANUALS" of
+             [] => die ("Couldn't find MANUALS in " ^ path)
+           | ms => ms
+         end
+
+       fun manual_uses_chapter_stems m =
+         let
+           val hmf = fullPath [HOLDIR, "Manual", m, "Holmakefile"]
+         in
+           HOLFileSys.access (hmf, [HOLFileSys.A_READ]) andalso
+           let
+             val (env, rdb, _, _) =
+                 ReadHMF.diagread qdiags hmf (base_environment())
+           in
+             isSome (get_rule_info qdiags rdb env "chapter-stems.mk")
+           end
+         end
+     end
+ in
+   if poly then (
+     let
+       val pdoc_args =
+           [process_docfiles, "--show-progress",
+            "--extra-src=" ^ aliaspath, docpath, processed_dir] @
+           (if use_html_fallback then [htmlpath] else [])
+       val () = print "Polyscripting Docfiles and generating .txt outputs...\n"
+     in
+       if SYSTEML pdoc_args then
+         (* Touch the .stamp the Manual/Reference Holmakefile keys its
+            $(Processed) rule off, so the follow-up Holmake mdbook pass
+            sees a fresh tree. *)
+         write_lines (fullPath [processed_dir, ".stamp"], [])
+       else die "process_docfiles failed.  If you're running a partial \
+                \build sequence and don't need up-to-date help \
+                \documentation, re-run with --no-helpdocs to skip the \
+                \help-docs step entirely."
+     end ;
+     (* Pre-build chapter-stems.mk in each manual that `sinclude`s it,
+        so subsequent Holmake invocations there don't print the
+        `chapter-stems.mk not yet built' warning -- and so the
+        labels.tsv pass below doesn't either.  Stop-gap until Holmake
+        learns to generate these itself. *)
+     let
+       val manuals = mdbook_manuals ()
+       val stem_manuals = List.filter manual_uses_chapter_stems manuals
+       val () = print ("Generating chapter-stems.mk in " ^
+                       String.concatWith ", " stem_manuals ^ "...\n")
+       fun build_stems m =
+         let val mdir = fullPath [HOLDIR, "Manual", m]
+         in if SYSTEML [HOLMAKE, "-C", mdir, "chapter-stems.mk"] then ()
+            else die ("Couldn't build Manual/" ^ m ^ "/chapter-stems.mk")
+         end
+       val () = List.app build_stems stem_manuals
+     in
+       if use_mdbook then
+         let
+           val refdir = fullPath [HOLDIR, "Manual", "Reference"]
+           (* The Reference mdbook target depends on each sibling
+              manual's labels.tsv (for cross-book \ref{Book:label}
+              resolution -- see Manual/mdbook.mk SIBLING_LABELS).
+              Build those first. *)
+           val sibling_manuals = List.filter (fn m => m <> "Reference") manuals
+           val () = print "Building sibling labels for Reference mdbook...\n"
+           fun build_labels m =
+             let val mdir = fullPath [HOLDIR, "Manual", m]
+             in if SYSTEML [HOLMAKE, "-C", mdir, "labels.tsv"] then ()
+                else die ("Couldn't build Manual/" ^ m ^ "/labels.tsv")
+             end
+           val () = List.app build_labels sibling_manuals
+           val () = print "Building Reference mdbook (mdbook detected \
+                          \in PATH)...\n"
+         in
+           if SYSTEML [HOLMAKE, "-C", refdir, "mdbook"] then ()
+           else die "Reference mdbook build failed"
+         end
+       else ()
+     end
+   ) else ()
+ ;
+   let
+     val makebase = fullPath [dir, "makebase.exe"]
+     fun urlFlag (flag, base) =
+         if base <> "" then [flag ^ "=" ^ base] else []
+     val makebase_args =
+         makebase ::
+         urlFlag ("--entry-url-base", entry_url_base) @
+         urlFlag ("--theory-url-base", theory_url_base) @
+         urlFlag ("--source-url-base", source_url_base)
+   in
+     if (print "Building Help DB\n"; SYSTEML makebase_args) then ()
+     else die "Couldn't make help database"
+   end
+ ;
+   if want_graph then write_theory_graph()
+   else ()
+ end
+ end
+
+fun cleanDirP P d =
+  let
+    val dstrm = HOLFileSys.openDir d
+    fun getPs acc =
+      case HOLFileSys.readDir dstrm of
+          NONE => (HOLFileSys.closeDir dstrm; acc)
+        | SOME f => if P f then getPs (f::acc)
+                    else getPs acc
+    val Ps = getPs []
+  in
+    List.app (fn s => safedelete (fullPath [d, s])) Ps
+  end
+
+
+
+fun delete_heaps() = let
+  val deletes = let
+    val istrm = TextIO.openIn
+                  (fullPath[HOLDIR, "tools-poly", "rebuild-excludes.txt"])
+    fun chop s = String.substring(s, 0, String.size s - 1)
+    fun recurse acc =
+      case TextIO.inputLine istrm of
+          NONE => (TextIO.closeIn istrm ; acc)
+        | SOME s => recurse (chop s::acc)
+  in
+    recurse []
+  end
+  (* Holmake --relocbuild has already happened in all directories, so can
+     skip the implicit need to recurse into all directories and remove the
+     .HOLMK and .hollogs directories. *)
+  val cd = HOLFileSys.getDir()
+  val _ = HOLFileSys.chDir HOLDIR
+  fun process_dline s =
+    let
+      val fs = internal_functions.wildcard s
+    in
+      List.app safedelete fs
+    end
+in
+  List.app process_dline deletes ;
+  HOLFileSys.chDir cd
+end
+
+fun process_cline () =
+    case get_cline () of
+      Clean s =>
+      let
+        val (per_dir_action, post_action) =
+            case s of
+                "cleanAll" => (cleanAll, fn () => ())
+              | "clean" => (clean, fn () => ())
+              | "cleanForReloc" => (cleanForReloc, delete_heaps)
+              | _ => die ("Clean action = "^s^"???")
+        val knlseq = fullPath [HOLDIR, "tools", "sequences", "kernel"]
+        val SRCDIRS =
+            let
+              fun add kspec seq s =
+                Binaryset.addList(s,read_buildsequence {kernelname = kspec} seq)
+              fun cmp ((s1,_),(s2,_)) = String.compare(s1,s2)
+              val alldirs =
+                  Binaryset.empty cmp |> add "stdknl" dfltbuildseq
+                                      |> add "expk" knlseq
+                                      |> add "otknl" knlseq
+                                      |> add "trknl" dfltbuildseq
+            in
+              Binaryset.listItems alldirs
+            end
+      in
+        full_clean SRCDIRS per_dir_action;
+        safedelete Systeml.build_log_file;
+        post_action();
+        Process.exit Process.success
+      end
+    | Normal {extra = {seqname,kernelspec}, cmdline, multithread,
+              build_theory_graph, jobcount, relocbuild, debug, keepgoing,
+              cache_dir, selftest_level, thmsrc, timelimit,
+              no_mdbook, no_helpdocs} =>
+      let
+        val SRCDIRS = read_buildsequence {kernelname = kernelspec} seqname
+      in
+        if mem "help" cmdline then
+          (build_help {graph = build_theory_graph,
+                       no_mdbook = no_mdbook,
+                       no_helpdocs = no_helpdocs};
+           Process.exit Process.success)
+        else
+          {build_theory_graph=build_theory_graph,
+           cmdline=cmdline,
+           debug = debug,
+           extra = {SRCDIRS = SRCDIRS},
+           jobcount = jobcount,
+           keepgoing = keepgoing,
+           multithread = multithread,
+           cache_dir = cache_dir,
+           relocbuild = relocbuild,
+           selftest_level = selftest_level,
+           thmsrc = thmsrc,
+           timelimit = timelimit,
+           no_mdbook = no_mdbook,
+           no_helpdocs = no_helpdocs
+          }
+      end
+
+fun make_buildstamp () =
+ let open Path TextIO
+     val stamp_filename = concat(HOLDIR, concat("tools","build-stamp"))
+     val stamp_stream = openOut stamp_filename
+     val date_string = Date.toString (Date.fromTimeLocal (Time.now()))
+ in
+    output(stamp_stream, "built "^date_string);
+    closeOut stamp_stream
+end
+
+local open OS.FileSys
+in
+fun dirchildren d =
+    let val dstrm = openDir d
+        fun recurse A =
+            case readDir dstrm of
+                NONE => A
+              | SOME f =>
+                let val p = OS.Path.concat(d,f)
+                in
+                  if not (isLink p) andalso isDir p andalso
+                     access(p, [A_READ, A_EXEC])
+                  then
+                    recurse (p::A)
+                  else recurse A
+                end
+                handle e =>
+                       die ("build.dirchildren(" ^ d ^ ", " ^ f ^ "): "^
+                            General.exnMessage e)
+    in
+      recurse [] before closeDir dstrm
+    end
+    handle e => die ("build.dirchildren(" ^ d ^ "): " ^ General.exnMessage e)
+end
+
+fun preorder_directory_recurse f d =
+    let
+      fun recurse worklist =
+          case worklist of
+              [] => ()
+            | []::ds => recurse ds
+            | (d::ds)::ds' => (
+                f d;
+                recurse (dirchildren d :: ds :: ds')
+              )
+    in
+      recurse [[d]]
+    end handle e => die ("build.preorder_directory_recurse: " ^
+                         General.exnMessage e)
+
+fun remove_holmkdir parent =
+    let
+      open OS.FileSys
+      val dir = parent ++ ".hol" ++ "make-deps"
+    in
+      if access (dir, [A_READ, A_EXEC]) andalso not (isLink dir) andalso
+         isDir dir
+      then
+        (map_dir (fn (d,f) => rem_file (OS.Path.concat(d,f))) dir;
+         HOLFileSys.rmDir dir)
+      else ()
+    end handle e => die ("build.remove_holmkdir(" ^ parent ^ "): " ^
+                         General.exnMessage e)
+
+fun remove_all_holmkdirs () =
+    preorder_directory_recurse remove_holmkdir HOLDIR
+
+
+val logdir = Systeml.build_log_dir
+val logfilename = Systeml.build_log_file
+val hostname = if Systeml.isUnix then HostName.get () ^ "-" else ""
+
+fun setup_logfile () = let
+  open HOLFileSys
+  fun ensure_dir () =
+      if access (logdir, []) then
+        isDir logdir
+      else (mkDir logdir; true)
+in
+  if ensure_dir() then
+    if access (logfilename, []) then
+      warn "Build log exists; new logging will concatenate onto this file"
+    else let
+        (* touch the file *)
+        val outs = TextIO.openOut logfilename
+      in
+        TextIO.closeOut outs
+      end
+  else warn "Couldn't make or use build-logs directory"
+end handle IO.Io _ => warn "Couldn't set up build-logs"
+
+fun abort_logging () =
+    if HOLFileSys.access(logfilename, []) then safedelete logfilename
+    else ()
+
+fun finish_logging {buildok, selftest_level} = let
+in
+  if HOLFileSys.access(logfilename, []) then
+    if buildok then let
+        open Date
+        val timestamp = fmt "%Y-%m-%dT%H%M" (fromTimeLocal (Time.now()))
+        val knl = read_kernelid ()
+        val knl_suffix = if knl = "" then "" else "-" ^ knl
+        val stlvl_suffix = "-t" ^ Int.toString selftest_level
+        val logsuffix = knl_suffix^stlvl_suffix
+        val newname = hostname^timestamp^logsuffix
+        val newpath = fullPath [logdir, newname]
+      in
+        HOLFileSys.rename {old = logfilename, new = newpath};
+        checkRegressions.run {logdir = logdir, latest = newpath,
+                              logsuffix = logsuffix}
+      end
+    else abort_logging ()
+  else ()
+end handle IO.Io _ => warn "Had problems making permanent record of build log"
+
+fun Holmake sysl isSuccess extra_args analyse_failstatus selftest_level dir =
+    let
+      fun cons h t = h::t
+      val args = (if selftest_level > 0 then
+                    cons ("HOLSELFTESTLEVEL=" ^ Int.toString selftest_level)
+                  else (fn x => x))
+                 ("HOLBUILD=1" :: "--qof" :: extra_args())
+      val hmstatus = sysl HOLMAKE args
+    in
+      if isSuccess hmstatus then ()
+      else let
+        val info = analyse_failstatus hmstatus
+      in
+        die ("Build failed in directory "^dir^
+             (if info <> "" then " ("^info^")" else ""))
+      end
+    end
+
+val () = OS.Process.atExit abort_logging
+        (* No-op if finish_logging{buildok=true,...} already renamed the
+           log; otherwise cleans up the in-progress log file. *)
+
+
+
+
+end (* struct *)

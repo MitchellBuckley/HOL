@@ -6,15 +6,13 @@ structure Map = OpenTheoryMap.Map
 
 val ERR = Feedback.mk_HOL_ERR "Logging"
 
-fun uptodate_const Thy Name =
-  Theory.uptodate_term (Term.prim_mk_const {Thy=Thy,Name=Name})
-  handle Feedback.HOL_ERR {origin_function="prim_mk_const",...} => false
-
 val verbosity = ref 0
 val _ = Feedback.register_trace("opentheory logging",verbosity,5)
 
 val proof_type = let open Thm fun
  f Axiom_prf = "Axiom"
+|f (Disk_prf _) = "Disk"
+|f deleted_prf = "deleted"
 |f (ABS_prf _) = "ABS"
 |f (ALPHA_prf _) = "ALPHA"
 |f (AP_TERM_prf _) = "AP_TERM"
@@ -35,6 +33,7 @@ val proof_type = let open Thm fun
 |f (EQ_MP_prf _) = "EQ_MP"
 |f (EXISTS_prf _) = "EXISTS"
 |f (GEN_prf _) = "GEN"
+|f (GENL_prf _) = "GENL"
 |f (GEN_ABS_prf _) = "GEN_ABS"
 |f (INST_TYPE_prf _) = "INST_TYPE"
 |f (INST_prf _) = "INST"
@@ -56,6 +55,8 @@ val proof_type = let open Thm fun
 |f (Mk_comb_prf _) = "Mk_comb"
 |f (Specialize_prf _) = "Specialize"
 |f (deductAntisym_prf _) = "deductAntisym"
+|f (compute_prf _) = "compute"
+|f (save_dep_prf _) = "save_dep"
 in f end
 
 datatype log_state =
@@ -186,7 +187,10 @@ val (log_term, log_thm, log_clear,
       val _ = log_tyop {Thy=Thy,Tyop=Tyop}
       val _ = log_list log_type Args
       val _ = log_command "opType"
-    in () end handle HOL_ERR {origin_function="dest_thy_type",...} => let
+    in () end
+    handle HOL_ERR (HOL_ERROR {
+      origins = {origin_function="dest_thy_type",...}::_,...
+    }) => let
       val _ = log_type_var ty
       val _ = log_command "varType"
     in () end
@@ -205,34 +209,32 @@ val (log_term, log_thm, log_clear,
     in () end
   end
 
-  fun strip_old s = let
-    open Substring
-    val s = triml 3 (trimr 5 (full s))
-    val (_,s) = splitl Char.isDigit s
-    val s = triml 2 s
-  in string s end
-
   fun log_term tm = let
     val ob = OTerm tm
   in if saved ob then () else let
     open Term Feedback
     val _ = let
       val {Thy,Name,Ty} = dest_thy_const tm
-      val Name = if uptodate_const Thy Name then Name else strip_old Name
       val _ = log_const {Thy=Thy,Name=Name}
       val _ = log_type Ty
       val _ = log_command "constTerm"
-    in () end handle HOL_ERR {origin_function="dest_thy_const",...} => let
+    in () end handle HOL_ERR (HOL_ERROR {
+      origins = {origin_function="dest_thy_const",...}::_,...
+    }) => let
       val (t1,t2) = dest_comb tm
       val _ = log_term t1
       val _ = log_term t2
       val _ = log_command "appTerm"
-    in () end handle HOL_ERR {origin_function="dest_comb",...} => let
+    in () end handle HOL_ERR (HOL_ERROR {
+      origins = {origin_function="dest_comb",...}::_,...
+    }) => let
       val (v,b) = dest_abs tm
       val _ = log_var v
       val _ = log_term b
       val _ = log_command "absTerm"
-    in () end handle HOL_ERR {origin_function="dest_abs",...} => let
+    in () end handle HOL_ERR (HOL_ERROR {
+      origins = {origin_function="dest_abs",...}::_,...
+    }) => let
       val _ = log_var tm
       val _ = log_command "varTerm"
     in () end
@@ -282,7 +284,14 @@ val (log_term, log_thm, log_clear,
     val GEN_pth = let
       val th1 = ASSUME (mk_eq(P,mk_abs(x,T)))
       val th2 = AP_THM FORALL_DEF P
-    in EQ_MP (SYM(CONV_RULE(RAND_CONV BETA_CONV) th2)) th1 end
+      val pth = EQ_MP (SYM(CONV_RULE(RAND_CONV BETA_CONV) th2)) th1
+    in
+      fn v => fn th => let
+        val vty = type_of v
+        val P   = mk_var("P",vty-->bool)
+        val pth = INST_TY_TERM ([P|->mk_abs(v,concl th)],[alpha|->vty]) pth
+      in proveHyp (ABS v (eqtIntro th)) pth end
+    end
     val Q = mk_var("Q",bool)
     val EXISTS_pth = let
       val th1 = CONV_RULE (RAND_CONV BETA_CONV) (AP_THM EXISTS_DEF P)
@@ -330,9 +339,7 @@ val (log_term, log_thm, log_clear,
     fun specify c (th,defs) = let
       val th1 = SEL_RULE th
       val (l,r) = dest_comb(concl th1)
-      val {Thy,Name,...} = dest_thy_const c
-      val Name = if uptodate_const Thy Name then Name else strip_old Name
-      val th2 = mk_proof_thm (Def_const_prf({Thy=Thy,Name=Name},r)) ([],mk_eq(c,r))
+      val th2 = mk_proof_thm (Def_const_prf(r,c)) ([],mk_eq(c,r))
       val defs = th2 :: defs
       val th = CONV_RULE BETA_CONV (EQ_MP (AP_TERM l (SYM th2)) th1)
       in (th,defs) end
@@ -394,6 +401,17 @@ val (log_term, log_thm, log_clear,
       val _ = log_term (concl th)
       val _ = log_command "axiom"
       in () end
+    | Disk_prf _ => let
+      val _ = log_list log_term (hyp th)
+      val _ = log_term (concl th)
+      val _ = log_command "axiom"
+      in () end
+    | deleted_prf => let
+      val _ = log_list log_term (hyp th)
+      val _ = log_term (concl th)
+      val _ = log_command "axiom"
+      in () end
+    | save_dep_prf th => log_thm th
     | ASSUME_prf tm => let
       val _ = log_term tm
       val _ = log_command "assume"
@@ -406,7 +424,9 @@ val (log_term, log_thm, log_clear,
       val _ = log_term tm
       val _ = log_command "refl"
       in () end
-    | Def_const_prf (c,t) => let
+    | Def_const_prf (t,ctm) => let
+      val {Thy,Name,...} = dest_thy_const ctm
+      val c = {Thy=Thy,Name=Name}
       val _ = log_const_name c
       val _ = log_term t
       val _ = log_command "defineConst"
@@ -534,10 +554,10 @@ val (log_term, log_thm, log_clear,
       val _ = log_thm (EQ_MP (rconv fvs source tm) sth)
       in () end
     | GEN_prf (v,th) => let
-      val vty = type_of v
-      val P   = mk_var("P",vty-->bool)
-      val pth = INST_TY_TERM ([P|->mk_abs(v,concl th)],[alpha|->vty]) GEN_pth
-      val _ = log_thm (proveHyp (ABS v (eqtIntro th)) pth)
+      val _ = log_thm (GEN_pth v th)
+      in () end
+    | GENL_prf (vs,th) => let
+      val _ = log_thm (itlist GEN_pth vs th)
       in () end
     | DISJ1_prf (th,tm) => let
       val _ = log_thm (proveHyp th (INST [P|->concl th,Q|->tm] DISJ1_pth))
@@ -613,13 +633,14 @@ val (log_term, log_thm, log_clear,
       val _ = log_thm (DISJ_CASES (SPEC tm BOOL_CASES_AX) th2 th6)
       in () end
     | Beta_prf th => log_thm (RIGHT_BETA th)
-    | Def_spec_prf (cs,th) => let
+    | Def_spec_prf (th,cs) => let
       val (th,defs) = rev_itlist specify cs (th,[])
       val _ = app log_thm (rev defs)
       val _ = log_thm th
       in () end
-    | Def_const_list_prf (thyname,stys,th) => let
-      val nvars = map (fn (s,ty) => ({Thy=thyname,Name=s},mk_var(s,ty))) stys
+    | Def_const_list_prf (th,cs) => let
+      val nvars = map (fn c => let val {Thy,Name,Ty} = dest_thy_const c
+                               in ({Thy=Thy,Name=Name},mk_var(Name,Ty)) end) cs
       val _ = log_list (log_pair (log_const_name, log_var)) nvars
       val _ = log_thm th
       val _ = log_command "defineConstList"
@@ -627,11 +648,15 @@ val (log_term, log_thm, log_clear,
       val _ = log_command "pop"
       val _ = app (fn _ => log_command "hdTl") nvars
       val _ = log_command "pop"
-      val _ = app (ignore o save_dict o OConst o #1) (rev nvars)
+      val _ = app (fn nv => (ignore (save_dict (OConst (#1 nv)));
+                             log_command "pop"))
+                  (rev nvars)
       val _ = log_num k
       val _ = log_command "ref"
       in () end
-    | Def_tyop_prf (name,tyvars,th,aty) => let
+    | Def_tyop_prf (tyvars,th,aty) => let
+      val {Thy,Tyop,...} = Type.dest_thy_type aty
+      val name = {Thy=Thy,Tyop=Tyop}
       val n = log_tyop_name name
       val (ns,n) = n
       val ns'    = ns@[n]
@@ -671,6 +696,7 @@ val (log_term, log_thm, log_clear,
                                   [alpha|->rty,beta|->aty]) Def_tyop_pth
       val _       = log_thm (proveHyp ra (proveHyp ar pth))
       in () end
+    | compute_prf _ => raise ERR "log_thm" "disabled in opentheory kernel";
     val _ = if !verbosity >= 4 then HOL_MESG("Finish proof for "^(Susp.force ths)) else ()
     (*
     val _ = log_comment(pt^")")
@@ -719,16 +745,16 @@ datatype OTDirective = DeleteConstant | DeleteType | SkipThm | DeleteProof
 
 fun log_some_thms axdefs th =
   (if (case Thm.proof th of
-         Thm.Def_const_prf (thyrec, _) =>
-           Lib.mem (DeleteConstant, #Name thyrec) axdefs
-       | Thm.Def_const_list_prf (_,stys,_) =>
-           List.exists (Lib.C Lib.mem axdefs o mkpair DeleteConstant o #1)
-                       stys
-       | Thm.Def_spec_prf (cs,_) =>
+         Thm.Def_const_prf (_, c) =>
+           Lib.mem (DeleteConstant, #1(Term.dest_const c)) axdefs
+       | Thm.Def_const_list_prf (_,cs) =>
            List.exists (Lib.C Lib.mem axdefs o mkpair DeleteConstant o #1 o
                         Term.dest_const) cs
-       | Thm.Def_tyop_prf (thyrec,_,_,_) =>
-           Lib.mem (DeleteType, #Tyop thyrec) axdefs
+       | Thm.Def_spec_prf (_,cs) =>
+           List.exists (Lib.C Lib.mem axdefs o mkpair DeleteConstant o #1 o
+                        Term.dest_const) cs
+       | Thm.Def_tyop_prf (_,_,t) =>
+           Lib.mem (DeleteType, #1(Type.dest_type t)) axdefs
        | _ => false)
    then Thm.delete_proof th
    else ();

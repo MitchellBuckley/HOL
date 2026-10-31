@@ -3,8 +3,49 @@ struct
 
 open terminal_primitives ProcessMultiplexor Holmake_tools
 
+val LOGDIR = Systeml.LOGDIR
+
+fun nstr_subhandler f nm n s =
+    f n s
+    handle e =>
+           die_with (General.exnName e ^ " raised by " ^ nm ^ " " ^
+                     Int.toString n ^ " \"" ^ String.toString s ^ "\"")
+
 val five_sec = Time.fromSeconds 5
 val W_EXITED = Posix.Process.W_EXITED
+
+(* Lines of a failed job's output kept for reporting; the whole tail is
+   what the -k inline notice prints. *)
+val retained_lines = 50
+
+(* Lines of log content the closing report may spend in total, however
+   many targets failed: one more than a job retains, so that a lone
+   failure still gets its whole tail, whose last line may be a partial
+   one the buffer holds over and above the lines it counts.  Below
+   `min_useful_extract' lines apiece there is no room for an error
+   message, and the report stops quoting logs altogether. *)
+val report_budget = retained_lines + 1
+val min_useful_extract = 10
+
+(* Divide `budget' lines of report space between failures wanting
+   `needs' lines apiece.  Everyone gets an equal share, except that a
+   failure with less to say than its share hands the difference back:
+   the smallest needs are settled first, so the budget is spent rather
+   than left on the floor. *)
+fun share_lines budget needs =
+    let
+      val count = length needs
+      val tagged = ListPair.zip (List.tabulate(count, fn i => i), needs)
+      val ordered = Listsort.sort (fn ((_,m),(_,n)) => Int.compare(m,n)) tagged
+      fun recurse _ _ [] = []
+        | recurse b k ((i,n) :: rest) =
+          let val share = Int.min(n, b div k)
+          in (i, share) :: recurse (b - share) (k - 1) rest
+          end
+    in
+      map #2 (Listsort.sort (fn ((i,_),(j,_)) => Int.compare(i,j))
+                            (recurse budget count ordered))
+    end
 
 fun Pstatus_to_string st =
   let
@@ -71,6 +112,7 @@ fun rtrunc n s =
   if String.size s > n then
     "... " ^ String.substring(s, String.size s - (n - 4), n - 4)
   else StringCvt.padRight #" " n s
+val rtrunc = nstr_subhandler rtrunc "rtrunc"
 
 fun trashsfxes sfxes s =
   case List.find (fn sfx => String.isSuffix sfx s) sfxes of
@@ -94,16 +136,24 @@ fun truncate width s =
           val e = case ext s of NONE => "" | SOME s => s
         in
           if String.size e > 2 then t (base s ^ "..")
-          else String.substring(s,0,width-3) ^ ".."
+          else if width > 3 then
+            String.substring(s,0,width-3) ^ ".."
+          else
+            String.substring(s,0,width)
         end
     end
   else s
+val truncate = nstr_subhandler truncate "truncate"
 
 fun polish tgtw s = StringCvt.padRight #" " tgtw (truncate tgtw (polish0 s))
+val polish = nstr_subhandler polish "polish"
 
-val cheat_string = "Saved CHEAT _"
-val oracle_string = "Saved ORACLE thm _"
+
+val cheat_string =      "Saved CHEAT _"
+val fastcheat_string =  "Saved FAST-CHEAT _"
+val oracle_string =   "Saved ORACLE thm _"
 val used_cheat_string = "(used CHEAT)"
+val cachehit_string = "Cache hit!"
 
 fun delsml_sfx s =
   if String.isSuffix ".sml" s orelse String.isSuffix ".sig" s then
@@ -115,48 +165,53 @@ fun delsml_sfx s =
 val width_check_delay = Time.fromMilliseconds 1000
 
 type procinfo = {os : TextIO.outstream, tb : tailbuffer.t,
-                 status : monitor_status, start_time : Time.time}
+                 status : monitor_status, start_time : Time.time,
+                 ignore_error : bool}
 
-fun pinfo_upd (tb', stat) ({os,tb,status,start_time}:procinfo) =
-    {os = os, tb = tb', status = stat, start_time = start_time}
+fun pinfo_upd (tb', stat) ({os,tb,status,start_time,ignore_error}:procinfo) =
+    {os = os, tb = tb', status = stat, start_time = start_time,
+     ignore_error = ignore_error}
 
 
-fun prettydir dir =
-    let
-      (* input dir is already absolute *)
-      val hmdir = Holmake_tools.hmdir.fromPath {origin = "/", path = dir}
-      val dir = Holmake_tools.hmdir.pretty_dir hmdir
-      val dir = Holmake_tools.nice_dir dir
-      val {arcs,...} = OS.Path.fromString dir
-      val arcs = if hd arcs = "~" orelse String.sub(hd arcs, 0) = #"$" then
-                   tl arcs
-                 else arcs
-    in
-      String.concatWith "/" arcs
-    end
+(* A holpathdb registration ($(HOLDIR)/examples/lambda/basics) names
+   the tree a directory belongs to as well as its position in that
+   tree.  The tree half is dead weight when everything being built is
+   in the one tree, so keep_root is set only when the build spans more
+   than one of them; see multibuild's is_multitree. *)
+fun prettydir keep_root dir =
+    (* input dir is already absolute *)
+    case holpathdb.owning_var {path = OS.Path.mkCanonical dir} of
+        SOME {vname, rest} =>
+          if not keep_root then rest
+          else "$(" ^ vname ^ ")" ^ (if rest = "" then "" else "/" ^ rest)
+      | NONE =>
+        let
+          val dir = Holmake_tools.nice_dir dir
+        in
+          if keep_root then dir
+          else
+            let val {arcs,...} = OS.Path.fromString dir
+            in
+              String.concatWith
+                "/" (if hd arcs = "~" then tl arcs else arcs)
+            end
+        end
 
-(* right align, and put dots on left *)
-fun rlsquash_to wdth s =
+(* the dimmed column: squash_path's job, right-aligned to fill wdth so
+   the columns after it stay put, with one space kept to its left *)
+fun squash_to wdth s =
     if wdth <= 0 then ""
-    else if size s < wdth then
-      StringCvt.padLeft #" " wdth s
-    else if wdth <= 6 then
-      (*   1 <= wdth <= 6 /\ wdth <= size s ==>
-           size s + 1 - wdth IN [1..size s]
-         and String.extract(s, size s, NONE) returns empty string
-      *)
-      " " ^ String.extract(s, size s + 1 - wdth, NONE)
-    else
-      (*   6 < wdth <= size s ==>
-           size s + 4 - wdth IN [4..size s - 3]
-         4 is fine as size s > 6, and size s - 3 < size s
-      *)
-      " ..." ^ String.extract(s, size s + 4 - wdth, NONE)
+    else StringCvt.padLeft #" " wdth (squash_path (wdth - 1) s)
+val squash_to = nstr_subhandler squash_to "squash_to"
 
-fun new {info,warn,genLogFile,time_limit,multidir} =
+fun new {info,warn,genLogFile,time_limit,multidir,multitree,keep_going} =
   let
     val monitor_map =
         ref (Binarymap.mkDict jobkey_compare : (jobkey,procinfo)Binarymap.dict)
+    val failures :
+        {tag:string, dir:string, status:string, log:string,
+         extract:string list} list ref
+        = ref []
     val last_width_check = ref (Time.now())
     val width = ref (getWidth())
     val last_child_cputime = let
@@ -188,11 +243,39 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
           let
             val tgtw = width div job_count - 4
           in
-            Binarymap.app (
-              fn (jk as (_, {tag,dir}),{status,...}) =>
-                 print (polish tgtw tag ^ statusString status ^ " ")
-            ) (!monitor_map);
-            print CLR_EOL
+            if tgtw >= 1 then (
+              Binarymap.app (
+                fn (jk as (_, {tag,dir}),{status,...}) =>
+                   print (polish tgtw tag ^ statusString status ^ " ")
+              ) (!monitor_map);
+              print CLR_EOL
+            ) else
+              let fun foldthis ((_, {tag,dir}), {status,...}, worstopt) =
+                      case status of
+                          Stalling t => (case worstopt of
+                                             NONE => SOME (tag,t,status)
+                                           | SOME (tag0,t0,s0) =>
+                                             if Time.<(t0,t) then
+                                               SOME(tag,t,status)
+                                             else worstopt)
+                        | _ => worstopt
+                  val worstopt =
+                      Binarymap.foldl foldthis NONE (!monitor_map)
+                  val pfx = Int.toString job_count ^ " jobs"
+                  val pad = StringCvt.padRight #" " width
+                  val print = print o pad
+              in
+                if width <= size pfx then print "Working"
+                else if width <= size pfx + 25 then
+                  print pfx
+                else
+                  case worstopt of
+                      SOME (tag,_,status) =>
+                      print (pfx ^ ": most stalled = " (* 17 chars *) ^
+                             polish (width - (size pfx + 17))
+                                    (tag ^ statusString status))
+                    | NONE => print (pfx ^ ": all running")
+              end
           end
         else
           case Binarymap.listItems (!monitor_map) of
@@ -220,21 +303,57 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
           ((fn s => info ("Starting work on " ^ delsml_sfx s)), "",
            (fn () => ()),
            id, id, id, id, id, "")
+    (* the dimmed directory column's contents, empty when everything is
+       being built in the one directory *)
+    fun coldir dir = if multidir then prettydir multitree dir else ""
     fun stdhandle jkey f =
       case Binarymap.peek (!monitor_map, jkey) of
           NONE => (warn ("Lost monitor info for "^jobkey_toString jkey); NONE)
         | SOME info => f info
-    fun taginfo {tag,dir} dirstr timestr (colour,verdict) =
+    fun taginfo {tag,dir} dirstr timestr marker (colour,verdict) =
         let
-          val sfxsz = size timestr + 7
-          val sfxstr = timestr ^ colour (StringCvt.padLeft #" " 7 verdict)
-          val remspace = Width() - (sfxsz + 1)
-          val tagstr = delsml_sfx tag
+          (* tag is a bare filename when the target is built in its rule's
+             own directory, but an absolute path when it lives elsewhere
+             (e.g. the mdbook book/<Manual>/index.html outputs, whose rule
+             sits in Manual/<Manual>).  Show the basename as the name and the
+             target's own directory -- prettified, so HOLDIR is stripped just
+             as in the same-directory case -- in the dimmed column, rather
+             than dumping the whole path into the name. *)
+          val {dir = tagdir, file = tagfile} = OS.Path.splitDirFile tag
+          val tagstr = delsml_sfx tagfile
+          val dirstr = if tagdir <> "" then prettydir multitree tagdir
+                       else dirstr
           val tagsz = size tagstr
+          val verdict_w = 7
+          val knfield_w = 7  (* enough for "[dd/dd]" or "[↓ddddd]" *)
+          val knsep_w = 1
+          val kn_fits =
+              tagsz + size timestr + verdict_w +
+              knsep_w + knfield_w <= Width()
+          val (knstr, kn_used_w) =
+              if not kn_fits then ("", 0)
+              else case marker of
+                  NONE =>
+                    (CharVector.tabulate(knsep_w + knfield_w, fn _ => #" "),
+                     knsep_w + knfield_w)
+                | SOME s =>
+                  let val dw = UTF8.size s
+                  in
+                    if dw <= knfield_w then
+                      (" " ^
+                       CharVector.tabulate(knfield_w - dw, fn _ => #" ") ^ s,
+                       knsep_w + knfield_w)
+                    else ("", 0)
+                  end
+          val sfxsz = size timestr + kn_used_w + verdict_w
+          val sfxstr =
+              timestr ^ knstr ^
+              colour (StringCvt.padLeft #" " verdict_w verdict)
+          val remspace = Width() - (sfxsz + 1)
           fun maybe_dim s = if size s <> 0 then dim s else s
         in
           info (infopfx ^ tagstr ^
-                maybe_dim (rlsquash_to (remspace - tagsz) dirstr) ^
+                maybe_dim (squash_to (remspace - tagsz) dirstr) ^
                 sfxstr ^ CLR_EOL)
         end
     fun lrpad (s1,s2) =
@@ -244,20 +363,36 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
             s1 ^ CharVector.tabulate(w - (sz1 + sz2), fn _ => #" ") ^ s2
           else s1 ^ " " ^ s2
         end
+    (* `lines' is what the job's tail buffer held, `shown' how much of
+       it this caller can afford; the tail is what matters, so a trim
+       takes from the front. *)
+    fun show_extract {lines, shown, log} =
+        let
+          val n = length lines
+          val kept = List.drop(lines, Int.max(0, n - shown))
+          val nkept = length kept
+        in
+          List.app (fn s => info (" " ^ dim s)) kept;
+          info (bold (if nkept = 0 orelse nkept = n then " Full log: " ^ log
+                      else " Last " ^ Int.toString nkept ^
+                           " lines of output. Full log: " ^ log))
+        end
     fun monitor msg =
       case msg of
-          StartJob (jk as (_, {tag,...}), {dir}) =>
+          StartJob (jk as (_, {tag,...}), {dir, ignore_error}) =>
           let
             val strm = TextIO.openOut (genLogFile{tag = tag, dir = dir})
             val tb = tailbuffer.new {
-                  numlines = 10,
-                  patterns = [cheat_string, oracle_string, used_cheat_string]
+                  numlines = retained_lines,
+                  patterns = [cheat_string, oracle_string, used_cheat_string,
+                              fastcheat_string, cachehit_string]
                 }
           in
             monitor_map :=
               Binarymap.insert(!monitor_map, jk,
                                {os = strm, tb = tb, status = MRunning #"|",
-                                start_time = Time.now()});
+                                start_time = Time.now(),
+                                ignore_error = ignore_error});
             startmsg tag;
             display_map();
             NONE
@@ -280,7 +415,8 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
                 end)
         | NothingSeen(jkey as (_, tag), {delay,...}) =>
           let
-            fun after_check (pi as {os = strm, status = stat, tb, start_time}) =
+            fun after_check (pi as {os = strm, status = stat, tb, start_time,
+                                    ignore_error}) =
               let
                 val stat' =
                     case stat of
@@ -301,9 +437,10 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
               (fn pinfo =>
                   check_time (delay, jkey, (fn () => after_check pinfo)))
           end
-        | Terminated(jk as (_, td as {tag,dir}), st, _) =>
+        | Terminated(jk as (_, td as {tag,dir}), st, _,
+                     {marker, retrying}) =>
           stdhandle jk
-            (fn {os = strm,tb,status=stat,start_time} =>
+            (fn {os = strm,tb,status=stat,start_time,ignore_error} =>
                 let
                   val {fulllines,lastpartial,patterns_seen} =
                     tailbuffer.output tb
@@ -313,20 +450,50 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
                   val this_childs_time = Time.-(cutime, !last_child_cputime)
                   val _ = last_child_cputime := cutime
                   val utstr = compact_time 6 true "(" ")" this_childs_time
-                  val dirstr = if multidir then prettydir dir else ""
-                  val tinfo = taginfo td dirstr utstr
+                  val tinfo = taginfo td (coldir dir) utstr marker
                 in
-                  if st = W_EXITED then
+                  if st <> W_EXITED andalso not ignore_error andalso
+                     retrying
+                  then
+                    (* The scheduler has put this target back for another
+                       attempt, so this exit is not a failure of the build:
+                       say so on the line, and keep it out of `failures'
+                       (and hence out of the closing report).  The log file
+                       written for this attempt is left in place -- the
+                       next attempt gets its own, under the same name, so
+                       only the last attempt's output survives. *)
+                    tinfo (boldyellow, "RETRY")
+                  else if st = W_EXITED orelse ignore_error then
                     if seen cheat_string orelse seen used_cheat_string then
                       tinfo (boldyellow, "CHEATED")
+                    else if seen fastcheat_string then
+                      tinfo (boldyellow, "F-CHEAT")
+                    else if seen cachehit_string then
+                      tinfo (green, "CACHED")
                     else
                       tinfo ((if seen oracle_string then boldyellow else green),
                              "OK")
                   else
-                    (tinfo (red, "FAIL<" ^ status_string ^ ">");
-                     List.app (fn s => info (" " ^ dim s)) fulllines;
-                     if lastpartial <> "" then info (" " ^ dim lastpartial)
-                     else ());
+                    let
+                      (* Reuse genLogFile (applied to the same key on
+                         StartJob), not a hand-rolled `fullPath':
+                         tag can be an absolute path when the target
+                         lives outside the current build dir, and a
+                         raw concat then raises OS.Path.Path. *)
+                      val log = genLogFile{tag = tag, dir = dir}
+                      val extract =
+                          fulllines @
+                          (if lastpartial = "" then [] else [lastpartial])
+                    in
+                      tinfo (red, "FAIL<" ^ status_string ^ ">");
+                      if keep_going then
+                        show_extract {lines = extract, (* i.e. no trim *)
+                                      shown = length extract, log = log}
+                      else ();
+                      failures := !failures @
+                        [{tag = tag, dir = dir, status = status_string,
+                          log = log, extract = extract}]
+                    end;
                   TextIO.closeOut strm;
                   monitor_map := #1 (Binarymap.remove(!monitor_map, jk));
                   display_map();
@@ -338,22 +505,58 @@ fun new {info,warn,genLogFile,time_limit,multidir} =
             val this_childs_time = Time.-(cutime,!last_child_cputime)
             val _ = last_child_cputime := cutime
             val utstr = compact_time 6 true "(" ")" this_childs_time
-            val dirstr = if multidir then prettydir dir else ""
           in
             stdhandle jk
                (fn {os = strm,tb, status = stat,...} =>
-                   (taginfo td dirstr utstr (red, "MKILLED");
+                   (taginfo td (coldir dir) utstr NONE (dim, "killed");
                     TextIO.closeOut strm;
                     monitor_map := #1 (Binarymap.remove(!monitor_map, jk));
                     display_map();
                     NONE))
           end
         | _ => NONE
+    (* The report concatenates extracts from every failed target's
+       log, so what each one gets has to shrink as the number of
+       failures grows.  Past the point where an even share could hold
+       an error message the report spends nothing at all, and just
+       names the targets and their logs. *)
+    fun final_report () =
+        case !failures of
+            [] => ()
+          | fs =>
+            let
+              val n = length fs
+              val tgt = if n = 1 then "target" else "targets"
+              val budget = if n * min_useful_extract > report_budget then 0
+                           else report_budget
+              val shares = share_lines budget (map (length o #extract) fs)
+            in
+              info "";
+              info (red ("*** Holmake aborted - " ^ Int.toString n ^
+                         " " ^ tgt ^ " failed:"));
+              ListPair.appEq
+                (fn ({tag,dir,status,log,extract}, share) =>
+                    let
+                      (* the failure report has a line to itself, so
+                         name the tree whether or not the build spans
+                         more than one *)
+                      val dirpfx =
+                          if multidir then " in " ^ prettydir true dir else ""
+                    in
+                      info (red "*** " ^ bold (delsml_sfx tag) ^ dirpfx ^
+                            " (status " ^ status ^ ")");
+                      show_extract {lines = extract, shown = share,
+                                    log = log}
+                    end)
+                (fs, shares)
+            end
   in
     (monitor,
      {coloured_info =
       (fn (s1,s2) => info (lrpad (infopfx ^ s1, s2 ^ " " ^ CLR_EOL))),
-      red = red, green = green, bold = bold})
+      red = red, green = green, bold = bold,
+      dirname = prettydir multitree,
+      final_report = final_report})
   end
 
 

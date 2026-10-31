@@ -66,39 +66,35 @@ struct
   val std_binder_precedence = 0
 
 
-  fun mk_case_special0 nm component =
+  val core_case_special = "case_arg"
+  val case_split_special = "case_split"
+  val case_arrow_special = "case_arrow"
+
+  fun mk_case_special nm =
       mk_fakeconst_name {original = SOME {Thy = "case magic", Name = nm},
-                         fake = component}
-  val mk_default_case = mk_case_special0 "default"
-  fun mk_case_special nm = mk_case_special0 nm "case"
+                         fake = "case"}
   fun dest_case_special s =
-    case dest_fakeconst_name s of
-        SOME {original = SOME{Thy="case magic",Name},fake="case"} => SOME Name
-      | _ => NONE
+    if s = core_case_special then SOME "core"
+    else
+      case dest_fakeconst_name s of
+          SOME {original = SOME{Thy="case magic",Name},fake="case"} => SOME Name
+        | _ => NONE
   val is_case_special = isSome o dest_case_special
-
-
-
-  val core_case_special = mk_default_case "case"
-  val case_split_special = mk_default_case "split"
-  val case_arrow_special = mk_default_case "arrow"
 
   open HolKernel
   val compilefn = ref (NONE : (term -> term) option)
   val constructorsfn =
       ref (NONE : ({Thy:string,Tyop:string} -> term list) option)
 
+  val ERR = mk_HOL_ERR "GrammarSpecials"
+
   fun compile_pattern_match t =
       case !compilefn of
-        NONE => raise HOL_ERR {origin_function = "compile_pattern_match",
-                               origin_structure = "GrammarSpecials",
-                               message = "Function not initialised"}
+        NONE => raise ERR "compile_pattern_match" "Function not initialised"
       | SOME f => f t
   fun type_constructors s =
       case !constructorsfn of
-        NONE => raise HOL_ERR {origin_function = "type_constructors",
-                               origin_structure = "GrammarSpecials",
-                               message = "Function not initialised"}
+        NONE => raise ERR "type_constructors" "Function not initialised"
       | SOME f => f s
 
   fun set_case_specials (cmp,cnst) = (compilefn := SOME cmp;

@@ -17,7 +17,8 @@ open HolKernel Parse boolLib
 
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars boolTheory.bool_grammars
+  val SOME bool_grammars = grammarDB {thyname="bool"}
+  val (Type,Term) = parse_from_grammars bool_grammars
 end
 open Parse
 
@@ -148,6 +149,13 @@ fun freshsubst avoids tyvs =
     #2 (List.foldl foldthis (avoids, []) tyvs)
   end
 
+fun mk_var_avds (nm, ty, avoids) =
+  let
+    val v0 = mk_var(nm, ty)
+  in
+    variant avoids v0
+  end
+
 
 (* ----------------------------------------------------------------------
     prove_recordtype_thms
@@ -179,7 +187,7 @@ fun prove_recordtype_thms (tyinfo, fields) = let
     domtys [] (type_of constructor)
   end
   val varying_tyvs = let
-    val tymap = Binarymap.mkDict Type.compare : (hol_type,int) Binarymap.dict
+    val tymap : int Typetab.table = Typetab.empty
     fun recurse m tys =
       case tys of
           [] => m
@@ -187,16 +195,16 @@ fun prove_recordtype_thms (tyinfo, fields) = let
           let
             val tyvs = HOLset.fromList Type.compare (Type.type_vars ty)
             fun foldthis (tyv,m) =
-                case Binarymap.peek(m, tyv) of
-                    NONE => Binarymap.insert(m,tyv,1)
-                  | SOME i => Binarymap.insert(m,tyv,i+1)
+                case Typetab.lookup m tyv of
+                    NONE => Typetab.update (tyv,1) m
+                  | SOME i => Typetab.update (tyv,i+1) m
           in
             recurse (HOLset.foldl foldthis m tyvs) tyrest
           end
   in
-    Binarymap.foldl (fn (tyv,c,acc) => if c = 1 then tyv::acc else acc)
-                    []
-                    (recurse tymap types)
+    Typetab.fold (fn (tyv,c) => fn acc => if c = 1 then tyv::acc else acc)
+                 (recurse tymap types)
+                 []
   end
 
   val tysigma = let
@@ -209,10 +217,8 @@ fun prove_recordtype_thms (tyinfo, fields) = let
   val size = length fields
 
   val _ = length types = length fields orelse
-    raise HOL_ERR {origin_function = "prove_recordtype_thms",
-                   origin_structure = "RecordType",
-                   message =
-                   "Number of fields doesn't match number of types"}
+    raise mk_HOL_ERR "RecordType" "prove_recordtype_thms"
+      "Number of fields doesn't match number of types"
 
   (* we now have the type actually defined in typthm *)
   fun letgen x y = x @ [variant x (mk_var (app_letter y,y))]
@@ -292,6 +298,20 @@ fun prove_recordtype_thms (tyinfo, fields) = let
     save_thm(typename^"_fn_updates", LIST_CONJ fupdfn_thms)
   val fupdfn_terms =
       map (fn (s, v) => (s, mk_const (dest_var v))) fupd_terms
+  (* The fupdate constants in fupdfn_terms are type-changing: each
+     carries the field's original tyvars *and* fresh ones from
+     tysigma so callers may swap a field's type.  Some downstream
+     theorems (fupdselfid, the literal/FORALL/EXISTS block) want the
+     equation to live entirely at the record's declared type
+     variables; specialise each fupdate with the reverse of its
+     substitution so the result is a non-type-changing fupdate at the
+     record's original tyvars (#906). *)
+  val fupdfn_terms_nontc =
+      map (fn (s, upd) =>
+              let val rev_s = map (fn {redex,residue} =>
+                                     {redex = residue, residue = redex}) s
+              in inst rev_s upd end)
+          fupdfn_terms
   val _ = DIAG "generated functional updates"
 
 
@@ -325,9 +345,49 @@ fun prove_recordtype_thms (tyinfo, fields) = let
     Term`^(Term.inst s acc) (^fupd ^f ^var) = ^f (^acc ^var)`
   end
   val diag_goals = ListPair.map create_goal (accfn_terms, fupdfn_terms)
-  val tactic = STRUCT_CASES_TAC (SPEC var cases_thm) THEN
-    REWRITE_TAC [accessor_thm, fupdfn_thm, combinTheory.o_THM] THEN
-    BETA_TAC THEN REWRITE_TAC []
+  local
+     fun sing f [x] = f x
+       | sing f _ = raise ERR "sing" "Bind Error"
+     (* The induction theorem is recursive for recursive records and
+        not useful for case spliting *)
+     val induction_thm' =
+     let
+        val (var, body) = dest_forall (concl cases_thm)
+        val (field_vars,body) = strip_exists body
+        val typ = type_of var
+        val pred_r = mk_var_avds("P", typ --> bool, var::field_vars)
+        val (lhs,rhs) = dest_eq body
+        val new_body = (mk_forall (pred_r, mk_imp (list_mk_forall(field_vars,(mk_comb (pred_r,rhs))),
+                               mk_forall(var,(mk_comb (pred_r,lhs))))))
+     in
+        prove(new_body,
+             X_GEN_TAC pred_r THEN DISCH_TAC THEN X_GEN_TAC var THEN
+             STRUCT_CASES_TAC (SPEC var cases_thm) THEN
+             ASM_REWRITE_TAC[])
+     end
+  in
+    fun FAST_CASES_ON_TAC a :tactic =
+        (fn (g as (asl,w)) => fn _ (* ctxt *) => let
+            val P = mk_abs (a,w) (* (\a. ...)  a *)
+            val imp = (SPEC P induction_thm') (* !a1 ... xn . . (\a. ...) (rec ...) ==> !a. (\a. ...) a *)
+            val (ant,_) = dest_imp (concl imp)
+            val (xs,body) = strip_forall ant
+            val beta_eq = SYM (BETA_CONV body) (* .. [v/x] = (\x.u) v *)
+            fun validation thm = let
+                  val thm = EQ_MP beta_eq thm
+                  val thm = GENL xs thm
+                  val thm = MP imp thm
+                  val thm = SPEC a thm
+                in
+                  (CONV_RULE BETA_CONV) thm
+                end
+         in
+            ([(asl , lhs (concl beta_eq))], (sing validation))
+         end)
+  end
+  val tactic = FAST_CASES_ON_TAC var THEN
+    PURE_REWRITE_TAC [accessor_thm, fupdfn_thm, combinTheory.o_THM] THEN
+    REFL_TAC
   val thms = map (C (curry prove) tactic) (goals @ diag_goals)
   val accfupd_thm =
     save_thm(typename^"_accfupds", LIST_CONJ (map GEN_ALL thms))
@@ -441,13 +501,40 @@ fun prove_recordtype_thms (tyinfo, fields) = let
     val goal = mk_eq(lhs, rhs)
     val tactic =
       REPEAT GEN_TAC THEN
-      MAP_EVERY (STRUCT_CASES_TAC o C SPEC cases_thm) [var1, var2] THEN
+      MAP_EVERY FAST_CASES_ON_TAC [var1, var2] THEN
       REWRITE_TAC [oneone_thm, accessor_thm]
     val thm0 = prove(goal, tactic)
   in
     val component_wise_equality =
       save_thm(thmname, GENL [var1, var2] thm0)
   end
+
+  (* Prove that updating a field with its own value is the identity.
+     One conjunct per field:
+        !r. fld_i_fupd (K r.fld_i) r = r
+     Written in record syntax:  !r. (r with fld_i := r.fld_i) = r.
+     Users of `mk_state_id_thm` (l3-machine-code) currently reprove
+     these as their libraries load; save them here instead so they
+     land at record-Script build time and can be picked up as [simp]
+     rewrites via the tyinfo simpls entry. *)
+  val fupdselfid_thm = let
+    fun mk_thm (acc, fupd) = let
+      val acc_var = mk_comb (acc, var)
+      val fld_ty = type_of acc_var
+      val k_fn = combinSyntax.mk_K_1 (acc_var, fld_ty)
+      val goal = mk_eq (list_mk_comb (fupd, [k_fn, var]), var)
+      val tactic =
+          FAST_CASES_ON_TAC var THEN
+          PURE_REWRITE_TAC [accessor_thm, fupdfn_thm, combinTheory.K_THM] THEN
+          REFL_TAC
+    in
+      GEN_ALL (prove (goal, tactic))
+    end
+    val thms = ListPair.map mk_thm (accfn_terms, fupdfn_terms_nontc)
+  in
+    save_thm(typename^"_fupdselfid", LIST_CONJ thms)
+  end
+  val _ = DIAG "Generated fupdselfid theorem"
 
   (* prove
 
@@ -476,22 +563,16 @@ fun prove_recordtype_thms (tyinfo, fields) = let
             (v11 = v12) /\ (v21 = v22) /\ (v31 = v32)
   *)
   local
-    fun mk_var_avds (nm, ty, avoids) = let
-      val v0 = mk_var(nm, ty)
-    in
-      variant avoids v0
-    end
-
     fun rng_of_dom ty = ty |> dom_rng |> #1 |> dom_rng |> #2
     fun dom_of_dom ty = ty |> dom_rng |> #1 |> dom_rng |> #1
     val value_vars =
         List.foldr
-          (fn ((_,updt), sofar) =>
+          (fn (updt, sofar) =>
               let val ty = rng_of_dom (type_of updt)
               in
                 mk_var_avds(app_letter ty, ty, var::sofar)::sofar
               end)
-          [var] fupdfn_terms |> (fn l => List.take(l, length fields))
+          [var] fupdfn_terms_nontc |> (fn l => List.take(l, length fields))
     fun augvar n v = let
       val (nm, ty) = dest_var v
     in
@@ -500,17 +581,17 @@ fun prove_recordtype_thms (tyinfo, fields) = let
     val vvars1 = map (augvar 1) value_vars
     val vvars2 = map (augvar 2) value_vars
     val arb = mk_arb typ
-    fun foldthis ((s,upd),v,(s0,acc)) = let
+    fun foldthis (upd,v,acc) = let
       val ty = type_of v
       val K = Term.inst [alpha |-> ty, beta |-> dom_of_dom (type_of upd)] K_tm
     in
-      (s @ s0,mk_comb(mk_comb(inst s0 upd, mk_comb(K, v)), acc))
+      mk_comb(mk_comb(upd, mk_comb(K, v)), acc)
     end
-    val (_, lhs) = ListPair.foldr foldthis ([], var) (fupdfn_terms, value_vars)
-    val (_, rhs) = ListPair.foldr foldthis ([], arb) (fupdfn_terms, value_vars)
+    val lhs = ListPair.foldr foldthis var (fupdfn_terms_nontc, value_vars)
+    val rhs = ListPair.foldr foldthis arb (fupdfn_terms_nontc, value_vars)
 
-    val (_, lit1) = ListPair.foldr foldthis ([], arb) (fupdfn_terms, vvars1)
-    val (_, lit2) = ListPair.foldr foldthis ([], arb) (fupdfn_terms, vvars2)
+    val lit1 = ListPair.foldr foldthis arb (fupdfn_terms_nontc, vvars1)
+    val lit2 = ListPair.foldr foldthis arb (fupdfn_terms_nontc, vvars2)
 
     val literal_equality =
         GENL (var::value_vars)
@@ -519,38 +600,36 @@ fun prove_recordtype_thms (tyinfo, fields) = let
                                C SPEC cases_thm) [arb, var] THEN
                     REWRITE_TAC [fupdfn_thm, combinTheory.K_THM]))
 
-    val var' = inst tysigma var
-    val typ' = type_of var'
     val literal_nchotomy =
-        GEN var'
-            (prove(list_mk_exists(value_vars, mk_eq(var', rhs)),
+        GEN var
+            (prove(list_mk_exists(value_vars, mk_eq(var, rhs)),
                    MAP_EVERY (STRUCT_CASES_TAC o C ISPEC cases_thm)
-                             [arb, var'] THEN
+                             [arb, var] THEN
                              REWRITE_TAC [fupdfn_thm, accessor_thm, oneone_thm,
                                           combinTheory.K_THM] THEN
                              REPEAT Unwind.UNWIND_EXISTS_TAC))
 
-    val pred_r = mk_var_avds("P", typ' --> bool, var::value_vars)
-    val P_r = mk_comb(pred_r, var')
+    val pred_r = mk_var_avds("P", typ --> bool, var::value_vars)
+    val P_r = mk_comb(pred_r, var)
     val P_literal = mk_comb(pred_r, rhs)
-    val forall_goal = mk_eq(mk_forall(var', P_r),
+    val forall_goal = mk_eq(mk_forall(var, P_r),
                             list_mk_forall(value_vars, P_literal))
-    val exists_goal = mk_eq(mk_exists(var', P_r),
+    val exists_goal = mk_eq(mk_exists(var, P_r),
                             list_mk_exists(value_vars, P_literal))
     val forall_thm =
         GEN_ALL
           (prove(forall_goal,
                  EQ_TAC THEN STRIP_TAC THEN ASM_REWRITE_TAC [] THEN
-                 X_GEN_TAC var' THEN
-                 STRUCT_CASES_TAC (ISPEC var' literal_nchotomy) THEN
+                 X_GEN_TAC var THEN
+                 STRUCT_CASES_TAC (ISPEC var literal_nchotomy) THEN
                  ASM_REWRITE_TAC []))
     val exists_thm =
         GEN_ALL
         (prove(exists_goal,
                EQ_TAC THENL [
-                 DISCH_THEN (X_CHOOSE_THEN var' ASSUME_TAC) THEN
+                 DISCH_THEN (X_CHOOSE_THEN var ASSUME_TAC) THEN
                  EVERY_TCL (map X_CHOOSE_THEN value_vars)
-                           SUBST_ALL_TAC (ISPEC var' literal_nchotomy) THEN
+                           SUBST_ALL_TAC (ISPEC var literal_nchotomy) THEN
                  MAP_EVERY EXISTS_TAC value_vars THEN ASM_REWRITE_TAC [],
                  DISCH_THEN (EVERY_TCL (map X_CHOOSE_THEN value_vars)
                                        ASSUME_TAC) THEN
@@ -574,9 +653,9 @@ fun prove_recordtype_thms (tyinfo, fields) = let
 
   (* add to the TypeBase's simpls entry for the record type *)
   val new_simpls = let
-    val new_simpls0 =  [accessor_thm, accfupd_thm,
-                        literal_equality, literal_11, fupdfupd_thm,
-                        fupdfupds_comp_thm]
+    val new_simpls0 = [accessor_thm, accfupd_thm, fupdselfid_thm,
+                       literal_equality, literal_11, fupdfupd_thm,
+                       fupdfupds_comp_thm]
   in
     if not (null fupdcanon_thms) then
       fupdcanon_thm :: fupdcanon_comp_thm :: new_simpls0

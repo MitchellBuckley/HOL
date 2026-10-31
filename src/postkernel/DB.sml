@@ -28,8 +28,8 @@ fun indef_class2string Thm = "a theorem"
 
 fun pdv_thm (pdv : public_data_value) = #1 pdv
 fun dv_thm (dv : data_value) : thm = #1 dv
-fun dv_class (dv : data_value) : class = #2 dv
-fun dv_isprivate (dv : data_value) = #private (#3 dv)
+fun dv_class (dv : data_value) : class = #class (#2 dv)
+fun dv_isprivate (dv : data_value) = #private (#2 dv)
 
 fun dataName (((_, nm), _) : 'a named) = nm
 fun dataThy (((thy, _), _) : 'a named) = thy
@@ -41,35 +41,32 @@ fun dataNameEq s d = dataName d = s
    Map keys to canonical case
  ---------------------------------------------------------------------------*)
 
-fun toLower s =
- let open Char CharVector in tabulate(size s, fn i => toLower(sub(s,i))) end
+val toLower = CharVector.map Char.toLower
 
 (*---------------------------------------------------------------------------
      Persistence: bindl is used to populate the database when a theory
      is loaded.
  ---------------------------------------------------------------------------*)
 
-structure Map = Redblackmap
 (* the keys are lower-cased, but the data also stores the keys, and there
-   the key infomration is kept in its original case *)
+   the key information is kept in its original case *)
 
 fun updexisting key f m =
-    case Map.peek(m,key) of
+    case Symtab.lookup m key of
         NONE => m
-      | SOME v => Map.insert(m,key,f v)
+      | SOME v => Symtab.update (key, f v) m
 
 (* the submap is a map from lowercased item-name to those items with the
    same name.  There is a list of them because item-names are really
    case-sensitive *)
-type submap = (string, data list) Map.dict
-val empty_sdata_map = Map.mkDict String.compare
-
+type submap = data list Symtab.table
+val empty_sdata_map : submap = Symtab.empty
 (* the dbmap contains:
     - a map from theory-name to a submap (as above)
 *)
-datatype dbmap = DB of { namemap : (string, submap) Map.dict,
+datatype dbmap = DB of { namemap : submap Symtab.table,
                          revmap : location list Termtab.table,
-                         localmap : (thm * {private:bool}) Symtab.table
+                         localmap : (thm * thminfo) Symtab.table
                        }
 
 fun namemap (DB{namemap,...}) = namemap
@@ -82,35 +79,57 @@ fun updrevmap f (DB{namemap,revmap,localmap}) =
 fun updlocalmap f (DB{namemap,revmap,localmap}) =
     DB {namemap = namemap, revmap = revmap, localmap = f localmap}
 
-val empty_dbmap = DB {namemap = Map.mkDict String.compare,
+fun add_to_submap m (newdata as ((s1, s2), x)) =
+    let val s2key = toLower s2
+        val oldvalue = case Symtab.lookup m s2key of
+                           NONE => []
+                         | SOME items => items
+    in
+      Symtab.update
+        (s2key, newdata :: List.filter (not o dataNameEq s2) oldvalue) m
+    end
+
+fun insert_localmap_into_namemap thyname ltab nmap =
+    let
+      val sm0 = case Symtab.lookup nmap thyname of
+                    NONE => empty_sdata_map
+                  | SOME sm0 => sm0
+      fun foldthis (thname, th_thi) sm0 =
+          add_to_submap sm0 ((thyname,thname), th_thi)
+      val sm = Symtab.fold foldthis ltab sm0
+    in
+      Symtab.update (thyname, sm) nmap
+    end
+
+fun allnamemap cthy d =
+    insert_localmap_into_namemap cthy (localmap d) (namemap d)
+
+val empty_dbmap = DB {namemap = Symtab.empty,
                       localmap = Symtab.empty, revmap = Termtab.empty}
 
-local val DBref = ref empty_dbmap
-      fun lemmas() = !DBref
-      fun add_to_submap m (newdata as ((s1, s2), x)) =
-          let val s2key = toLower s2
-              val oldvalue = case Map.peek(m, s2key) of
-                               NONE => []
-                             | SOME items => items
-          in
-            Map.insert(m, s2key,
-                       newdata :: List.filter (not o dataNameEq s2) oldvalue)
-          end
+local val db_slot : dbmap Context.Data.slot =
+          Context.Data.new {name = "postkernel.DB",
+                            empty = empty_dbmap,
+                            pp = fn _ => "<DB>"}
+      fun lemmas_of ctxt = Context.Data.get db_slot ctxt
+      fun lemmas() = lemmas_of (Context.snapshot())
+      val put_db = Context.Data.write db_slot
+      val upd_db = Context.Data.modify db_slot
       fun functional_bindl_names thy blist namemap =
           (* used when a theory is loaded from disk *)
           let val submap =
-                  case Map.peek(namemap, thy) of
+                  case Symtab.lookup namemap thy of
                     NONE => empty_sdata_map
                   | SOME m => m
-              fun foldthis ((n,th,cl,vis), m) =
-                  add_to_submap m ((thy,n), (th,cl,vis))
+              fun foldthis ((n,th,info), m) =
+                  add_to_submap m ((thy,n), (th,info))
               val submap' = List.foldl foldthis submap blist
           in
-            Map.insert(namemap, thy, submap')
+            Symtab.update (thy, submap') namemap
           end
       fun functional_bindl_revmap thy blist revmap =
           List.foldl
-            (fn ((n,th,cl,vis), A) =>
+            (fn ((n,th,i), A) =>
                 Termtab.cons_list(concl th,Stored {Thy = thy,Name = n}) A)
             revmap
             blist
@@ -118,85 +137,82 @@ local val DBref = ref empty_dbmap
           db |> updnamemap (functional_bindl_names thy blist)
              |> updrevmap (functional_bindl_revmap thy blist)
 
-      fun purge_stale_bindings() =
+      fun purge_stale_bindings thyname =
           let
-            open Map
-            fun foldthis (n, datas : data list, m) =
+            fun foldthis (n, datas : data list) m =
                 let
-                  val data' = List.filter(fn (_, (th, _, _)) => uptodate_thm th)
-                                          datas
+                  val data' = List.filter(fn (_, (th, _)) => uptodate_thm th)
+                                         datas
                 in
-                  insert(m,n,data')
+                  Symtab.update (n, data') m
                 end
             fun purge_stale ttab =
-                let open Termtab
-                in
-                  fold (fn (t,d) => fn A =>
-                           if uptodate_term t then update (t,d) A else A)
-                       ttab
-                       empty
-                end
-            val ct = current_theory()
+                Termtab.fold
+                  (fn (t,d) => fn A =>
+                      if uptodate_term t then Termtab.update (t,d) A else A)
+                  ttab Termtab.empty
           in
-            DBref := ((!DBref)
-                       |> updnamemap
-                            (updexisting ct (foldl foldthis empty_sdata_map))
-                       |> updrevmap purge_stale)
+            upd_db (fn db =>
+              db |> updnamemap
+                      (updexisting thyname
+                         (fn sm => Symtab.fold foldthis sm empty_sdata_map))
+                 |> updrevmap purge_stale)
           end
 
       fun delete_binding bnm =
           let
-            open Map
             val ct = current_theory()
             fun smdelbinding bnm sm =
-                case peek (sm, toLower bnm) of
+                case Symtab.lookup sm (toLower bnm) of
                     NONE => sm
                   | SOME datas =>
-                    insert(sm,toLower bnm,
-                           List.filter(not o dataNameEq bnm) datas)
+                    Symtab.update
+                      (toLower bnm,
+                       List.filter(not o dataNameEq bnm) datas) sm
           in
-            DBref := updnamemap (updexisting ct (smdelbinding bnm)) (!DBref)
+            upd_db (updnamemap (updexisting ct (smdelbinding bnm)))
           end
-
 
       fun hook thydelta =
           let
             open TheoryDelta
-            fun dest_thk (ThmKind_dtype.Thm th) = (th, Thm)
-              | dest_thk (ThmKind_dtype.Axiom(_, th)) = (th, Axm)
-              | dest_thk (ThmKind_dtype.Defn th) = (th, Def)
-            fun toThmClass (s, (thk, v)) =
-                let val (th,k) = dest_thk thk in (s,th,k,v) end
+            fun flat (n,(th,i)) = (n,th,i)
           in
             case thydelta of
-                DelConstant _ => purge_stale_bindings()
-              | DelTypeOp _ => purge_stale_bindings()
-              | NewBinding nb =>
+                NewBinding nb =>
                 (
                   if Theory.is_temp_binding (#1 nb) then ()
                   else
-                    DBref := functional_bindl (!DBref) (current_theory())
-                                              [toThmClass nb]
+                    upd_db (fn db =>
+                              functional_bindl db (current_theory()) [flat nb])
                 )
               | DelBinding s => delete_binding s
+              | UpdBinding(s,{old,new,thm}) =>
+                if Theory.is_temp_binding s then ()
+                else upd_db (fn db =>
+                               functional_bindl db (current_theory())
+                                                [(s,thm,new)])
+              | ExportTheory s => purge_stale_bindings s
               | _ => ()
           end
       val _ = Theory.register_hook("DB", hook)
 in
-fun bindl thy blist = DBref := functional_bindl (lemmas()) thy blist
-fun revlookup th = Termtab.lookup_list (revmap (!DBref)) (concl th)
+fun bindl thy blist = upd_db (fn db => functional_bindl db thy blist)
+fun revlookup th = Termtab.lookup_list (revmap (lemmas())) (concl th)
 (*---------------------------------------------------------------------------
     To the database representing all ancestor theories, add the
     entries in the current theory segment.
  ---------------------------------------------------------------------------*)
-fun CT() = !DBref
+fun CT() = lemmas()
 
 fun store_local private s th =
-    DBref := (!DBref |> updlocalmap (Symtab.update(s,(th,private)))
-                     |> updrevmap (Termtab.cons_list(concl th, Local s)))
-fun local_thm s = case Symtab.lookup (localmap (!DBref)) s of
+    upd_db (fn db =>
+              db |> updlocalmap (Symtab.update(s,(th,private)))
+                 |> updrevmap (Termtab.cons_list(concl th, Local s)))
+fun local_thm s = case Symtab.lookup (localmap (lemmas())) s of
                       NONE => NONE
-                    | SOME (th,{private}) => if private then NONE else SOME th
+                    | SOME (th,{private,...}:thminfo) =>
+                      if private then NONE else SOME th
 
 end (* local *)
 
@@ -221,36 +237,35 @@ fun thy s =
     let
       val DB{namemap,...} = CT()
     in
-      case Map.peek(namemap, norm_thyname s) of
+      case Symtab.lookup namemap (norm_thyname s) of
           NONE => []
-        | SOME m => Map.foldl (fn (lcnm, datas, A) => datas @ A) [] m
+        | SOME m => Symtab.fold (fn (_, datas) => fn A => datas @ A) m []
     end
 
-fun findpred pat s =
+fun findpred pat =
     let
-      val pat = toLower pat and s = toLower s
-      val orparts = String.tokens (equal #"|") pat
-      val subparts = map (String.tokens (equal #"~")) orparts
-      val subpred = List.all (C occurs s)
+        val pat = toLower pat
+        open DBSearchParser
     in
-      List.exists subpred subparts
+        contains_regexp pat o toLower
     end
 
 fun find0 incprivatep s =
     let
       val DB{namemap,...} = CT()
-      fun subfold (k, vs, acc) =
-          if findpred s k then
+      val check = findpred s (* pre-compiles regexp *)
+      fun subfold (k, vs) acc =
+          if check k then
             (if incprivatep then vs
-             else List.filter (fn (_, (_, _, {private=p})) => not p) vs) @
+             else List.filter (fn (_, (_, {private=p,...})) => not p) vs) @
             acc
           else acc
-      fun fold (thy, m, acc) = Map.foldr subfold acc m
+      fun fold (_, m) acc = Symtab.fold_rev subfold m acc
     in
-      Map.foldr fold [] namemap
+      Symtab.fold_rev fold namemap []
     end
 
-fun find s = List.map (fn (n, (th,c,_)) => (n, (th,c))) (find0 false s)
+fun find s = List.map drop_private (find0 false s)
 val find_all = find0 true
 
 (*---------------------------------------------------------------------------
@@ -258,20 +273,21 @@ val find_all = find0 true
  ---------------------------------------------------------------------------*)
 
 fun matchp0 incprivate P thylist =
-    let fun data_P (_, (th, _, {private})) =
+    let fun data_P (_, (th, {private,...})) =
             (incprivate orelse not private) andalso P th
-        fun subfold (k, v, acc) = List.filter data_P v @ acc
+        fun subfold (k, v) acc = List.filter data_P v @ acc
+        val curr = current_theory()
     in
       case thylist of
-        [] => let fun fold (k, m, acc) = Map.foldr subfold acc m
+        [] => let fun fold (_, m) acc = Symtab.fold_rev subfold m acc
               in
-                Map.foldr fold [] (namemap (CT()))
+                Symtab.fold_rev fold (allnamemap curr (CT())) []
               end
-      | _ => let val db = namemap (CT())
+      | _ => let val db = allnamemap curr (CT())
                  fun fold (thyn, acc) =
-                     case Map.peek(db, norm_thyname thyn) of
+                     case Symtab.lookup db (norm_thyname thyn) of
                        NONE => acc
-                     | SOME m => Map.foldr subfold acc m
+                     | SOME m => Symtab.fold_rev subfold m acc
              in
                List.foldr fold [] thylist
              end
@@ -291,21 +307,185 @@ val apropos = match [];
 fun matches pat th =
   can (find_term (can (match_primitive pat))) (concl th) ;
 
+(* dtc': auxiliary function used by dest_polarity *)
+fun dtc' (t : term) =
+    let val {Thy, Name, ...} = dest_thy_const t in
+        SOME (Thy, Name)
+    end handle HOL_ERR _ => NONE
+
+(* -------------------------------------------------------------------------- *)
+(* dest_polarity:                                                             *)
+(*                                                                            *)
+(* The general idea of this function is to split a term into its conclusion   *)
+(* and its premises.                                                          *)
+(*                                                                            *)
+(* This function will be used to allow the user to search for theorems        *)
+(* matching a certain pattern in either the premises or in the conclusion.    *)
+(*                                                                            *)
+(* More precisely, it splits a term into a set of "positive" terms and        *)
+(* "negative" terms. (Thanks to Michael Norrish for this idea. I'm not sure   *)
+(* whether or not he himself got the idea from someplace else). This is a     *)
+(* general notion of premises and conclusions that is more robust than an     *)
+(* intuitive understanding. For example, in the equation (a ==> b) ==> c,     *)
+(* at first glance, b appears to be the conclusion of an implication operator.*)
+(* However, in this case, it makes more sense to treat b as a premise, since  *)
+(* the implication it is a conclusion of is itself the premise of another     *)
+(* implication. In particular, if you knew b, then you would immediately also *)
+(* know (a ==> b), thus, you would have a premise to the equation. Similarly, *)
+(* whereas 'a' appears at first glance to be a premise, in fact, it makes     *)
+(* more sense to treat it as a conclusion. Knowing 'a' doesn't directly help  *)
+(* in proving c, but if you know ~c, then you can derive 'a', since           *)
+(* (a ==> b) ==> F can only be true if (a ==> b) is false, and (a ==> b) is   *)
+(* only false if 'a' is true and b is false.                                  *)
+(*                                                                            *)
+(* My understanding of the notion of positive terms and negative terms is     *)
+(* incomplete and more rigour could probably be applied. However, this is     *)
+(* sufficient for the application of searching for theorems.                  *)
+(*                                                                            *)
+(* In this notion, "positive" terms are essentially those which are           *)
+(* un-negated in the conclusion to the expression, and "negative" terms are   *)
+(* essentially those which are negated in the conclusion to the expression.   *)
+(* That is, "p" is positive whereas "~p" is negative.                         *)
+(*                                                                            *)
+(* This derives from the fact that a ==> b can be transformed into b \/ ~a.   *)
+(*                                                                            *)
+(* Also, given the theorem a ==> b, which has 'a' as a premise, we can use    *)
+(* the contrapositive to derive a theorem with ~a as a conclusion. Similarly, *)
+(* if we have 'b' as a conclusion, we can use the contrapositive to derive a  *)
+(* theorem with ~b as a premise. Thus, premises are in some sense essentially *)
+(* negated conclusions.                                                       *)
+(*                                                                            *)
+(* -------------------------------------------------------------------------- *)
+(*                                                                            *)
+(* The function is defined recursively as follows:                            *)
+(*                                                                            *)
+(* Terms which cannot be broken down further (or unrecognised terms) are      *)
+(* treated as positive.                                                       *)
+(*                                                                            *)
+(* Applying a not swaps the positive and negative terms.                      *)
+(*                                                                            *)
+(* An implication will retain the polarity of the terms in the conclusion to  *)
+(* the implication, and swap the polarity of the terms in the premise to the  *)
+(* implication.                                                               *)
+(*                                                                            *)
+(* An 'and' statement will retain the polarity of its operands. Note that an  *)
+(* 'and' statement in the outermost layer can be treated as essentially being *)
+(* two separate theorems, which helps to motivate this treatment.             *)
+(*                                                                            *)
+(* An 'or' statement will retain the polarity of its operands.                *)
+(*                                                                            *)
+(* A 'forall' statement or an 'exists' statement will retain the polarity of  *)
+(* its operands.                                                              *)
+(*                                                                            *)
+(* Unrecognised terms are treated as positive.                                *)
+(*                                                                            *)
+(* Thanks to Michael Norrish for writing some of the code used by this        *)
+(* function.                                                                  *)
+(*                                                                            *)
+(* Term -> Term List * Term List                                              *)
+(*                                                                            *)
+(* The first term list contains the positive terms, while the second term     *)
+(* list contains the negative terms.                                          *)
+fun dest_polarity (t : term) : term list * term list =
+    let
+        val (f, xs) = strip_comb t
+    in
+        case (dtc' f) of
+        SOME ("bool", "~") =>
+            (let
+                val inner_term = hd xs
+                val recursive_result = dest_polarity inner_term
+                val (positive_terms, negative_terms) = recursive_result
+            in
+                (negative_terms, positive_terms)
+            end)
+        | SOME ("min", "==>") =>
+            (let
+                val antecedent = el 1 xs
+                val consequent = el 2 xs
+                val ant_recursive_result = dest_polarity antecedent
+                val con_recursive_result = dest_polarity consequent
+                val (ant_pos, ant_neg) = ant_recursive_result
+                val (con_pos, con_neg) = con_recursive_result
+            in
+                (ant_neg @ con_pos, ant_pos @ con_neg)
+            end)
+        | SOME ("bool", "/\\") =>
+            (let
+                val term1 = el 1 xs
+                val term2 = el 2 xs
+                val recursive_result_1 = dest_polarity term1
+                val recursive_result_2 = dest_polarity term2
+                val (pos_1, neg_1) = recursive_result_1
+                val (pos_2, neg_2) = recursive_result_2
+            in
+                (pos_1 @ pos_2, neg_1 @ neg_2)
+            end)
+        | SOME ("bool", "\\/") =>
+            (let
+                val term1 = el 1 xs
+                val term2 = el 2 xs
+                val recursive_result_1 = dest_polarity term1
+                val recursive_result_2 = dest_polarity term2
+                val (pos_1, neg_1) = recursive_result_1
+                val (pos_2, neg_2) = recursive_result_2
+            in
+                (pos_1 @ pos_2, neg_1 @ neg_2)
+            end)
+        | SOME ("bool", "!") =>
+            (let
+                val quantified_term = hd xs
+                val recurse_on_term = (case (total dest_abs quantified_term) of
+                    NONE => quantified_term
+                    | SOME (_, bound_term) => bound_term)
+                val recursive_result = dest_polarity recurse_on_term
+            in
+                recursive_result
+            end)
+        | SOME ("bool", "?") =>
+            (let
+                val quantified_term = hd xs
+                val recurse_on_term = (case (total dest_abs quantified_term) of
+                    NONE => quantified_term
+                    | SOME (_, bound_term) => bound_term)
+                val recursive_result = dest_polarity recurse_on_term
+            in
+                recursive_result
+            end)
+        | _ => ([t], [])
+    end;
+
+fun polarity_match (polarity : bool) (match_term : term) (th : thm) =
+    (let
+      val theorem_term = concl th
+      val polarity_terms = dest_polarity theorem_term
+      val match_predicate = can ((ho_match_term [] empty_tmset) match_term)
+      val match_results = map (can (find_term match_predicate)) (if polarity then fst polarity_terms else snd polarity_terms)
+    in
+         List.exists (fn x => x) match_results
+    end)
+
+fun polarity_search (polarity : bool) (match_term : term) =
+    matchp (polarity_match polarity match_term) []
+
 fun apropos_in pat dbdata =
   List.filter (fn (_, pdv) => matches pat $ pdv_thm pdv) dbdata
 
-fun find_in s = List.filter (findpred s o dataName)
+fun find_in s = let
+    val check = findpred s
+in List.filter (check o dataName)
+end
 
 fun listDB () =
-    let fun subfold (k,v,acc) = v @ acc
-        fun fold (_, m, acc) = Map.foldr subfold acc m
+    let fun subfold (_,v) acc = v @ acc
+        fun fold (_, m) acc = Symtab.fold_rev subfold m acc
     in
-      Map.foldr fold [] (namemap (CT()))
+      Symtab.fold_rev fold (namemap (CT())) []
     end
 
 fun listPublicDB() =
     let
-      fun subfold (_,dvs,acc) =
+      fun subfold (_,dvs) acc =
           let
             val dvs' =
                 List.mapPartial (fn d => if data_isprivate d then NONE
@@ -314,9 +494,9 @@ fun listPublicDB() =
           in
             dvs' :: acc
           end
-      fun fold (_, m, acc) = Map.foldr subfold acc m
+      fun fold (_, m) acc = Symtab.fold_rev subfold m acc
     in
-      List.concat (Map.foldr fold [] (namemap (CT())))
+      List.concat (Symtab.fold_rev fold (namemap (CT())) [])
     end
 
 fun selectDB sels =
@@ -341,10 +521,12 @@ fun thm_class origf thy name = let
   val db = namemap (CT())
   val thy = norm_thyname thy
   val nosuchthm = ("theorem "^thy^"$"^name^" not found")
-  val thymap = Map.find(db, thy)
-               handle Map.NotFound => raise ERR origf ("no such theory: "^thy)
-  val result = Map.find(thymap, toLower name)
-               handle Map.NotFound => raise ERR origf nosuchthm
+  val thymap = case Symtab.lookup db thy of
+                   SOME m => m
+                 | NONE => raise ERR origf ("no such theory: "^thy)
+  val result = case Symtab.lookup thymap (toLower name) of
+                   SOME r => r
+                 | NONE => raise ERR origf nosuchthm
 in
   case filter (equal (norm_thyname thy,name) o fst) result of
     [(_,p)] => p
@@ -355,6 +537,26 @@ end
 
 fun fetch s1 s2 = #1 (thm_class "fetch" s1 s2);
 fun fetch_knm{Thy,Name} = fetch Thy Name
+fun lookup {Thy,Name} = Lib.total (thm_class "lookup" Thy) Name
+
+(* Register bool constants in the kernel on theory load.
+   During the initial build, boolScript.sml calls Thm.register_* directly.
+   This hook ensures the constants are also registered when boolTheory is
+   loaded from disk in a child session. register_* is idempotent, so it is
+   safe for both paths to fire. *)
+val _ = Theory.register_hook (
+      "Thm.register_bool_constants",
+      fn TheoryDelta.TheoryLoaded "bool" =>
+         (Thm.register_T (fetch "bool" "T_DEF");
+          Thm.register_forall (fetch "bool" "FORALL_DEF");
+          Thm.register_exists (fetch "bool" "EXISTS_DEF");
+          Thm.register_F (fetch "bool" "F_DEF");
+          Thm.register_neg (fetch "bool" "NOT_DEF");
+          Thm.register_conj (fetch "bool" "AND_DEF");
+          Thm.register_disj (fetch "bool" "OR_DEF");
+          Thm.register_type_definition (fetch "bool" "TYPE_DEFINITION"))
+       | _ => ()
+    )
 
 fun thm_of ((_,n),dv) = (n,dv_thm dv);
 fun is x (_,dv) = (dv_class dv=x)

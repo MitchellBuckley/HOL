@@ -5,6 +5,7 @@ sig
   val ## : ('a -> 'b) * ('c -> 'd) -> 'a * 'c -> 'b * 'd
   val apfst : ('a -> 'b) -> 'a * 'c -> 'b * 'c
   val apsnd : ('a -> 'b) -> 'c * 'a -> 'c * 'b
+  val pair_map : ('a -> 'b) -> 'a * 'a -> 'b * 'b
   val $  : ('a -> 'b) * 'a -> 'b
   val ?  : (bool * ('a -> 'a)) -> 'a -> 'a
   val |> : 'a * ('a -> 'b) -> 'b
@@ -77,6 +78,7 @@ sig
   val split : ('a * 'b) list -> 'a list * 'b list
   val mapfilter : ('a -> 'b) -> 'a list -> 'b list
   val flatten : 'a list list -> 'a list
+  val get_first : ('a -> 'b option) -> 'a list -> 'b option
   val trypluck': ('a -> 'b option) -> 'a list -> ('b option * 'a list)
   val plucki : ('a -> bool) -> 'a list -> ('a * int * 'a list) option
   val funpow : int -> ('a -> 'a) -> 'a -> 'a
@@ -101,6 +103,12 @@ sig
   val for_se : int -> int -> (int -> unit) -> unit
   val make_counter : {init:int,inc:int} -> unit -> int
   val syncref : 'a -> {get:unit -> 'a, upd:('a -> 'b * 'a) -> 'b}
+
+  val unique_tmp_suffix : unit -> string
+
+  (* Save a Poly/ML heap (child of the currently-loaded state) to the
+     given path.  A no-op under Moscow ML. *)
+  val save_heap : string -> unit
 
   val assoc1 : ''a -> (''a * 'b) list -> (''a * 'b) option
   val assoc2 : ''a -> ('b * ''a) list -> ('b * ''a) option
@@ -202,6 +210,8 @@ sig
   val implode: string list -> string
   val ordof: string * int -> int
   val replace_string : {from:string,to:string} -> string -> string
+  val remove_wspace : string -> string
+  val remove_external_wspace : string -> string
 
   val time_eq: time -> time -> bool
   val timestamp: unit -> time
@@ -245,6 +255,10 @@ sig
 
   type 'a quotation = 'a HOLPP.quotation
   val pprint : 'a HOLPP.pprinter -> 'a -> unit
+  (* Outstream used by `pprint`.  Defaults to `TextIO.print`; clients
+     that want pprint's output captured (e.g. polyscripter) can rebind
+     this ref. *)
+  val pprint_outstream : (string -> unit) ref
   val norm_quote : 'a quotation -> 'a quotation
   val quote_to_string : ('a -> string) -> 'a quotation -> string
   val quote_to_string_list : string quotation -> string list
@@ -259,4 +273,5 @@ sig
   end
 
   val reraise : exn -> 'a
+  val display_exn : (exn -> unit) -> exn -> 'a
 end

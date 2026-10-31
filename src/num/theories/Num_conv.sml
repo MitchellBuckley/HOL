@@ -16,9 +16,10 @@
 structure Num_conv :> Num_conv =
 struct
 
-open HolKernel Parse boolLib;
+open HolKernel Parse boolLib NumConvContextTheory;
 
-val (Type,Term) = parse_from_grammars arithmeticTheory.arithmetic_grammars
+val SOME arithmetic_grammars = grammarDB {thyname="arithmetic"}
+val (Type,Term) = parse_from_grammars arithmetic_grammars
 
 (* |- !m n. 0 < n ==> ((m = PRE n) = SUC m = n) *)
 
@@ -27,9 +28,7 @@ val PRE_SUC_EQ      = arithmeticTheory.PRE_SUC_EQ
 val numeral_pre     = numeralTheory.numeral_pre
 val numeral_lt      = numeralTheory.numeral_lt
 val numeral_distrib = numeralTheory.numeral_distrib
-val save_zero =
-  prove(Term`NUMERAL ZERO = 0`,
-   REWRITE_TAC [arithmeticTheory.NUMERAL_DEF, arithmeticTheory.ALT_ZERO]);
+(* save_zero from NumConvContextTheory *)
 
 
 local val RW_CONV1 = REWRITE_CONV [numeral_pre, numeral_distrib, save_zero]

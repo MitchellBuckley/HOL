@@ -108,25 +108,11 @@ Take LENGTH l = 4, e.g. l = [2;3;2;3]
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "pattern";
+Theory pattern
+Ancestors
+  arithmetic pred_set list number divides combinatorics cycle
 
 (* ------------------------------------------------------------------------- *)
-
-
-(* open dependent theories *)
-(* val _ = load "cycleTheory"; *)
-open arithmeticTheory pred_setTheory listTheory;
-open helperNumTheory helperSetTheory;
-open helperListTheory; (* for LENGTH_NON_NIL *)
-
-open cycleTheory;
-
-open dividesTheory; (* for prime_def, NOT_PRIME_0 *)
-
 
 (* ------------------------------------------------------------------------- *)
 (* Pattern Theory Documentation                                              *)
@@ -135,7 +121,7 @@ open dividesTheory; (* for prime_def, NOT_PRIME_0 *)
    l1 == l2      = similar l1 l2 (infix)
    closed R s    = !x y. x IN s /\ R x y ==> y IN s
 *)
-(*
+(* Definitions and Theorems (# are exported, ! are in compute):
 
    Pattern Theory:
    similar_def         |- !l1 l2. l1 == l2 <=> ?n. l2 = cycle n l1
@@ -589,7 +575,7 @@ Theorem cycle_order_period:
   !ls. ls <> [] ==> period ls (order ls)
 Proof
   rw[order_def] >>
-  metis_tac[cycle_period_exists, whileTheory.LEAST_INTRO]
+  metis_tac[cycle_period_exists, WhileTheory.LEAST_INTRO]
 QED
 
 (* Idea: if k < list order, k is not a period. *)
@@ -606,7 +592,7 @@ Theorem cycle_order_minimal:
   !k ls. ls <> [] /\ k < order ls ==> ~(period ls k)
 Proof
   rw[order_def] >>
-  metis_tac[cycle_period_exists, whileTheory.LESS_LEAST]
+  metis_tac[cycle_period_exists, WhileTheory.LESS_LEAST]
 QED
 
 (* Idea: the list order is positive and a period. *)
@@ -1030,8 +1016,4 @@ QED
 
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

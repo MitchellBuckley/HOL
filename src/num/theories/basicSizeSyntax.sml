@@ -6,10 +6,10 @@ open HolKernel boolLib Abbrev basicSizeTheory;
 val ERR = mk_HOL_ERR "basicSizeSyntax";
 
 val bool_size_tm = prim_mk_const {Thy = "basicSize", Name = "bool_size"};
-val min_pair_size_tm = prim_mk_const {Thy = "basicSize", Name = "min_pair_size"};
+val min_pair_size_tm = prim_mk_const{Thy = "basicSize", Name = "min_pair_size"};
 val pair_size_tm = prim_mk_const {Thy = "basicSize", Name = "pair_size"};
 val sum_size_tm = prim_mk_const {Thy = "basicSize", Name = "sum_size"};
-val full_sum_size_tm = prim_mk_const {Thy = "basicSize", Name = "full_sum_size"};
+val full_sum_size_tm = prim_mk_const{Thy = "basicSize", Name = "full_sum_size"};
 val one_size_tm = prim_mk_const {Thy = "basicSize", Name = "one_size"};
 val itself_size_tm = prim_mk_const {Thy = "basicSize", Name = "itself_size"};
 val option_size_tm = prim_mk_const {Thy = "basicSize", Name = "option_size"};
@@ -25,6 +25,18 @@ fun mk_sum_size (f,g,s) =
  list_mk_comb(inst[alpha |-> dom f, beta |-> dom g] sum_size_tm,[f,g,s]);
 fun mk_option_size (f,tm) =
  list_mk_comb(inst [alpha |-> dom f]option_size_tm,[f,tm]);
+
+fun mk_pair_size2 (f,g) =
+ list_mk_comb(inst[alpha |-> dom f, beta |-> dom g] pair_size_tm,[f,g]);
+
+fun mk_min_pair_size2 (f,g) =
+ list_mk_comb(inst[alpha |-> dom f, beta |-> dom g] min_pair_size_tm,[f,g]);
+
+fun mk_sum_size2 (f,g) =
+ list_mk_comb(inst[alpha |-> dom f, beta |-> dom g] sum_size_tm,[f,g]);
+
+fun mk_full_sum_size2 (f,g) =
+ list_mk_comb(inst[alpha |-> dom f, beta |-> dom g] full_sum_size_tm,[f,g]);
 
 val dest_bool_size = dest_monop bool_size_tm  (ERR "dest_bool_size" "");
 val dest_one_size = dest_monop one_size_tm    (ERR "dest_one_size" "");

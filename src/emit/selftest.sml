@@ -1,4 +1,6 @@
 open HolKernel bossLib testutils
+
+val _ = new_theory "scratch"
 local open basis_emitTheory in end
 
 val (is_con, thy, name, ty) = ConstMapML.apply ``bool$IN``
@@ -19,4 +21,4 @@ in
          else OK()
 end
 
-val _ = trace ("Define.storage_message", 0) gh157 ()
+val _ = trace ("Definition.storage_message", 0) gh157 ()

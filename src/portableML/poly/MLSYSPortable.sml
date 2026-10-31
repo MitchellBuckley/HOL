@@ -5,13 +5,13 @@ exception Interrupt = SML90.Interrupt
 
 fun listDir s =
    let
-      val ds = FileSys.openDir s
+      val ds = OS.FileSys.openDir s
       fun recurse acc =
-         case FileSys.readDir ds of
+         case OS.FileSys.readDir ds of
             NONE => acc
           | SOME f => recurse (f :: acc)
    in
-      recurse [] before FileSys.closeDir ds
+      recurse [] before OS.FileSys.closeDir ds
    end
 
 fun pointer_eq (x: 'a, y: 'a) = PolyML.pointerEq (x, y)
@@ -60,6 +60,8 @@ structure HOLSusp = Susp
 
 fun reraise e = PolyML.Exception.reraise e
 
+fun display_exn f e = reraise e
+
 fun make_counter {inc,init} =
   let
     val counter = Synchronized.var "counter" init
@@ -75,5 +77,16 @@ fun syncref init =
     {get = fn () => Synchronized.value v,
      upd = fn f => Synchronized.change_result v f}
   end
+
+fun unique_tmp_suffix () =
+  SysWord.toString (Posix.Process.pidToWord (Posix.ProcEnv.getpid ()))
+
+(* The depth must be the current hierarchy's length, so that the new state
+   becomes a child of the heap we are running on.  Asking for a shallower
+   one is not an error: Poly/ML demotes every level at or beyond it, which
+   silently breaks identity for anything living there. *)
+fun save_heap file =
+    PolyML.SaveState.saveChild
+      (file, length (PolyML.SaveState.showHierarchy ()))
 
 end

@@ -1,0 +1,904 @@
+;;; hol-lsp-tests.el --- ERT tests for hol-mode LSP -*- lexical-binding: t -*-
+
+;;; run with something like
+;;;  HOLDIR=<dir> emacs -batch -l ert -l hol-lsp-tests.el \
+;;;                     -f ert-run-tests-batch-and-exit
+
+(load (concat (file-name-as-directory (getenv "HOLDIR"))
+              "tools/editor-modes/emacs/hol-mode"))
+
+;; `jsonrpc-async-request' is what the eval tests stand in for, and
+;; `cl-letf' will not restore a function cell that was never bound.
+(require 'jsonrpc)
+(require 'cl-lib)
+
+(defun hol-lsp-tests--setup-alternate-install (root)
+  "Symlink ROOT/bin/{hol,Holmake} to the current install's binaries
+so routing tests can stage a second HOL without a real build."
+  (make-directory (concat root "/bin") t)
+  (make-symbolic-link hol-executable (concat root "/bin/hol") t)
+  (make-symbolic-link (concat (file-name-directory hol-executable)
+                              "Holmake")
+                      (concat root "/bin/Holmake") t))
+
+(defun hol-lsp-tests--drop-lastmaker (dir hol-root)
+  "Write DIR/.hol/make-deps/lastmaker naming HOL-ROOT/bin/Holmake."
+  (let ((path (concat dir "/.hol/make-deps/lastmaker")))
+    (make-directory (file-name-directory path) t)
+    (with-temp-file path
+      (insert (concat hol-root "/bin/Holmake\n")))))
+
+(defmacro hol-lsp-tests--with-alt-install (holX-var workdir-var &rest body)
+  "Bind HOLX-VAR to a fresh symlink-install root, WORKDIR-VAR to
+a workdir under it whose lastmaker points at HOLX-VAR, clear the
+LSP caches, run BODY, tear down."
+  (declare (indent 2))
+  `(let* ((,holX-var (make-temp-file "hol-lsp-holX-" t))
+          (,workdir-var (concat ,holX-var "/src/foo/")))
+     (unwind-protect
+         (progn
+           (hol-lsp-tests--setup-alternate-install ,holX-var)
+           (make-directory ,workdir-var t)
+           (hol-lsp-tests--drop-lastmaker ,workdir-var ,holX-var)
+           (clrhash hol-lsp--hol-cache)
+           (clrhash hol-lsp--heap-cache)
+           ,@body)
+       (delete-directory ,holX-var t))))
+
+(ert-deftest hol-lsp-routes-via-lastmaker ()
+  (hol-lsp-tests--with-alt-install holX workdir
+    (should (equal (hol-lsp--hol-for-dir workdir)
+                   (concat holX "/bin/hol")))))
+
+(ert-deftest hol-lsp-falls-back-without-lastmaker ()
+  (let ((workdir (make-temp-file "hol-lsp-nolm-" t)))
+    (unwind-protect
+        (progn
+          (clrhash hol-lsp--hol-cache)
+          (should (equal (hol-lsp--hol-for-dir workdir)
+                         hol-executable)))
+      (delete-directory workdir t))))
+
+(ert-deftest hol-lsp-different-installs-different-projects ()
+  (let* ((holX (make-temp-file "hol-lsp-holX-" t))
+         (holY (make-temp-file "hol-lsp-holY-" t))
+         (workX (concat holX "/src/foo/"))
+         (workY (concat holY "/src/foo/")))
+    (unwind-protect
+        (progn
+          (hol-lsp-tests--setup-alternate-install holX)
+          (hol-lsp-tests--setup-alternate-install holY)
+          (make-directory workX t)
+          (make-directory workY t)
+          (hol-lsp-tests--drop-lastmaker workX holX)
+          (hol-lsp-tests--drop-lastmaker workY holY)
+          (clrhash hol-lsp--hol-cache)
+          (clrhash hol-lsp--heap-cache)
+          (let* ((pX (with-temp-buffer
+                       (setq buffer-file-name
+                             (concat workX "fooScript.sml"))
+                       (setq major-mode (car hol-lsp-server-modes))
+                       (let ((default-directory workX))
+                         (hol-lsp--project-try workX))))
+                 (pY (with-temp-buffer
+                       (setq buffer-file-name
+                             (concat workY "fooScript.sml"))
+                       (setq major-mode (car hol-lsp-server-modes))
+                       (let ((default-directory workY))
+                         (hol-lsp--project-try workY)))))
+            (should pX)
+            (should pY)
+            (should-not (equal pX pY))))
+      (delete-directory holX t)
+      (delete-directory holY t))))
+
+(defun hol-lsp-tests--project-for (dir file)
+  "The project object `hol-lsp--project-try' yields for FILE in DIR."
+  (with-temp-buffer
+    (setq buffer-file-name (concat dir file))
+    (setq major-mode (car hol-lsp-server-modes))
+    (let ((default-directory dir))
+      (hol-lsp--project-try dir))))
+
+(ert-deftest hol-lsp-each-buffer-gets-its-own-project ()
+  "Two scripts in ONE directory must not share a project, and so must
+not share a server: a server is bound to the first file it compiles,
+because loading a theory seals it and a second file's ancestors can
+then neither be re-read nor withdrawn."
+  (let ((dir (file-name-as-directory
+              (make-temp-file "hol-lsp-perbuf-" t))))
+    (unwind-protect
+        (progn
+          (clrhash hol-lsp--hol-cache)
+          (clrhash hol-lsp--heap-cache)
+          (let ((pA (hol-lsp-tests--project-for dir "aScript.sml"))
+                (pB (hol-lsp-tests--project-for dir "bScript.sml")))
+            (should pA)
+            (should pB)
+            (should-not (equal pA pB))))
+      (delete-directory dir t))))
+
+(ert-deftest hol-lsp-same-file-shares-one-project ()
+  "Two buffers visiting the SAME file are still one file, so they
+share a server."
+  (let ((dir (file-name-as-directory
+              (make-temp-file "hol-lsp-perbuf-" t))))
+    (unwind-protect
+        (progn
+          (clrhash hol-lsp--hol-cache)
+          (clrhash hol-lsp--heap-cache)
+          (should (equal (hol-lsp-tests--project-for dir "aScript.sml")
+                         (hol-lsp-tests--project-for dir "aScript.sml"))))
+      (delete-directory dir t))))
+
+(ert-deftest hol-lsp-project-root-is-the-files-own-directory ()
+  "eglot spawns the server with cwd = project root, and
+`get_heap_name' reads the Holmakefile there, so the root must be the
+file's own directory -- not a VC root, and not the file itself."
+  (require 'project)
+  (let ((dir (file-name-as-directory
+              (make-temp-file "hol-lsp-perbuf-" t))))
+    (unwind-protect
+        (progn
+          (clrhash hol-lsp--hol-cache)
+          (clrhash hol-lsp--heap-cache)
+          (let ((p (hol-lsp-tests--project-for dir "aScript.sml")))
+            (should (equal (project-root p) dir))
+            (should (equal (project-name p) "aScript.sml"))))
+      (delete-directory dir t))))
+
+(ert-deftest hol-lsp-server-program-uses-resolved-hol ()
+  (hol-lsp-tests--with-alt-install holX workdir
+    (let ((default-directory workdir))
+      (should (equal (hol-lsp--server-program)
+                     (list (concat holX "/bin/hol") "lsp"))))))
+
+;;; --- *HOL Goals* presentation ------------------------------------
+
+(ert-deftest hol-lsp-context-line-is-nil-when-empty ()
+  (should (equal (hol-lsp--context-line nil) nil))
+  (should (equal (hol-lsp--context-line []) nil)))
+
+(ert-deftest hol-lsp-context-line-brackets-each-tag ()
+  ;; eglot hands JSON arrays over as vectors, so both must work.
+  (should (equal (hol-lsp--context-line ["inside >-"]) "[inside >-]"))
+  (should (equal (hol-lsp--context-line '("branch 2 of 3 of THENL"
+                                          "inside 2 nested >-"))
+                 "[branch 2 of 3 of THENL] [inside 2 nested >-]")))
+
+(ert-deftest hol-lsp-goals-header-carries-the-identifying-bits ()
+  (let ((h (hol-lsp--goals-header
+            '(:theorem "foo" :step 7 :context ["inside >-"] :error nil))))
+    (should (string-match-p "foo" h))
+    (should (string-match-p "step 7" h))
+    (should (string-match-p (regexp-quote "[inside >-]") h))))
+
+(ert-deftest hol-lsp-goals-header-includes-the-error ()
+  (should (string-match-p
+           "⚠ boom"
+           (hol-lsp--goals-header
+            '(:theorem "foo" :step 0 :context nil :error "boom")))))
+
+(ert-deftest hol-lsp-goals-header-escapes-percent ()
+  ;; A header-line string is read for mode-line constructs, so a `%'
+  ;; coming from a theorem name or an error must not be one.
+  (should (equal (hol-lsp--goals-header
+                  '(:theorem "a%b" :step 0 :context nil :error nil))
+                 "a%%b — step 0")))
+
+(ert-deftest hol-lsp-pending-is-not-a-goal-state ()
+  ;; The server answers `{"status":"pending"}' -- with no theorem and
+  ;; no step in it -- while the compile has not reached the proof.
+  ;; Handing that to the header formatter formats nil with %d and
+  ;; errors, which is what a caller has to keep it away from.
+  (should (hol-lsp--refused-p '(:status "pending")))
+  (should-not (hol-lsp--refused-p '(:theorem "foo" :step 7)))
+  (should-not (hol-lsp--refused-p nil)))
+
+(ert-deftest hol-lsp-a-provisional-answer-is-a-state ()
+  ;; `pending' also arrives WITH a state: the walker compiles tactics
+  ;; against the file's namespace, so until its `open's have run the
+  ;; names are not there and the walk stops early.  That reply is a
+  ;; goal state -- refusing it shows nothing where there was something
+  ;; to show -- and the header says it is not settled.  One fixture,
+  ;; two statuses: the status is the whole of the difference.
+  (let* ((base '(:theorem "foo" :step 7 :goals [] :context nil :error nil))
+         (prov (append '(:status "pending") base))
+         (hdr (hol-lsp--goals-header prov)))
+    (should (hol-lsp--pending-p prov))
+    (should-not (hol-lsp--refused-p prov))
+    (should (string-match-p "still compiling" hdr))
+    ;; and it does not also claim the focus is proved: no goals here
+    ;; means the walk got no further, not that anything was solved.
+    (should-not (string-match-p "solved" hdr))
+    (should-not (string-match-p
+                 "still compiling"
+                 (hol-lsp--goals-header (append '(:status "ok") base))))))
+
+(ert-deftest hol-lsp-strip-context-removes-the-repeated-line ()
+  ;; `pretty' repeats the tags at its top; the buffer shows only the
+  ;; goals, the tags having moved to the header line.
+  (should (equal (hol-lsp--strip-context
+                  "[inside >-]\n\n\n 0.  asm\n----\n     goal\n"
+                  ["inside >-"])
+                 " 0.  asm\n----\n     goal\n")))
+
+(ert-deftest hol-lsp-strip-context-leaves-the-goal-text-alone ()
+  ;; Leading blank lines go; the goal itself does not.
+  (should (equal (hol-lsp--strip-context "\n[] = []\n" nil) "[] = []\n"))
+  ;; A goal starting with `[' is not a tag line: matching the exact
+  ;; string the server sent is what tells them apart.
+  (should (equal (hol-lsp--strip-context "[] = []\n" ["inside >-"])
+                 "[] = []\n")))
+
+(ert-deftest hol-lsp-goals-header-flags-a-solved-focus ()
+  ;; `pretty' announces this on its first line, which scrolling to the
+  ;; end carries out of sight — so the header has to carry it.
+  (should (string-match-p
+           "✓ solved"
+           (hol-lsp--goals-header
+            '(:theorem "foo" :step 3 :context ["inside >-"]
+              :goals [] :error nil))))
+  (should (hol-lsp--solved-p '(:goals [] :error nil)))
+  (should (hol-lsp--solved-p '(:goals nil :error nil)))
+  ;; A reply with no `goals' field at all is not a solved focus.
+  (should-not (hol-lsp--solved-p '(:error nil))))
+
+(ert-deftest hol-lsp-goals-header-does-not-flag-a-timeout ()
+  ;; A timeout has no goals either, but it is not a proved subgoal.
+  (let ((r '(:theorem "foo" :step 3 :context nil
+             :goals [] :error "walker timed out")))
+    (should-not (hol-lsp--solved-p r))
+    (should-not (string-match-p "✓ solved" (hol-lsp--goals-header r)))
+    (should (string-match-p "⚠ walker timed out"
+                            (hol-lsp--goals-header r)))))
+
+(ert-deftest hol-lsp-goals-header-does-not-flag-an-ordinary-state ()
+  (let ((r '(:theorem "foo" :step 3 :context nil
+             :goals [(:asms [] :goal "a = a")] :error nil)))
+    (should-not (hol-lsp--solved-p r))
+    (should-not (string-match-p "✓ solved" (hol-lsp--goals-header r)))))
+
+(ert-deftest hol-lsp-goals-go-below-a-narrow-window ()
+  (with-temp-buffer
+    (let ((hol-lsp-goals-side-min-width 160))
+      ;; batch frames are 80 columns, well under the threshold
+      (should (memq 'display-buffer-below-selected
+                    (car (hol-lsp--goals-display-action)))))))
+
+(ert-deftest hol-lsp-goals-go-beside-a-wide-window ()
+  (with-temp-buffer
+    (let ((hol-lsp-goals-side-min-width 10))   ; force the wide branch
+      (let ((action (hol-lsp--goals-display-action)))
+        (should (memq 'display-buffer-in-direction (car action)))
+        (should (eq 'right (cdr (assq 'direction action))))))))
+
+(ert-deftest hol-lsp-goals-side-split-can-be-switched-off ()
+  (with-temp-buffer
+    (let ((hol-lsp-goals-side-min-width nil))
+      (should (memq 'display-buffer-below-selected
+                    (car (hol-lsp--goals-display-action)))))))
+
+(ert-deftest hol-lsp-search-render-carries-each-theorem-to-its-source ()
+  "A search result is only half useful if you cannot get to the proof.
+Every line of a theorem's entry carries its location, so RET anywhere in
+it goes to the script -- not just on the name."
+  (let* ((hits (list (list :name "ADD_COMM" :theory "arithmetic"
+                           :class "Thm"
+                           :statement "\u22a2 !m n. m + n = n + m"
+                           :uri "file:///tmp/arithmeticScript.sml"
+                           :line 310)
+                     (list :name "NOWHERE" :theory "local" :class "Def"
+                           :statement "\u22a2 T" :line 0)))
+         (buf (hol-lsp--search-render hits '("\"COMM\"" "'arithmetic'"))))
+    (unwind-protect
+        (with-current-buffer buf
+          (goto-char (point-min))
+          (should (looking-at "2 theorems for \"COMM\" 'arithmetic'"))
+          ;; the statement is shown, not just the name
+          (should (search-forward "m + n = n + m" nil t))
+          ;; and that line knows where the theorem lives
+          (should (equal (get-text-property (point) 'hol-lsp-uri)
+                         "file:///tmp/arithmeticScript.sml"))
+          (should (equal (get-text-property (point) 'hol-lsp-line) 310))
+          ;; a theorem with no recorded location carries none, rather
+          ;; than carrying its predecessor's
+          (goto-char (point-min))
+          (should (search-forward "NOWHERE" nil t))
+          (should (null (get-text-property (point) 'hol-lsp-uri))))
+      (kill-buffer buf))))
+
+(ert-deftest hol-lsp-uri-round-trips-to-a-path ()
+  (let ((path (make-temp-file "hol-lsp-uri-")))
+    (unwind-protect
+        (should (equal (hol-lsp--uri-to-path (hol-lsp--path-to-uri path))
+                       path))
+      (delete-file path))))
+
+(ert-deftest hol-lsp-blocked-marks-the-buffer-visiting-the-uri ()
+  "`$/compileBlocked\' names a file; the flag belongs to its buffer."
+  (let* ((path (make-temp-file "hol-lsp-blocked-" nil "Script.sml"))
+         (buf (find-file-noselect path)))
+    (unwind-protect
+        (progn
+          (hol-lsp--set-blocked (hol-lsp--path-to-uri path)
+                                "cannot load fooTheory")
+          (should (equal (buffer-local-value 'hol-lsp--blocked buf)
+                         "cannot load fooTheory"))
+          (hol-lsp--set-blocked (hol-lsp--path-to-uri path) nil)
+          (should-not (buffer-local-value 'hol-lsp--blocked buf)))
+      (kill-buffer buf)
+      (delete-file path))))
+
+(ert-deftest hol-lsp-blocked-for-an-unvisited-file-is-quiet ()
+  (should-not (hol-lsp--set-blocked "file:///no/such/file/Script.sml" "x")))
+
+(ert-deftest hol-lsp-goalstate-params-carry-a-width ()
+  "The server renders at the width we ask for, so the request has to
+carry one."
+  (with-temp-buffer
+    (setq buffer-file-name "/tmp/widthScript.sml")
+    (let ((params (hol-lsp--goalstate-params)))
+      (should (integerp (plist-get params :width)))
+      (should (>= (plist-get params :width) 20)))))
+
+(ert-deftest hol-lsp-goals-width-never-goes-below-the-floor ()
+  "A sliver of a window would otherwise ask for a width HOL cannot
+break at."
+  (should (>= (hol-lsp--goals-width) 20)))
+
+(ert-deftest hol-lsp-proof-summary-is-quiet-when-there-is-nothing ()
+  "A session with checking off must not put anything in the mode line."
+  (with-temp-buffer
+    (should (equal (hol-lsp-proof-summary) ""))))
+
+(defun hol-lsp-tests--put (name status line)
+  "Record NAME at LINE with STATUS, the way a notification would.
+Goes through the production merge, so the keying is under test rather
+than restated here."
+  (hol-lsp--merge-proof-states
+   hol-lsp--proof-states
+   (list (list :name name :status status :pos (list :line line)))))
+
+(ert-deftest hol-lsp-proof-summary-counts-the-pool ()
+  "The counter is the ordering-independent signal: proofs settle in
+whatever order the workers finish, so what answers \"is it done?\" is
+the tally, not the per-proof marks."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "a" "proved" 3)
+    (hol-lsp-tests--put "b" "checking" 9)
+    (should (equal (hol-lsp-proof-summary) "\u22a21/2 "))
+    (hol-lsp-tests--put "b" "proved" 9)
+    (should (equal (hol-lsp-proof-summary) ""))
+    (hol-lsp-tests--put "c" "failed" 15)
+    (should (equal (hol-lsp-proof-summary) "\u22a22/3!1 "))))
+
+(ert-deftest hol-lsp-a-suspension-is-settled-not-outstanding ()
+  "A proof split up with `suspend' and finished off in `Resume'
+blocks is complete, and the tally has to read it that way.
+
+The buckets used to be decided by exclusion -- anything that was not
+proved, checking or cheated was a bad verdict -- so a finished file
+reported a proof to go and look at that nobody needed to look at.
+The parent's own tactic ran and did what it said; what it stashed is
+proved by the Resume blocks, which are entries in their own right.
+
+The `failed' proof is the control: the mark has to stay at one
+rather than vanish, or this would pass just as well with the bad
+count broken outright."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "split" "suspended" 3)
+    (hol-lsp-tests--put "split[p]" "proved" 9)
+    (hol-lsp-tests--put "split[q]" "proved" 14)
+    (should (equal (hol-lsp-proof-summary) ""))
+    (should (equal (hol-lsp--outstanding-proofs) nil))
+    (hol-lsp-tests--put "other" "failed" 20)
+    (should (equal (hol-lsp-proof-summary) "\u22a23/4!1 "))
+    (should (equal (mapcar #'car (hol-lsp--outstanding-proofs))
+                   '("other")))))
+
+(ert-deftest hol-lsp-a-timeout-is-outstanding-and-marked ()
+  "The pool gives up on a replay that outstays its budget and reports
+`timedout'.  Nothing is known to be wrong with the proof -- only that
+nobody waited to find out -- but it is not settled either, and the
+next pass re-uses its entry rather than forking a second attempt, so
+nothing is on its way to settle it.  Counting it with `cheated' would
+leave the tally short with no sign of why.
+
+So it goes in the same bucket as a bad verdict, and earns the mark.
+The `proved' entries are the control: the tally has to keep counting
+them, or this would pass with the arithmetic broken outright."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "quick" "proved" 3)
+    (hol-lsp-tests--put "alsoquick" "proved" 9)
+    (should (equal (hol-lsp-proof-summary) ""))
+    (hol-lsp-tests--put "slow" "timedout" 14)
+    (should (equal (hol-lsp-proof-summary) "\u22a22/3!1 "))
+    (should (equal (mapcar #'car (hol-lsp--outstanding-proofs))
+                   '("slow")))
+    ;; Said in words rather than echoed as a status, since `timedout'
+    ;; on its own reads as a verdict on the proof.
+    (should (equal (nth 1 (car (hol-lsp--outstanding-proofs)))
+                   "not checked (timed out)"))))
+
+(ert-deftest hol-lsp-a-proof-that-moves-keeps-one-entry ()
+  "An edit above a proof moves it, so the pool announces the same
+proof at one line and then another.  Keyed by position that counted it
+twice: adding a line at the top of a 61-theorem file gave 122 entries,
+and the tally climbed with every edit.  The later line wins, so
+`hol-lsp-goto-outstanding-proof' goes to where the proof now is."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "a" "proved" 3)
+    (hol-lsp-tests--put "b" "proved" 9)
+    (should (equal (hol-lsp-proof-summary) ""))
+    ;; A line inserted at the top: both are dropped and re-announced
+    ;; one line down.
+    (hol-lsp-tests--put "a" "cheated" 4)
+    (hol-lsp-tests--put "b" "cheated" 10)
+    (should (equal (hol-lsp-proof-summary) "\u22a20/2 "))
+    (hol-lsp-tests--put "a" "proved" 4)
+    (hol-lsp-tests--put "b" "checking" 10)
+    (should (equal (hol-lsp-proof-summary) "\u22a21/2 "))
+    (should (equal (hol-lsp--outstanding-proofs)
+                   '(("b" "checking" 10))))))
+
+(ert-deftest hol-lsp-an-unnamed-proof-is-not-tracked ()
+  "The definition principle justifies itself with tactic proofs that
+appear nowhere in the script.  Those arrive with no name, and counting
+them reported 65 proofs for a file with 61 theorems."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "real" "proved" 3)
+    (hol-lsp-tests--put "" "proved" 20)
+    (should (equal (hol-lsp-proof-summary) ""))))
+
+(ert-deftest hol-lsp-unchecked-proofs-are-reported-not-hidden ()
+  "A `cheated' proof is one the pool is not working on.  Counting it
+as checked -- or dropping it -- said 61 proofs checked while one of
+them was not being checked at all."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "ok" "proved" 3)
+    (hol-lsp-tests--put "edited" "cheated" 20)
+    (should (equal (hol-lsp-proof-summary) "\u22a21/2 "))
+    (should (string-match-p "edited (not checked)"
+                            (hol-lsp--proof-help-echo)))))
+
+(ert-deftest hol-lsp-outstanding-proofs-are-named-and-ordered ()
+  "A count is only actionable if the user can reach the proof it is
+short of, so the outstanding ones are listed in file order, with the
+settled ones left out."
+  (with-temp-buffer
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "late" "checking" 40)
+    (hol-lsp-tests--put "done" "proved" 10)
+    (hol-lsp-tests--put "early" "failed" 5)
+    (let ((out (hol-lsp--outstanding-proofs)))
+      (should (equal (mapcar #'car out) '("early" "late")))
+      (should (equal (nth 1 (car out)) "failed")))
+    (should (string-match-p "early (failed)" (hol-lsp--proof-help-echo)))))
+
+(ert-deftest hol-lsp-goto-outstanding-proof-walks-them ()
+  "Repeating the command cycles through the outstanding proofs rather
+than sticking on the first."
+  (with-temp-buffer
+    (insert (mapconcat (lambda (i) (format "line %d" i))
+                       (number-sequence 0 20) "\n"))
+    (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+    (hol-lsp-tests--put "a" "checking" 4)
+    (hol-lsp-tests--put "b" "failed" 12)
+    (goto-char (point-min))
+    (hol-lsp-goto-outstanding-proof)
+    (should (equal (line-number-at-pos) 5))
+    (hol-lsp-goto-outstanding-proof)
+    (should (equal (line-number-at-pos) 13))
+    (hol-lsp-goto-outstanding-proof)
+    (should (equal (line-number-at-pos) 5))))
+
+(ert-deftest hol-lsp-only-proofs-past-the-end-are-pruned ()
+  "A proof the pass did not re-enqueue and a proof whose theorem was
+deleted look identical from here, and dropping both silently counted
+an unchecked proof as checked.  Only what has left the buffer goes."
+  (let ((file (make-temp-file "holproofs" nil "Script.sml")))
+    (unwind-protect
+        (let ((buf (find-file-noselect file)))
+          (with-current-buffer buf
+            (insert "one\ntwo\nthree\n")
+            (save-buffer)
+            (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+            (hol-lsp-tests--put "here" "cheated" 1)
+            (hol-lsp-tests--put "deleted" "cheated" 900)
+            (should (equal (hol-lsp-proof-summary) "\u22a20/2 "))
+            (hol-lsp--prune-stale-proofs (hol-lsp--path-to-uri file))
+            ;; the one still in the buffer stays, and stays visible
+            (should (equal (hol-lsp-proof-summary) "\u22a20/1 ")))
+          (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest hol-lsp-a-census-forgets-a-deleted-proof ()
+  "The server names the proofs the buffer still declares, and that is
+the only way to tell a deleted theorem from one the pass has not got
+round to.  The named ones stay -- `cheated' included, since those are
+the unchecked proofs the tally exists to report -- and anything the
+census does not mention has had its declaration deleted or renamed."
+  (let ((file (make-temp-file "holcensus" nil "Script.sml")))
+    (unwind-protect
+        (let ((buf (find-file-noselect file)))
+          (with-current-buffer buf
+            (insert "one\ntwo\nthree\n")
+            (save-buffer)
+            (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+            (hol-lsp-tests--put "waiting" "cheated" 0)
+            (hol-lsp-tests--put "deleted" "failed" 1)
+            (should (equal (hol-lsp-proof-summary) "\u22a20/2!1 "))
+            ;; a vector, which is how eglot hands a JSON array over
+            (hol-lsp--prune-stale-proofs (hol-lsp--path-to-uri file)
+                                         ["waiting"])
+            (should (equal (hol-lsp-proof-summary) "\u22a20/1 ")))
+          (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest hol-lsp-the-notification-carries-the-census ()
+  "The census only works if the handler reads the field the server
+writes, and a disagreement there is silent: nothing would ever be
+pruned and the tally would look exactly as it did before.  So this
+goes through `eglot-handle-notification' rather than calling the prune
+directly, which is what the other census tests do."
+  (skip-unless (require 'eglot nil t))
+  (let ((file (make-temp-file "holnotif" nil "Script.sml")))
+    (unwind-protect
+        (let ((buf (find-file-noselect file)))
+          (with-current-buffer buf
+            (insert "one\ntwo\nthree\n")
+            (save-buffer)
+            (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+            (hol-lsp-tests--put "still_here" "cheated" 1)
+            (hol-lsp-tests--put "deleted" "failed" 1)
+            (eglot-handle-notification
+             nil '$/compileCompleted
+             :uri (hol-lsp--path-to-uri file)
+             :declared ["still_here"])
+            (should (equal (hol-lsp-proof-summary) "\u22a20/1 ")))
+          (kill-buffer buf))
+      (delete-file file))))
+
+(ert-deftest hol-lsp-no-census-is-not-an-empty-one ()
+  "A server that is not checking proofs sends no census at all, and
+that must not be read as a buffer with no proofs in it -- which would
+empty the tally on the first compile of every unchecked session."
+  (let ((file (make-temp-file "holnocensus" nil "Script.sml")))
+    (unwind-protect
+        (let ((buf (find-file-noselect file)))
+          (with-current-buffer buf
+            (insert "one\ntwo\nthree\n")
+            (save-buffer)
+            (setq hol-lsp--proof-states (make-hash-table :test #'equal))
+            (hol-lsp-tests--put "kept" "cheated" 1)
+            (hol-lsp--prune-stale-proofs (hol-lsp--path-to-uri file) nil)
+            (should (equal (hol-lsp-proof-summary) "\u22a20/1 "))
+            ;; and an empty census is the other thing: it says so.
+            (hol-lsp--prune-stale-proofs (hol-lsp--path-to-uri file) [])
+            (should (equal (hol-lsp-proof-summary) "")))
+          (kill-buffer buf))
+      (delete-file file))))
+
+;;; ---------------------------------------------------------------
+;;; Goals-pane annotations
+;;;
+;;; The pane shows text that is in no file, so hover has nothing to
+;;; hover over.  The server sends `segments' beside `pretty', and these
+;;; check the two things that make them usable: what each says, and
+;;; that they land on the right characters.
+;;; ---------------------------------------------------------------
+
+(ert-deftest hol-lsp-segment-doc ()
+  "A constant is named by theory and typed; a variable just typed."
+  (should (equal (hol-lsp--segment-doc
+                  '(:text "MAP" :kind "const" :name "listTheory$MAP"
+                    :ty "('a -> 'b) -> 'a list -> 'b list"))
+                 "listTheory$MAP : ('a -> 'b) -> 'a list -> 'b list"))
+  (should (equal (hol-lsp--segment-doc
+                  '(:text "l" :kind "fv" :ty "l :'a list"))
+                 "l :'a list"))
+  (should (equal (hol-lsp--segment-doc
+                  '(:text "h" :kind "bv" :ty "h :'a"))
+                 "bound h :'a"))
+  ;; plain text says nothing, and must not be annotated
+  (should-not (hol-lsp--segment-doc '(:text " = "))))
+
+(ert-deftest hol-lsp-apply-segments-positions ()
+  "Annotations land on their own characters and nowhere else."
+  (with-temp-buffer
+    ;; The segments spell "f x = y"; the buffer holds it from point 1.
+    (insert "f x = y")
+    (hol-lsp--apply-segments
+     1 '((:text "f" :kind "const" :name "my$f" :ty "num -> num")
+         (:text " ")
+         (:text "x" :kind "fv" :ty "x :num")
+         (:text " = y"))
+     0)
+    (should (equal (get-text-property 1 'hol-lsp-doc) "my$f : num -> num"))
+    (should-not (get-text-property 2 'hol-lsp-doc))     ; the space
+    (should (equal (get-text-property 3 'hol-lsp-doc) "x :num"))
+    (should-not (get-text-property 4 'hol-lsp-doc))
+    ;; the mouse gets the same string
+    (should (equal (get-text-property 3 'help-echo) "x :num"))))
+
+(ert-deftest hol-lsp-apply-segments-skips-stripped-prefix ()
+  "SKIP accounts for the context line the buffer does not show.
+The tags are rendered into the header instead, so the segment stream
+is longer than the buffer by exactly that prefix -- getting this wrong
+would shift every annotation."
+  (with-temp-buffer
+    (insert "x = y")                    ; buffer lacks the "[tag]\n" prefix
+    (hol-lsp--apply-segments
+     1 '((:text "[tag]\n")              ; 6 chars, stripped
+         (:text "x" :kind "fv" :ty "x :num")
+         (:text " = y"))
+     6)
+    (should (equal (get-text-property 1 'hol-lsp-doc) "x :num"))))
+
+(ert-deftest hol-lsp-goals-header-shows-the-note ()
+  "The header line says what stepping out will show.
+`pretty' used to announce it on its first line, where scrolling to the
+end carried it out of sight; the server now sends it as `note'."
+  (let ((h (hol-lsp--goals-header
+            '(:theorem "doubleL_thm" :step 24 :context ["inside >-"]
+              :note "Focused subgoal(s) solved; remaining after close:"))))
+    (should (string-match-p "doubleL_thm" h))
+    (should (string-match-p (regexp-quote "[inside >-]") h))
+    (should (string-match-p "Focused subgoal(s) solved; remaining after close"
+                            h))
+    ;; The colon introduced the goals, which are not in the header.
+    (should-not (string-match-p ":\\'" h))))
+
+(ert-deftest hol-lsp-goals-header-falls-back-without-a-note ()
+  "A server too old to send `note' still gets the fact, inferred.
+No goals and no error is exactly a solved focus."
+  (let ((h (hol-lsp--goals-header
+            '(:theorem "t" :step 1 :goals [] :pretty "x"))))
+    (should (string-match-p "solved" h))))
+
+(ert-deftest hol-lsp-goals-eldoc-reports-once ()
+  "Eldoc is told about the symbol exactly once.
+`eldoc-documentation-functions' takes either the return value or the
+callback, not both; a function that used both had the echo area show
+the symbol twice over while the tooltip, on a separate path, showed it
+once.  Driving eldoc rather than calling the function directly is what
+makes that visible."
+  (require 'eldoc)
+  (with-temp-buffer
+    (insert "MAP")
+    (hol-lsp--apply-segments
+     1 '((:text "MAP" :kind "const" :name "listTheory$MAP" :ty "'a")) 0)
+    (goto-char 2)
+    (setq-local eldoc-documentation-functions (list #'hol-lsp--goals-eldoc))
+    (setq-local eldoc-documentation-strategy #'eldoc-documentation-default)
+    (let (collected)
+      (setq-local eldoc-display-functions
+                  (list (lambda (docs &rest _) (setq collected docs))))
+      (eldoc-print-current-symbol-info)
+      (should (equal (mapcar #'car collected)
+                     '("listTheory$MAP : 'a"))))))
+
+(ert-deftest hol-lsp-goals-eldoc-silent-off-a-symbol ()
+  "Nowhere in particular gets no documentation, not an empty one."
+  (with-temp-buffer
+    (insert "  ")
+    (goto-char 1)
+    (should-not (hol-lsp--goals-eldoc #'ignore))))
+
+(ert-deftest hol-lsp-apply-segments-tolerates-disagreement ()
+  "Segments running past the buffer annotate nothing rather than
+the wrong text."
+  (with-temp-buffer
+    (insert "ab")
+    (hol-lsp--apply-segments
+     1 '((:text "abcdef" :kind "const" :name "my$c" :ty "num")) 0)
+    (should-not (get-text-property 1 'hol-lsp-doc))))
+
+;;; ---------------------------------------------------------------
+;;; Search results: their locations, and getting to them
+;;; ---------------------------------------------------------------
+
+(ert-deftest hol-lsp-holmake-keeps-its-key ()
+  "`holmake' keeps `M-h M-m' outright rather than sharing it.
+A served buffer wants Holmake more, not less: a server is pinned to
+the artifacts it first loaded, so rebuilding a stale ancestor and
+then `M-h M-C' is the documented way out.
+
+The three keys asserted gone are what the old avoidance bought --
+each of those commands now answers to the key its *HOL*-process
+counterpart already had."
+  (should (eq (lookup-key hol-map "\M-m") 'holmake))
+  (should (eq (lookup-key hol-map "\M-C") 'hol-lsp-retry-compile))
+  (should-not (lookup-key hol-map "\M-M"))
+  (should-not (lookup-key hol-map "\M-E"))
+  (should-not (lookup-key hol-map "\M-g")))
+
+(ert-deftest hol-lsp-search-location-is-legible ()
+  "A location says which script and which line, not the whole path."
+  (should (equal (hol-lsp--search-location
+                  "file:///hol/src/finite_map/finite_mapScript.sml" 1234)
+                 "finite_mapScript.sml:1234"))
+  ;; A theorem whose location HOL does not record shows nothing rather
+  ;; than a bare colon.
+  (should-not (hol-lsp--search-location nil 12))
+  (should (equal (hol-lsp--search-location "file:///a/bScript.sml" nil)
+                 "bScript.sml")))
+
+(ert-deftest hol-lsp-search-render-shows-and-carries-locations ()
+  "Each entry shows where it was proved, and RET there gets to it.
+The location used to travel as an invisible text property, so the
+results looked as though HOL had not recorded one."
+  (let ((buf (hol-lsp--search-render
+              (list '(:name "DOMSUB_NOT_IN_DOM" :theory "finite_map"
+                      :class "Thm" :statement "|- k NOTIN FDOM fm ==> fm \\\\ k = fm"
+                      :uri "file:///hol/src/finite_map/finite_mapScript.sml"
+                      :line 1234)
+                    ;; and one HOL has no location for
+                    '(:name "mystery" :theory "scratch" :class "Thm"
+                      :statement "|- T"))
+              '("k NOTIN FDOM fm"))))
+    (unwind-protect
+        (with-current-buffer buf
+          (should (string-match-p "finite_mapScript\\.sml:1234" (buffer-string)))
+          ;; the located one is reachable from anywhere in its entry
+          (goto-char (point-min))
+          (search-forward "DOMSUB_NOT_IN_DOM")
+          (should (equal (get-text-property (point) 'hol-lsp-uri)
+                         "file:///hol/src/finite_map/finite_mapScript.sml"))
+          (should (equal (get-text-property (point) 'hol-lsp-line) 1234))
+          ;; and the location itself invites a click
+          (goto-char (point-min))
+          (search-forward "finite_mapScript.sml:1234")
+          (should (get-text-property (1- (point)) 'mouse-face))
+          ;; the unlocated one claims nothing
+          (goto-char (point-min))
+          (search-forward "mystery")
+          (should-not (get-text-property (point) 'hol-lsp-uri)))
+      (kill-buffer buf))))
+
+(ert-deftest hol-lsp-search-mouse-is-bound ()
+  "mouse-2 visits a result, and follow-link makes it behave as a link."
+  (should (eq (lookup-key hol-lsp-search-mode-map [mouse-2])
+              'hol-lsp-search-mouse-goto))
+  (should (eq (lookup-key hol-lsp-search-mode-map (kbd "RET"))
+              'hol-lsp-search-goto)))
+
+
+;;; ---------------------------------------------------------------
+;;; One key, both modes
+;;; ---------------------------------------------------------------
+
+(ert-deftest hol-lsp-shared-keys-are-dispatchers ()
+  "Each shared key resolves to its dispatcher, not to either target."
+  (dolist (pair '(("\M-r" . hol-eval-region)
+                  ("s"    . hol-eval-string)
+                  ("m"    . hol-match-theorems)
+                  ("M"    . hol-select-theorems)
+                  ("p"    . hol-show-goals)
+                  ("g"    . hol-goal-at-point)
+                  ("i"    . hol-term-info)))
+    (should (eq (lookup-key hol-map (car pair)) (cdr pair)))))
+
+(ert-deftest hol-lsp-dispatch-picks-the-served-command ()
+  "Where a server answers, a shared key runs the LSP half."
+  (let ((ran nil))
+    (cl-letf (((symbol-function 'hol-lsp-active-p) (lambda () t))
+              ((symbol-function 'hol-lsp-search)
+               (lambda () (interactive) (setq ran 'lsp)))
+              ((symbol-function 'hol-db-match)
+               (lambda (&optional _tm) (interactive) (setq ran 'repl))))
+      (call-interactively 'hol-match-theorems))
+    (should (eq ran 'lsp))))
+
+(ert-deftest hol-lsp-dispatch-picks-the-repl-command ()
+  "Where none does, the same key runs the *HOL*-process half."
+  (let ((ran nil))
+    (cl-letf (((symbol-function 'hol-lsp-active-p) (lambda () nil))
+              ((symbol-function 'hol-lsp-search)
+               (lambda () (interactive) (setq ran 'lsp)))
+              ((symbol-function 'hol-db-match)
+               (lambda (&optional _tm) (interactive) (setq ran 'repl))))
+      (call-interactively 'hol-match-theorems))
+    (should (eq ran 'repl))))
+
+(ert-deftest hol-lsp-dispatch-forwards-the-prefix-argument ()
+  "A prefix argument reaches the command the dispatcher picked.
+`copy-region-as-hol-definition' reads `C-u C-u' as \"quietly\", so a
+dispatcher that used `funcall' rather than `call-interactively' would
+drop that without saying so."
+  (let ((seen 'none))
+    (cl-letf (((symbol-function 'hol-lsp-active-p) (lambda () nil))
+              ((symbol-function 'copy-region-as-hol-definition)
+               (lambda (arg) (interactive "P") (setq seen arg))))
+      (let ((prefix-arg '(16)))
+        (command-execute 'hol-eval-region)))
+    (should (equal seen '(16)))))
+
+(ert-deftest hol-lsp-not-active-in-another-languages-buffer ()
+  "A server alone must not decide which half of a shared key runs.
+`hol-map' is global, so without the major-mode test `M-h m' would
+become a HOL theorem search in any buffer that happened to have an
+eglot server of its own."
+  (cl-letf (((symbol-function 'hol-lsp--server) (lambda () 'a-server)))
+    (with-temp-buffer
+      (text-mode)
+      (should-not (hol-lsp-active-p)))
+    (with-temp-buffer
+      (holscript-mode)
+      (should (hol-lsp-active-p)))))
+
+(ert-deftest hol-lsp-not-active-without-eglot ()
+  "With eglot never loaded the predicate answers nil, not an error."
+  (with-temp-buffer
+    (holscript-mode)
+    (should-not (hol-lsp-active-p))))
+
+;;; ---------------------------------------------------------------
+;;; $/eval: what the two forms send
+;;; ---------------------------------------------------------------
+
+(defmacro hol-lsp-tests--capturing-eval (params-var &rest body)
+  "Run BODY with the `$/eval' request captured into PARAMS-VAR.
+A `*Script.sml' buffer is current, so `buffer-file-name' and point
+are the ones the request is built from."
+  (declare (indent 1))
+  `(let ((,params-var nil)
+         (hol-lsp-eval-display nil))
+     (cl-letf (((symbol-function 'hol-lsp--server) (lambda () 'srv))
+               ((symbol-function 'jsonrpc-async-request)
+                (lambda (_server _method p &rest _) (setq ,params-var p))))
+       (with-temp-buffer
+         (setq buffer-file-name "/hol/src/fooScript.sml")
+         ,@body))
+     ,params-var))
+
+(ert-deftest hol-lsp-eval-string-sends-the-cursor ()
+  "The typed-in form evaluates where point is.
+Leaving `position' out would make the server use the end of the last
+compiled declaration instead, which for a script is a different and
+quietly wrong context."
+  (let ((params (hol-lsp-tests--capturing-eval params
+                  (insert "line one\nline two\nline three\n")
+                  (goto-char (point-min))
+                  (forward-line 1)
+                  (forward-char 3)
+                  (hol-lsp-eval-string "val x = 1;"))))
+    (should (equal (plist-get params :code) "val x = 1;"))
+    (should (equal (plist-get params :incr) 2))
+    (should (equal (plist-get params :holdep) 1))
+    (should (string-suffix-p "fooScript.sml" (plist-get params :uri)))
+    (should (equal (plist-get (plist-get params :position) :line) 1))
+    (should (equal (plist-get (plist-get params :position) :character) 3))))
+
+(ert-deftest hol-lsp-eval-region-sends-the-region-start ()
+  "The region form evaluates at the region's start, not at point.
+Both forms go through `hol-lsp--eval-send' and differ only in the
+position they hand it, so this is what that sharing could break."
+  (let ((params (hol-lsp-tests--capturing-eval params
+                  (insert "aaa\nbbb\nccc\n")
+                  (goto-char (point-max))
+                  (hol-lsp-eval-region 5 8))))
+    (should (equal (plist-get params :code) "bbb"))
+    (should (equal (plist-get (plist-get params :position) :line) 1))
+    (should (equal (plist-get (plist-get params :position) :character) 0))))
+
+(ert-deftest hol-lsp-eval-string-refuses-an-empty-expression ()
+  "Whitespace is not something to send."
+  (cl-letf (((symbol-function 'hol-lsp--server) (lambda () 'srv)))
+    (with-temp-buffer
+      (setq buffer-file-name "/hol/src/fooScript.sml")
+      (should-error (hol-lsp-eval-string "   ") :type 'user-error))))
+
+(ert-deftest hol-lsp-eval-string-needs-a-server ()
+  "Without a server the typed-in form says so rather than failing late."
+  (cl-letf (((symbol-function 'hol-lsp--server) (lambda () nil)))
+    (with-temp-buffer
+      (setq buffer-file-name "/hol/src/fooScript.sml")
+      (should-error (hol-lsp-eval-string "val x = 1;") :type 'user-error))))

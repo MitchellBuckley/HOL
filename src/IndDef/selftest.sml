@@ -2,17 +2,15 @@ open HolKernel Parse boolLib IndDefLib
 
 open testutils
 
+val _ = new_theory "scratch"
+
+val _ = Feedback.set_trace "Theory.allow_rebinds" 1
+
 fun checkhyps th = if null (hyp th) then ()
                    else die "FAILED - Hyps in theorem!"
 fun f $ x = f x
-fun make_quiet f =
-    let open Feedback
-    in
-      with_flag (emit_MESG, false) $
-        with_flag (emit_WARNING, false) $ with_flag (emit_ERR, false) f
-    end
 
-val Hol_reln = make_quiet Hol_reln
+val Hol_reln = quietly Hol_reln
 
 (* set up a fake arithmetic theory *)
 val _ = new_type ("num", 0)
@@ -89,22 +87,151 @@ val _ = tprint "Can still look at rule_induction data"
 val _ = if can ThmSetData.current_data{settype = "rule_induction"} then OK()
         else die ""
 
+(* ----------------------------------------------------------------------
+    Keyed theorem sets: [rule_induction] and [coinduction]
+   ---------------------------------------------------------------------- *)
 
-val _ = tprint "With Unicode should fail"
-val _ = if (make_quiet (xHol_reln "tr") `
-                      (!x. ▷ x Z) /\
-                      (!x y. ▷ (SUC x) (SUC y) ==> ▷ x y)
-           ` ; false) handle HOL_ERR _ => true then OK()
-        else die "FAILED"
+fun keyed_set_error {origin, settype, expected} testfn =
+  (testfn (); false)
+  handle HOL_ERR error =>
+    top_structure_of error = "KeyedThmSet" andalso
+    top_function_of error = origin andalso
+    List.all (fn text => String.isSubstring text (message_of error))
+      (("[" ^ settype ^ "]") :: expected)
+
+(* coinductions key on the clause conclusion, rule inductions on the
+   clause hypothesis, so each rejects a variable in a different place *)
+val wellformed_coinduction =
+  ASSUME ``!P : num -> bool. T ==> (!x. P x ==> even x)``
+val malformed_coinduction =
+  ASSUME ``!P : num -> bool. T ==> (!x. T ==> P x)``
+val malformed_rule_induction =
+  ASSUME ``!P : num -> bool. T ==> (!x. P x ==> T)``
+val shapeless_coinduction = ASSUME ``!P : num -> bool. P Z``
+
+fun local_attribute_of settype thm_name thm () =
+  ThmAttribute.local_attribute
+    {name = thm_name, attrname = settype, args = [], thm = thm}
+
+val _ = tprint "Malformed [coinduction] theorem has a useful diagnostic"
+val _ = if keyed_set_error
+    {origin = "apply_delta", settype = "coinduction",
+     expected = ["conclusion headed by a constant", "P x"]}
+    (local_attribute_of "coinduction" "malformed_coinduction"
+       malformed_coinduction) then OK ()
+  else die "malformed coinduction theorem was accepted or poorly diagnosed"
+
+val _ = tprint "Malformed [rule_induction] diagnostic names the hypothesis"
+val _ = if keyed_set_error
+    {origin = "apply_delta", settype = "rule_induction",
+     expected = ["hypothesis headed by a constant", "P x"]}
+    (local_attribute_of "rule_induction" "malformed_rule_induction"
+       malformed_rule_induction) then OK ()
+  else die "malformed rule induction was accepted or poorly diagnosed"
+
+val _ = tprint "Non-implicational [coinduction] theorem is diagnosed"
+val _ = if keyed_set_error
+    {origin = "apply_delta", settype = "coinduction",
+     expected = ["premises ==> clauses"]}
+    (local_attribute_of "coinduction" "shapeless_coinduction"
+       shapeless_coinduction) then OK ()
+  else die "shapeless coinduction theorem was accepted or poorly diagnosed"
+
+fun coinduction_count () =
+  length (CoIndDefLib.thy_coinductions (current_theory ()))
+
+val wellformed_coinduction_name = "wellformed_coinduction_export"
+val _ = save_thm (wellformed_coinduction_name, wellformed_coinduction)
+val coinductions_before_export = coinduction_count ()
+val _ = tprint "Well-formed coinduction export is persisted"
+val _ = (CoIndDefLib.export_coinduction wellformed_coinduction_name;
+         if coinduction_count () = coinductions_before_export + 1 then OK ()
+         else die "coinduction export was not recorded")
+
+val malformed_coinduction_name = "malformed_coinduction_export"
+val _ = save_thm (malformed_coinduction_name, malformed_coinduction)
+val coinductions_before_failure = coinduction_count ()
+
+val _ = tprint "Malformed coinduction export is not persisted"
+val _ = if keyed_set_error
+    {origin = "export_thm", settype = "coinduction",
+     expected = ["conclusion headed by a constant"]}
+    (fn () => CoIndDefLib.export_coinduction malformed_coinduction_name)
+    andalso coinduction_count () = coinductions_before_failure then OK ()
+  else die "malformed coinduction export changed persistent data"
+
+val _ = tprint "Malformed stored [coinduction] attribute is not persisted"
+val _ = if keyed_set_error
+    {origin = "apply_delta", settype = "coinduction",
+     expected = ["conclusion headed by a constant"]}
+    (fn () => ThmAttribute.store_at_attribute
+       {name = malformed_coinduction_name, attrname = "coinduction",
+        args = [], thm = malformed_coinduction})
+    andalso coinduction_count () = coinductions_before_failure then OK ()
+  else die "malformed stored coinduction attribute changed persistent data"
+
+(* a theorem the rule_induction set type rejects (its clause hypothesis is
+   headed by a variable) must leave no delta in the theory segment; an
+   accepted one must, which also shows the delta count below is live *)
+local
+  val nm = "malformed_rule_induction"
+  val th = GEN “P:num -> bool”
+               (DISCH T (GEN “x:num” (DISCH “(P:num -> bool) x” TRUTH)))
+  val _ = save_thm(nm, th)
+  val ok_nm = "wellformed_rule_induction"
+  val ok_th = DISCH T (GEN “x:num” (DISCH “even x” (ASSUME “even x”)))
+  val _ = save_thm(ok_nm, ok_th)
+  fun count () = length (thy_rule_inductions (current_theory ()))
+  fun rejected f = (f (); false) handle HOL_ERR _ => true
+  fun check msg f =
+      let
+        val _ = tprint msg
+        val n0 = count ()
+      in
+        if not (rejected f) then die "malformed theorem accepted"
+        else if count () <> n0 then die "rejected delta was recorded"
+        else OK()
+      end
+in
+val _ = (tprint "Accepted export_rule_induction is persisted";
+         let val n0 = count ()
+         in
+           export_rule_induction ok_nm;
+           if count () = n0 + 1 then OK()
+           else die "accepted delta was not recorded"
+         end)
+val _ = check "Rejected stored [rule_induction] attribute is not persisted"
+              (fn () => ThmAttribute.store_at_attribute
+                          {name = nm, attrname = "rule_induction", args = [],
+                           thm = th})
+val _ = check "Rejected export_rule_induction is not persisted"
+              (fn () => export_rule_induction nm)
+end
+
+val _ = shouldfail {testfn = quietly (in_repl_mode (runtac (xHol_reln "tr"))),
+                    printresult = (fn (th,_,_) => thm_to_string th),
+                    printarg = K "With Unicode should fail",
+                    checkexn = is_struct_HOL_ERR "IndDefLib"}
+                   ‘(!x. ▷ x Z) /\
+                    (!x y. ▷ (SUC x) (SUC y) ==> ▷ x y)’
 
 val _ = tprint "Vacuous clause failure"
-val _ = if (Hol_reln `(!x. rel x Z) /\ (!x y. rel x y)` ; false)
-               handle HOL_ERR {message,...} =>
+val _ = if (in_repl_mode Hol_reln `(!x. rel x Z) /\ (!x y. rel x y)` ; false)
+               handle HOL_ERR herr =>
                       String.isSuffix
                           "Vacuous clause trivialises whole definition"
-                          message
+                          (message_of herr)
         then OK()
         else die "FAILED"
+
+val _ = shouldfail { testfn = quietly (in_repl_mode (runtac (xHol_reln "tr"))),
+                     printresult = (fn (th,_,_) => thm_to_string th),
+                     printarg = K "Double implication should fail",
+                     checkexn = (fn(HOL_ERR herr) =>
+                                   String.isSubstring "double implication"
+                                                      (message_of herr)
+                                | _ => false) }
+                   ‘fib Z ONE /\ fib ONE ONE /\ !m r s. fib m r ==> fib (SUC m) s ==> fib (SUC (SUC m)) (r + s)’
 
 (* isolate_to_front test cases *)
 val failcount = ref 0
@@ -112,7 +239,7 @@ val _ = diemode := Remember failcount
 local
   fun itf n pat t =
       let
-        val (sgs, _) = VALID (isolate_to_front n pat) ([], t)
+        val (sgs, _) = runtac (VALID (isolate_to_front n pat)) ([], t)
       in
         case sgs of
             [([], t')] => t'
@@ -197,5 +324,51 @@ val _ = List.app itf_test [
 ]
 end
 
+val _ = tprint "Github 1296/1: bad attempt to schematize"
+(* the code should not schematize here as the new constant is not consistently
+   applied to the same vector of leading free variables *)
+fun good1296 indth =
+    length (#1 (strip_forall (concl indth))) = 1
+val _ = require_msg (check_result good1296) thm_to_string (#2 o Hol_reln)
+                    ‘ (! x.
+                         eq_reln Schema_var x x
+                      ) /\
+                      (
+                        ! Schema_var x y z.
+                          eq_reln Schema_var x y /\
+                          eq_reln Schema_var y z ==>
+                          eq_reln Schema_var x z
+                        )’
+
+val _ = tprint "Github 1296/2: should not schematize"
+(* the code should not schematize here as the new constant is not consistently
+   applied to the same vector of leading free variables *)
+fun good1296 indth =
+    length (#1 (strip_forall (concl indth))) = 1
+val _ = require_msg (check_result good1296) thm_to_string (#2 o Hol_reln)
+                    ‘eq_reln k x x /\
+                     (eq_reln k' x y /\ x < y ==> eq_reln k x z)’
+
+val _ = shouldfail {
+  checkexn = is_struct_HOL_ERR "CoIndDefLib",
+  testfn = quietly (in_repl_mode CoIndDefLib.Hol_coreln),
+  printarg = K "Non-monotone definition (schematic)",
+  printresult = with_flag (show_assums, true) thm_to_string o #1}
+                   ‘ ((¬test (n : num)) ⇒ test n) ’;
+
+val _ = shouldfail {
+      checkexn = is_struct_HOL_ERR "CoIndDefLib",
+      testfn = quietly (in_repl_mode CoIndDefLib.Hol_coreln),
+      printarg = K "Non-monotone definition (schematic)",
+      printresult = with_flag (show_assums, true) thm_to_string o #1}
+      ‘ ∀n. ((¬test (n : num)) ⇒ test n) ’;
+
+val _ = tprint "Github 1931: comment containing opening parenthesis before first label"
+Inductive cmt_paren_rel:
+(* ( *)
+[~refl:]
+  (!x. cmt_paren_rel R x x)
+End
+val _ = OK()
 
 val _ = exit_count0 failcount

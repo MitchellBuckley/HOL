@@ -21,12 +21,19 @@ val unicode_off : ('a -> 'b) -> 'a -> 'b
 val raw_backend : ('a -> 'b) -> 'a -> 'b
 val quietly : ('a -> 'b) -> ('a -> 'b)
 val convtest : (string * (Term.term -> Thm.thm) * Term.term * Term.term) -> unit
+
+(* Run a tactic (or list-tactic) against the ambient context: tactics
+   take the context to prove against, and a test wants whatever
+   context is live where it is written. *)
+val runtac : ('a -> Context.t -> 'b) -> 'a -> 'b
 val timed : ('a -> 'b) -> ('b testresult -> unit) -> 'a -> unit
 val exncheck : ('a -> unit) -> 'a testresult -> unit
 val shouldfail : {testfn: 'a -> 'b, printresult: 'b -> string,
                   printarg : 'a -> string,
                   checkexn: exn -> bool} -> 'a -> unit
 
+val in_repl_mode      : ('a -> 'b) -> 'a -> 'b
+val in_batch_mode     : ('a -> 'b) -> 'a -> 'b
 val is_struct_HOL_ERR : string -> exn -> bool
 val check_HOL_ERRexn : (string * string * string -> bool) -> exn -> bool
 val check_HOL_ERR : (string * string * string -> bool) -> 'a testresult ->

@@ -40,6 +40,8 @@ fun try f x = f x handle e => Feedback.Raise e
 
 fun assert P x = assert_exn P x (ERR "assert" "predicate not true")
 
+fun simple_assert b e = if b then () else raise e;
+
 (*---------------------------------------------------------------------------*
  *        Common list operations                                             *
  *---------------------------------------------------------------------------*)
@@ -154,11 +156,6 @@ fun end_itlist f =
       endit
    end
 
-fun get_first f l =
-   case l of
-      [] => NONE
-    | h :: t => (case f h of NONE => get_first f t | some => some)
-
 fun zip [] [] = []
   | zip (a :: b) (c :: d) = (a, c) :: zip b d
   | zip _ _ = raise ERR "zip" "different length lists"
@@ -198,7 +195,7 @@ fun apnth f 0 (y :: ys) = f y :: ys
   | apnth f n (y :: ys) = y :: apnth f (n-1) ys
   | apnth f n [] = raise ERR "apnth" "list too short (or -ve index)"
 
-fun mapshape [] _ _ =  []
+fun mapshape [] _ _ = []
   | mapshape (n :: nums) (f :: funcs) all_args =
      let
         val (fargs, rst) = split_after n all_args
@@ -309,9 +306,11 @@ fun topsort R =
 (* O(n*log(n)) time version
    deps = map from nodes to adjacency lists *)
 
+local open Redblackmap in
+type ('a, 'b) dict = ('a, 'b) dict
+
 fun dict_topsort deps =
    let
-      open Redblackmap
       val deps = transform (fn ls => ref (SOME ls)) deps
       fun visit (n, ls) =
          let
@@ -330,6 +329,7 @@ fun dict_topsort deps =
    in
       foldl v [] deps
    end
+end (* local *)
 
 (*---------------------------------------------------------------------------*
  * Strings.                                                                  *

@@ -29,7 +29,8 @@ val sml_thml_glob = ref []
 
 fun quse_string s =
   let
-    val stream = TextIO.openString (QFRead.fromString false s)
+    val stream = TextIO.openString
+                   (HOLSource.fromString {quietOpen = false, print = K()} s)
     fun infn () = TextIO.input1 stream
   in
     (
@@ -131,6 +132,20 @@ fun tactic_of_sml tim s =
     if b then !sml_tactic_glob else raise ERR "tactic_of_sml" s
   end
 
+(* Recording runs a previously successful source proof in a disposable HOL
+   subprocess.  Do not introduce a Poly/ML timeout thread while constructing
+   its instrumented tactic: a worker that fails to stop can outlive the
+   timeout and wedge the otherwise valid theory recording. *)
+fun tactic_of_sml_no_timeout s =
+  let
+    val tactic = mk_valid s
+    val b = quse_string
+      ("smlExecute.sml_tactic_glob := (" ^ tactic ^ ")")
+  in
+    if b then !sml_tactic_glob
+    else raise ERR "tactic_of_sml_no_timeout" s
+  end
+
 fun string_of_sml s =
   let
     val b = quse_string ("val _ = smlExecute.sml_string_glob := (" ^ s ^ " )")
@@ -149,11 +164,18 @@ fun goal_of_sml s =
    Apply tactic string
    ------------------------------------------------------------------------- *)
 
-val (TC_OFF : tactic -> tactic) = trace ("show_typecheck_errors", 0)
+val TC_OFF = trace ("show_typecheck_errors", 0)
 
+(* A tactic does its work once it has both the goal and the context, so
+   both the trace setting and the timeout have to span that application,
+   not merely the one that builds the context-awaiting closure. *)
 fun app_stac tim stac g =
-  let val tac = tactic_of_sml tim stac in
-    SOME (fst (timeout tim (TC_OFF tac) g))
+  let
+    val tac = tactic_of_sml tim stac
+    val ctxt = Context.snapshot()
+    val run = TC_OFF (Lib.C tac ctxt)
+  in
+    SOME (fst (timeout tim run g))
   end
   handle Interrupt => raise Interrupt | _ => NONE
 

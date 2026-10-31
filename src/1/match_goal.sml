@@ -3,12 +3,7 @@ struct
 
 open HolKernel boolLib Streams
 
-fun Redblackmap_contains (m,v) =
-  let
-    exception found
-    val _ = Redblackmap.app (fn (_,v') => if v = v' then raise found else ()) m
-  in false end
-  handle found => true
+fun Symtab_contains (m,v) = Symtab.exists (fn (_,v') => v = v') m
 
 val ERR = Feedback.mk_HOL_ERR"match_goal";
 
@@ -21,8 +16,8 @@ type pattern = term quotation
 type matcher = name * pattern * bool
 
                (* (name, assumption number) *)
-type named_thms = (string, int) Redblackmap.dict
-val (empty_named_thms:named_thms) = Redblackmap.mkDict String.compare;
+type named_thms = int Symtab.table
+val (empty_named_thms:named_thms) = Symtab.empty;
 
 (* If you want to be able to treat certain type variables as constants (e.g.,
    if they are in the goal) then you need to keep track of the avoid_tys/tyIds
@@ -35,9 +30,10 @@ val empty_named_tms : named_tms = ([],[])
 type data = named_thms * named_tms
 
 fun is_underscore v =
-  case total dest_var v of NONE
-    => raise(ERR"umatch""unexpected non-variable binding") (* should not happen *)
-  | SOME (s,_) => String.isPrefix "_" s
+  case total dest_var v of
+      NONE => raise(ERR"umatch""unexpected non-variable binding")
+                   (* should not happen *)
+    | SOME (s,_) => String.isPrefix "_" s
 
 val is_uvar = String.isSuffix "_" o #1 o dest_var
 
@@ -52,7 +48,8 @@ fun umatch avoid_tms ((tmS,tyS):named_tms) pat ob : named_tms =
     (tmS'', tyS')
   end
 
-fun umatch_subterms avoid_tms (ntms:named_tms) pat ob : unit -> named_tms stream =
+fun umatch_subterms avoid_tms (ntms:named_tms) pat ob
+    : unit -> named_tms stream =
   stream_append
     (fn () => Stream(umatch avoid_tms ntms pat ob,empty_stream))
     (fn () =>
@@ -76,11 +73,11 @@ fun match_single fvs ((asl,w):goal)
   let
     fun add_nth NONE _ = SOME nths
       | add_nth (SOME l) i =
-        (case Redblackmap.peek(nths,l) of
+        (case Symtab.lookup nths l of
            NONE =>
-             if Redblackmap_contains(nths,i)
+             if Symtab_contains(nths,i)
              then NONE
-             else SOME (Redblackmap.insert(nths,l,i))
+             else SOME (Symtab.update (l,i) nths)
          | SOME j => if i = j then SOME nths else NONE)
 
     fun protect f NONE = K empty_stream
@@ -121,21 +118,26 @@ fun match_single fvs ((asl,w):goal)
 
 val tr1 = Substring.string o Substring.trimr 1 o Substring.full
 
-fun match_tac (ms:matcher list,mtac:mg_tactic) (g as (asl,w):goal) : goal list * validation =
+fun match_tac (ms:matcher list,mtac:mg_tactic) (g as (asl,w):goal) ctxt
+    : goal list * validation =
   let
-    fun try_tactic ((thms,tms):data) : (unit -> (goal list * validation) stream) =
+    fun try_tactic ((thms,tms):data)
+        : (unit -> (goal list * validation) stream) =
       let
         fun lookup_assum s =
           let
-            val i = Redblackmap.find(thms,s)
+            val i = valOf (Symtab.lookup thms s)
             val tm = List.nth(#1 g,i)
           in ASSUME tm end
         val s =
-          case tms of (tmS,tyS) =>
-            #1 (norm_subst ((tmS,empty_tmset),(tyS,[])))
-            |> List.map (fn {redex,residue} => (tr1(#1(dest_var redex)),residue))
+          case tms of
+              (tmS,tyS) =>
+              #1 (norm_subst ((tmS,empty_tmset),(tyS,[])))
+                 |> List.map
+                     (fn {redex,residue} =>
+                         (tr1(#1(dest_var redex)),residue))
         val tac = mtac (lookup_assum,Lib.C assoc s)
-        val r = tac g
+        val r = tac g ctxt
       in
         (fn()=>Stream (r,empty_stream))
       end
@@ -146,7 +148,8 @@ fun match_tac (ms:matcher list,mtac:mg_tactic) (g as (asl,w):goal) : goal list *
 
     val fvs = FVL (w::asl) empty_tmset
 
-    val matches = map (match_single fvs g o preprocess_matcher (HOLset.listItems fvs)) ms
+    val matches =
+        map (match_single fvs g o preprocess_matcher (HOLset.listItems fvs)) ms
   in
     (case search matches (empty_named_thms,empty_named_tms) () of
        Stream (x,_) => x)

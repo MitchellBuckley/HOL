@@ -100,14 +100,23 @@ type exportfns =
 
 type tabledata = ({thyname:string}->setdelta list) * exportfns
 
-val data_map = ref (Symtab.empty : tabledata Symtab.table)
+local
+  val data_map_slot : tabledata Symtab.table Context.Data.slot =
+      Context.Data.new
+        {name = "ThmSetData.data_map", empty = Symtab.empty,
+         pp = fn _ => "<ThmSetData.data_map>"}
+in
+  fun data_map_of ctxt = Context.Data.get data_map_slot ctxt
+  fun data_map () = data_map_of (Context.snapshot())
+  val upd_data_map = Context.Data.modify data_map_slot
+end
 
-fun data_exportfns {settype = s} = Option.map #2 (Symtab.lookup (!data_map) s)
+fun data_exportfns {settype = s} = Option.map #2 (Symtab.lookup (data_map ()) s)
 
-fun all_set_types () = Symtab.keys (!data_map)
+fun all_set_types () = Symtab.keys (data_map ())
 
 fun theory_data {settype = key, thy} =
-    case Symtab.lookup (!data_map) key of
+    case Symtab.lookup (data_map ()) key of
       NONE => raise mk_HOL_ERR "ThmSetData" "theory_data"
                     ("No ThmSetData with name "^Lib.quote key)
     | SOME (sdf,_) => sdf {thyname=thy}
@@ -131,7 +140,7 @@ fun new_exporter {settype = name, efns = efns as {add, remove}} = let
   fun apply_deltas thyname ds =
       let
         fun appthis (ADD (s,th)) = add {thy = thyname, named_thm = (s, th)}
-          | appthis (REMOVE s) = remove {thy = thyname, remove =  s}
+          | appthis (REMOVE s) = remove {thy = thyname, remove = s}
       in
         List.app appthis ds
       end
@@ -173,7 +182,17 @@ fun new_exporter {settype = name, efns = efns as {add, remove}} = let
     | hook (DelBinding s) = neqbinding s
     | hook (NewBinding(s,_)) = neqbinding s
     | hook _ = fn _ => true
-  fun check_thydelta (arg as (sexp,td)) = revise_data (hook td) arg
+  (* For events that use uptodate_thmdelta (retire-state check on each
+     stored theorem), skip the scan when retire_epoch is unchanged since
+     our last scan.  Name-based events (NewBinding/DelBinding via
+     neqbinding) must still scan since they're unrelated to retires. *)
+  val last_scan_epoch = ref []
+  fun check_thydelta (arg as (_, td)) =
+      let val cur = [Type.type_epoch(), Term.term_epoch()]
+      in
+        if retire_memoable td andalso !last_scan_epoch = cur then NONE
+        else revise_data (hook td) arg before last_scan_epoch := cur
+      end
 
 
   val {export = export_deltasexp, segment_data, ...} =
@@ -205,12 +224,18 @@ fun new_exporter {settype = name, efns = efns as {add, remove}} = let
     export_deltasexp data
   end
 
-  fun store_attrfun {attrname,name,thm} = export (toKName name,thm)
-  fun local_attrfun {attrname,name,thm} =
-    add {named_thm = ({Thy = current_theory(), Name = name},thm),
-         thy = current_theory()}
+  fun store_attrfun {attrname,name,args,thm} =
+      if null args then export (toKName name,thm)
+      else raise ERR "store_attrfun"
+                 ("Arguments not allowed for attribute " ^ attrname)
+  fun local_attrfun {attrname,name,args,thm} =
+      if null args then
+        add {named_thm = ({Thy = current_theory(), Name = name},thm),
+             thy = current_theory()}
+      else raise ERR "local_attrfun"
+                 ("Arguments not allowed for attribute " ^ attrname)
 in
-  data_map := Symtab.update(name,(segdata, efns)) (!data_map);
+  upd_data_map (Symtab.update(name,(segdata, efns)));
   ThmAttribute.register_attribute (
     name, {storedf = store_attrfun, localf = local_attrfun}
   );
@@ -228,7 +253,7 @@ type 'value ops = {apply_to_global : setdelta -> 'value -> 'value,
                                     'value -> 'value) option,
                    uptodate_delta : setdelta -> bool, initial_value : 'value,
                    apply_delta : setdelta -> 'value -> 'value}
-fun raw_uptodate (rADD{Thy,Name}) = can (DB.fetch Thy) Name
+fun raw_uptodate (rADD knm) = can DB.fetch_knm knm
   | raw_uptodate _ = true
 
 fun export_with_ancestry
@@ -252,16 +277,26 @@ fun export_with_ancestry
           AncestryData.fullmake { adinfo = adinfo,
                                   uptodate_delta = uptodate,
                                   sexps = sexps, globinfo = globinfo}
-      fun store_attrfun {attrname,name,thm} =
-          let val d = rADD(lift name)
-          in
-            #record_delta fullresult d;
-            #update_global_value fullresult (raw_apply_global d)
-          end
-      fun local_attrfun {attrname,name,thm} =
+      fun store_attrfun {attrname,name,thm,args} =
+          if null args then
+            let val d = rADD(lift name)
+            in
+              (* apply first: a delta rejected by apply_to_global must not
+                 reach the segment, where it would raise on every load *)
+              #update_global_value fullresult (raw_apply_global d);
+              #record_delta fullresult d
+            end
+          else raise ERR "store_attrfun"
+                     ("Arguments not allowed for attribute " ^ attrname)
+      fun local_attrfun {attrname,name,thm,args} =
           (* as this is local, the name is not going to be a valid binding,
              and "cooking" a raw ADD delta will just throw an exception *)
-          #update_global_value fullresult(apply_to_global (ADD(lift name, thm)))
+          if null args then
+            #update_global_value fullresult
+                                 (apply_to_global (ADD(lift name, thm)))
+          else
+            raise ERR "local_attrfun"
+                  ("Arguments not allowed for attribute " ^ attrname)
       fun efn_add {thy,named_thm} =
           #update_global_value fullresult(raw_apply_global(rADD (#1 named_thm)))
       fun efn_remove {thy,remove} =
@@ -269,16 +304,19 @@ fun export_with_ancestry
       val efns = {add = efn_add, remove = efn_remove}
       val get_fulldeltas = map cook o #get_deltas fullresult
     in
-      data_map := Symtab.update(settype, (get_fulldeltas, efns)) (!data_map);
+      upd_data_map (Symtab.update(settype, (get_fulldeltas, efns)));
       ThmAttribute.register_attribute (
         settype, {storedf = store_attrfun, localf = local_attrfun}
       );
       {merge = #merge fullresult, DB = #DB fullresult,
+       DB_of = #DB_of fullresult,
        get_deltas = get_fulldeltas,
        record_delta = #record_delta fullresult o mk_raw,
        parents = #parents fullresult, set_parents = #set_parents fullresult,
        get_global_value = #get_global_value fullresult,
-       update_global_value = #update_global_value fullresult
+       get_global_value_of = #get_global_value_of fullresult,
+       update_global_value = #update_global_value fullresult,
+       update_global_value_of = #update_global_value_of fullresult
       }
     end
 
@@ -287,19 +325,19 @@ fun export_with_ancestry
     Some simple instances
    ---------------------------------------------------------------------- *)
 
-type simple_dictionary = (string,thm) Binarymap.dict
+type simple_dictionary = thm Symtab.table
 fun sdict_apply_delta delta (d : simple_dictionary) =
     case delta of
-        ADD({Thy,Name}, th) => Binarymap.insert(d, Thy ^ "." ^ Name, th)
-      | REMOVE n => #1 (Binarymap.remove(d, n)) handle NotFound => d
+        ADD({Thy,Name}, th) => Symtab.update (Thy ^ "." ^ Name, th) d
+      | REMOVE n => Symtab.delete_safe n d
 fun simple_dictionary_ops i =
     {apply_to_global = sdict_apply_delta, apply_delta = sdict_apply_delta,
      thy_finaliser = NONE, uptodate_delta = K true, initial_value = i}
 fun export_simple_dictionary {settype,initial} =
     let
       val i =
-          List.foldl (fn ((n,th), d) => Binarymap.insert(d, n, th))
-                     (Binarymap.mkDict String.compare) initial
+          List.foldl (fn ((n,th), d) => Symtab.update (n, th) d)
+                     Symtab.empty initial
       val ops as {apply_delta,...} = simple_dictionary_ops i
       val res = export_with_ancestry {settype = settype, delta_ops = ops}
       val updgv = #update_global_value res
@@ -313,17 +351,18 @@ fun export_simple_dictionary {settype,initial} =
        temp_export = temp_export,
        export = (fn s => (temp_export s; #record_delta res (mk_add s))),
        getDB = getDB,
-       get_thms = Binarymap.foldl (fn (n,th,A) => th::A) [] o getDB,
+       get_thms = (fn db => Symtab.fold (fn (_,th) => fn A => th::A) db []) o
+                  getDB,
        temp_setDB = updgv o K}
     end
 
 fun sdict_withflag_thms({getDB,temp_setDB}, thms) f x =
     let
-      open Binarymap
       val (_, tdb) =
-          List.foldl (fn (th,(n,db)) => (n + 1, insert(db, Int.toString n, th)))
-                     (0, mkDict String.compare)
-                     thms
+          List.foldl
+            (fn (th,(n,db)) => (n + 1, Symtab.update (Int.toString n, th) db))
+            (0, Symtab.empty)
+            thms
     in
       Portable.genwith_flag({get=getDB,set=temp_setDB}, tdb) f x
     end
@@ -361,7 +400,6 @@ fun export_alist {settype,initial} =
 
 fun alist_withflag_thms({getDB,temp_setDB}, thms) f x =
     let
-      open Binarymap
       val (_, tdb) =
           List.foldr (fn (th,(n,db)) => (n + 1, (Int.toString n, th)::db))
                      (0, []) thms

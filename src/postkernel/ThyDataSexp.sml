@@ -5,6 +5,9 @@ open Feedback Term Thm Theory
 
 val ERR = mk_HOL_ERR "ThyDataSexp"
 
+val anon_thm_lookup : (string * int -> Thm.thm option) ref
+    = ref (fn _ => NONE)
+
 val theory_debug_trace = get_tracefn "Theory.debug"
 
 fun DPRINT f =
@@ -25,6 +28,10 @@ datatype t =
        | Char of char
        | Option of t option
        | KName of KernelSig.kernelname
+
+datatype ('a,'b) sum = inl of 'a | inr of 'b
+datatype ('a,'b,'c) sum3 = in13 of 'a | in23 of 'b | in33 of 'c
+datatype ('a,'b,'c,'d) sum4 = in14 of 'a | in24 of 'b | in34 of 'c | in44 of 'd
 
 fun pp_sexp typ tmp thp s =
   let
@@ -229,14 +236,23 @@ fun deps_saved th =
 
 fun thmwrite tmw th0 =
   let
+    val thy = Theory.current_theory()
     val th = if deps_saved th0 then th0
-             else Thm.save_dep (Theory.current_theory()) th0
+             else Thm.save_dep thy th0
+    val id = add_anonymous_thm th
   in
-    HOLsexp.pair_encode (tagwrite, HOLsexp.list_encode (HOLsexp.String o tmw))
-                        (Thm.tag th, concl th :: hyp th)
+    HOLsexp.pair4_encode (tagwrite, HOLsexp.list_encode (HOLsexp.String o tmw),
+                          HOLsexp.String, HOLsexp.Integer)
+                         (Thm.tag th, concl th :: hyp th,
+                          thy, id)
   end
 fun thmreader tmr =
-    pair_decode (tagreader, list_decode (string_decode >> tmr)) >> Thm.disk_thm
+    pair4_decode (tagreader, list_decode (string_decode >> tmr),
+                  string_decode, int_decode) >>
+    (fn (tag, terms, thy, id) =>
+       case !anon_thm_lookup (thy, id) of
+           SOME th => th
+         | NONE => Thm.disk_thm (thy, Thm.SavedAnon id) (tag, terms))
 
 fun tag s enc x = HOLsexp.tagged_encode s enc x
 fun write (wrt as {strings,terms}) s =
@@ -332,8 +348,7 @@ fun new {thydataty, load, other_tds, merge} =
                    hook0 td)
 
     fun export s =
-      (load {thyname = current_theory(), data = SOME s};
-       LTD.write_data_update {thydataty = thydataty, data = todata s})
+      LTD.write_data_update {thydataty = thydataty, data = todata s}
 
     fun set t =
         LTD.set_theory_data{thydataty = thydataty, data = todata t}
@@ -375,6 +390,9 @@ fun type_decode (Type ty) = SOME ty
 
 fun term_decode (Term tm) = SOME tm
   | term_decode _ = NONE
+
+fun thm_decode (Thm th) = SOME th
+  | thm_decode _ = NONE
 
 fun bool_decode (Bool b) = SOME b
   | bool_decode _ = NONE
@@ -440,5 +458,80 @@ fun tag_encode s e x =
         List [t] => List [Sym s, List [t]]
       | List els => List (Sym s :: els)
       | t => List [Sym s, t]
+
+type 'a ed = ('a enc * 'a dec)
+type 'a sed = string * 'a ed
+val string_ed = (String, string_decode)
+val int_ed = (Int, int_decode)
+val type_ed = (Type, type_decode)
+val term_ed = (Term, term_decode)
+val thm_ed = (Thm, thm_decode)
+val char_ed = (Char, char_decode)
+val kname_ed = (KName, kname_decode)
+val bool_ed = (Bool, bool_decode)
+
+fun list_ed (e,d) = (mk_list e, list_decode d)
+fun option_ed (e,d) = (option_encode e, option_decode d)
+fun pair_ed ((e1,d1), (e2,d2)) = (pair_encode(e1,e2), pair_decode(d1,d2))
+fun pair3_ed ((e1,d1), (e2,d2), (e3,d3)) =
+    (pair3_encode(e1,e2,e3),pair3_decode(d1,d2,d3))
+fun pair4_ed ((e1,d1), (e2,d2), (e3,d3), (e4,d4)) =
+    (pair4_encode(e1,e2,e3,e4),pair4_decode(d1,d2,d3,d4))
+
+
+fun tagged_sum (s1,aed:'a ed) (s2,bed:'b ed) =
+    if s1 = s2 then raise ERR "tagged_sum" "Tags must be distinct"
+    else
+      ((fn inl a => List [Sym s1, #1 aed a]
+         | inr b => List [Sym s2, #1 bed b]),
+       (fn t => case t of
+                    List[Sym s, t0] => if s = s1 then Option.map inl (#2 aed t0)
+                                       else if s = s2 then
+                                         Option.map inr (#2 bed t0)
+                                       else NONE
+                  | _ => NONE))
+fun tagged_sum3 (s1,aed:'a ed) (s2,bed:'b ed) (s3,ced:'c ed) =
+    if s1 = s2 orelse s2 = s3 orelse s1 = s3 then
+      raise ERR "tagged_sum" "Tags must be distinct"
+    else
+      ((fn in13 a => List [Sym s1, #1 aed a]
+         | in23 b => List [Sym s2, #1 bed b]
+         | in33 c => List [Sym s3, #1 ced c]),
+       (fn t => case t of
+                    List[Sym s, t0] => if s = s1 then Option.map in13 (#2 aed t0)
+                                       else if s = s2 then
+                                         Option.map in23 (#2 bed t0)
+                                       else if s = s3 then
+                                         Option.map in33 (#2 ced t0)
+                                       else NONE
+                  | _ => NONE))
+fun tagged_sum4 (s1,aed:'a ed) (s2,bed:'b ed) (s3,ced:'c ed) (s4,ded:'d ed) =
+    if length (Lib.mk_set[s1,s2,s3,s4]) < 4 then
+      raise ERR "tagged_sum" "Tags must be distinct"
+    else
+      ((fn in14 a => List [Sym s1, #1 aed a]
+         | in24 b => List [Sym s2, #1 bed b]
+         | in34 c => List [Sym s2, #1 ced c]
+         | in44 d => List [Sym s2, #1 ded d]),
+       (fn t => case t of
+                    List[Sym s, t0] =>
+                    if      s = s1 then Option.map in14 (#2 aed t0)
+                    else if s = s2 then Option.map in24 (#2 bed t0)
+                    else if s = s3 then Option.map in34 (#2 ced t0)
+                    else if s = s4 then Option.map in44 (#2 ded t0)
+                    else NONE
+                  | _ => NONE))
+
+
+fun bij_ed (a2b, b2a) (be,bd) = (be o a2b, Option.map b2a o bd)
+fun inj_ed (a2b, b2a_opt) (be, bd) = (be o a2b, Option.mapPartial b2a_opt o bd)
+
+fun add_label s (ae,ad) =
+    ((fn a => List [Sym s, ae a]),
+     (fn t => case t of
+                  List [Sym s0, t0] =>
+                  if s0 = s then ad t0
+                  else NONE
+                | _ => NONE))
 
 end

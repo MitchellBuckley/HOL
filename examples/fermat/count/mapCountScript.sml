@@ -4,32 +4,14 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "mapCount";
+Theory mapCount
+Ancestors
+  arithmetic pred_set gcdset number list rich_list listRange
+  combinatorics
 
 (* ------------------------------------------------------------------------- *)
 
-
-(* open dependent theories *)
-(* arithmeticTheory -- load by default *)
-
-(* val _ = load "combinatoricsTheory"; *)
-open helperCountTheory;
-open helperNumTheory;
-open helperSetTheory;
-open helperFunctionTheory;
-open arithmeticTheory pred_setTheory;
-
-open listTheory rich_listTheory;
-open listRangeTheory;
-open helperListTheory;
-
-open necklaceTheory; (* for necklace_def *)
-open combinatoricsTheory;
-
+val _ = temp_overload_on("over", ``\f s t. !x. x IN s ==> f x IN t``);
 
 (* ------------------------------------------------------------------------- *)
 (* Counting of maps between finite sets Documentation                        *)
@@ -1301,21 +1283,6 @@ Proof
   metis_tac[inj_set_bij_eq_inj_count, bij_eq_empty, inj_count_eq_empty]
 QED
 
-(* Another proof of a previous theorem. *)
-
-(* Theorem: FINITE s /\ FINITE t ==> FINITE (inj_set s t) *)
-(* Proof:
-   Let m = CARD s, n = CARD t.
-   Note inj_set s t =b= inj_count m n    by inj_set_bij_eq_inj_count
-    and FINITE (inj_count m n)           by inj_count_finite
-     so FINITE (inj_set s t)             by bij_eq_finite
-*)
-Theorem inj_set_finite:
-  !s t. FINITE s /\ FINITE t ==> FINITE (inj_set s t)
-Proof
-  metis_tac[inj_set_bij_eq_inj_count, inj_count_finite, bij_eq_finite]
-QED
-
 (* Theorem: FINITE s /\ FINITE t ==>
             CARD (inj_set s t) = (CARD t) arrange (CARD s) *)
 (* Proof:
@@ -1686,14 +1653,7 @@ QED
 (* ------------------------------------------------------------------------- *)
 
 (* Overload inj_count of equal size. *)
-val _ = overload_on("bij_count", ``\n. inj_count n n``);
-
-(* Derive theorems. *)
-Theorem bij_count_element =
-   inj_count_element |> ISPEC ``x:num -> num``
-                     |> ISPEC ``n:num`` |> ISPEC ``n:num`` |> GEN_ALL;
-(* val bij_count_element =
-|- !x n. x IN bij_count n <=> ?f. x = f on count n /\ INJ f (count n) (count n): thm *)
+Overload bij_count = “\n. inj_count n n”
 
 (* A better theorem of bij_count_element. *)
 
@@ -1768,40 +1728,5 @@ Proof
   metis_tac[bij_maps_bij_eq_bij_count, bij_count_bij_eq_perm_count, bij_eq_trans]
 QED
 
-(* Another proof of the same theorem. *)
-
-(* Theorem: FINITE s ==> FINITE (bij_maps s) *)
-(* Proof:
-   Note bij_maps s =b= perm_count (CARD s)     by bij_maps_bij_eq_perm_count
-    and FINITE (perm_count (CARD s))           by perm_count_finite
-     so FINITE (bij_maps s)                    by bij_eq_finite
-*)
-Theorem bij_maps_finite:
-  !s. FINITE s ==> FINITE (bij_maps s)
-Proof
-  metis_tac[bij_maps_bij_eq_perm_count, perm_count_finite, bij_eq_finite]
-QED
-
-(* Another proof of the same theorem. *)
-
-(* Theorem: FINITE s ==> CARD (bij_maps s) = perm (CARD s) *)
-(* Proof:
-   Note bij_maps s =b= perm_count (CARD s)     by bij_maps_bij_eq_perm_count
-    and FINITE (perm_count (CARD s))           by perm_count_finite
-     so CARD (bij_maps s)
-      = CARD (perm_count (CARD s))             by bij_eq_card
-      = perm (CARD s)                          by perm_def
-*)
-Theorem bij_maps_card:
-  !s. FINITE s ==> CARD (bij_maps s) = perm (CARD s)
-Proof
-  simp[bij_maps_bij_eq_perm_count, perm_count_finite, bij_eq_card, perm_def]
-QED
-
-
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

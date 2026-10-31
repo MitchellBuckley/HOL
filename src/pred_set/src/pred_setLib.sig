@@ -15,6 +15,11 @@ sig
 
   val PRED_SET_ss    : simpLib.ssfrag
 
-  val add_pred_set_compset : computeLib.compset -> unit
+  val add_pred_set_compset : computeLib.compset -> computeLib.compset
+
+  (* Automate some routine set theory by reduction to FOL *)
+  val SET_TAC        : thm list -> tactic
+  val ASM_SET_TAC    : thm list -> tactic
+  val SET_RULE       : term -> thm
 
 end

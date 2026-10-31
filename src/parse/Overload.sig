@@ -44,6 +44,9 @@ sig
     overload_info -> {Name : string, Thy : string} ->
     string option
 
+  val prim_add_overloading :
+      {print:bool, parse:bool, frontp:bool} -> string * term ->
+      overload_info -> overload_info
   val add_overloading : string * term -> overload_info -> overload_info
   val add_inferior_overloading : string * term -> overload_info -> overload_info
 
@@ -69,10 +72,9 @@ sig
 
 end
 
-(* [oi_strip_comb oinfo t] returns SOME(f, args, pattern) if the the term t
-   matches the pattern orig in the overload info's print-map, and this pattern
-   decomposes t into operator f applied to arguments args.
-
-   Further, this is the best such match, according to the heuristics
-   that overloading uses.
+(* [oi_strip_comb oinfo t] returns SOME(f, args) if the term t matches
+   some pattern in the overload info's print-map, with f the operator
+   the pattern decomposes t into and args its arguments.  When several
+   patterns match, the result reflects the best match according to the
+   heuristics that overloading uses.
 *)

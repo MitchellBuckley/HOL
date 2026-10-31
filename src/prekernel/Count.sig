@@ -19,6 +19,7 @@ sig
    | Beta
    | Ccontr
    | Choose
+   | Compute
    | Conj
    | Conjunct1
    | Conjunct2
@@ -59,6 +60,7 @@ sig
               BETA_CONV: int,
               CCONTR: int,
               CHOOSE: int,
+              COMPUTE: int,
               CONJ: int,
               CONJUNCT1: int,
               CONJUNCT2: int,
@@ -95,6 +97,8 @@ sig
      meter -> {axioms: int, defns: int, oracles: int, disk: int, prims: int}
   val report:
      {axioms: int, defns: int, oracles: int, disk: int, prims: int} -> unit
+
   val apply: ('a -> 'b) -> 'a -> 'b
+  val inferences: ('a -> 'b) -> 'a -> 'b
 
 end

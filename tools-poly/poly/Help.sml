@@ -312,4 +312,11 @@ val browser = ref defaultBrowser
 fun help s = !browser s
 
 end
+
+(* The LSP hover reads this index too, through
+   `tools-poly/lsp/help_init.ML' -- which owns everything that turns
+   an entry into markdown, and is loaded only by a language server.
+   Nothing in this file is LSP-aware. *)
+
+
 end

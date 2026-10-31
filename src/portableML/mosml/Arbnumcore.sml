@@ -146,6 +146,9 @@ fun (xn <= yn) = xn = yn orelse xn < yn
 fun (xn >= yn) = yn <= xn
 fun (xn > yn) = yn < xn
 
+fun max (x, y) = if x < y then y else x
+fun min (x, y) = if x < y then x else y
+
 fun compare(x,y) = if x < y then LESS else if y < x then GREATER else EQUAL
 
 fun normalise [] = [0]
@@ -399,6 +402,8 @@ fun gcd(i,j) = if i = zero then j
                else gcd' i j
 end
 
+fun lcm (x, y) = (x * y) div (gcd (x, y))
+
 fun intexp(base,exponent) = let
   fun recurse acc b n =
       if Int.<=(n,0) then acc
@@ -474,6 +479,14 @@ in
   val toOctString = toBaseString (fromInt 8)
   val toHexString = toBaseString (fromInt 16)
 end
+
+fun toReal0 f A is =
+    case is of
+        [] => A
+      | i :: rest => toReal0 (Real.*(f,Real.fromInt BASE))
+                             (Real.+(A,Real.*(f,Real.fromInt i)))
+                             rest
+fun toReal an = toReal0 1.0 0.0 an
 
 fun isqrt n =
    if n < two

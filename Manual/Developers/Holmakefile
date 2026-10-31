@@ -1,6 +1,15 @@
-.PHONY: all
+INCLUDES = ../Tools
 
-TARGETS = developers.pdf developers.html
+# Cross-manual labels.tsv prereq list for the mdbook target.
+# See Manual/mdbook.mk for MANUALS / SIBLING_LABELS.
+THIS = Developers
+include ../mdbook.mk
+
+.PHONY: all mdbook
+
+# Standalone pandoc artefacts (independent of the mdbook site).
+TARGETS = developers.pdf developers.html \
+          manual-authoring.pdf manual-authoring.html
 
 all: $(TARGETS)
 
@@ -10,4 +19,50 @@ developers.pdf: developers.md hol4.latex
 developers.html: developers.md
 	pandoc -s $< -o $@
 
-EXTRA_CLEANS = $(TARGETS)
+manual-authoring.pdf: manual-authoring.md hol4.latex
+	pandoc --template=hol4 $< -o $@
+
+manual-authoring.html: manual-authoring.md
+	pandoc -s $< -o $@
+
+# mdbook site.  Chapters are hand-authored Markdown (no .smd / no
+# polyscripter), listed in the committed SUMMARY.md; smdpp runs in
+# --plain-markdown mode (set in book.toml), which skips the LaTeX-
+# command rewriters.  That lets manual-authoring.md -- which documents
+# the .smd pipeline with literal \ref{}/\cite{}/\label{} examples in
+# code spans -- render verbatim rather than having those examples
+# eaten by the (non-code-aware) rewriters.
+MDBOOK_CHAPTERS = developers.md manual-authoring.md lsp-server.md
+
+mdbook: ../book/Developers/index.html
+
+../book/Developers/index.html: ../Tools/smdpp SUMMARY.md \
+        $(MDBOOK_CHAPTERS) \
+        identifiers.js labels.tsv $(SIBLING_LABELS)
+	mdbook build
+	# See Manual/Description/Holmakefile for the rationale.
+	cd ../book/Developers && \
+	  ln -sf $$(ls searchindex-*.js | head -1) searchindex.js
+	# `mdbook build` empties the build dir, so the entry-name
+	# sidecar is installed afterwards.  Copied rather than
+	# symlinked: a link pointing out of book/ wouldn't survive a
+	# deploy snapshot.
+	cp identifiers.js ../book/Developers/identifiers.js
+	../Tools/smdpp check-html ../book/Developers
+	../Tools/smdpp check-refs ../book/Developers
+	../Tools/smdpp check-links ../book/Developers
+
+# Scan-only label dump for cross-book `\ref{Book:label}` resolution.
+labels.tsv: ../Tools/smdpp SUMMARY.md $(MDBOOK_CHAPTERS)
+	../Tools/smdpp dump-labels .
+
+# Entry-name table for the site's name-lookup layer.  It exists
+# because elasticlunr runs its trimmer / stop-word filter / stemmer
+# over the *query* as well as over the indexed text, so a section
+# whose name is a stop word or punctuation is unreachable through
+# searchindex.js no matter what the reader types.  Scan-only, like
+# labels.tsv above.  See Manual/Developers/manual-authoring.md.
+identifiers.js: ../Tools/smdpp SUMMARY.md $(MDBOOK_CHAPTERS)
+	../Tools/smdpp dump-identifiers .
+
+EXTRA_CLEANS = $(TARGETS) labels.tsv identifiers.js ../book/Developers/

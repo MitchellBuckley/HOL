@@ -1,10 +1,8 @@
-open HolKernel Parse boolLib bossLib
-open boolSimps
-open grammarTheory finite_mapTheory
-open locationTheory
-open listTheory rich_listTheory
-
-val _ = new_theory "peg"
+Theory peg
+Ancestors
+  grammar finite_map location list rich_list
+Libs
+  boolSimps
 
 (* Based on
      Koprowski and Binzstok, "TRX: A Formally Verified Parser Interpreter".
@@ -100,71 +98,71 @@ QED
 (* Option type should be replaced with sum type (loc. for NONE *)
 Inductive peg_eval:
 [~empty:]
-  (∀s c. peg_eval G (s, empty c) (Success s c NONE)) ∧
+  (∀s c. peg_eval G (s, empty c) (Success s c NONE))
 [~nt:]
   (∀n s f res.
        n ∈ FDOM G.rules ∧ peg_eval G (s, G.rules ' n) res ⇒
-       peg_eval G (s, nt n f) (resultmap f res)) ∧
+       peg_eval G (s, nt n f) (resultmap f res))
 [~any_success:]
-  (∀h t f. peg_eval G (h::t, any f) (Success t (f h) NONE)) ∧
+  (∀h t f. peg_eval G (h::t, any f) (Success t (f h) NONE))
 [~any_failure:]
-  (∀f. peg_eval G ([], any f) (Failure EOF G.anyEOF)) ∧
+  (∀f. peg_eval G ([], any f) (Failure EOF G.anyEOF))
 [~tok_success:]
   (∀e t P f.
-     P (FST e) ⇒ peg_eval G (e::t, tok P f) (Success t (f e) NONE)) ∧
+     P (FST e) ⇒ peg_eval G (e::t, tok P f) (Success t (f e) NONE))
 [~tok_failureF:]
   (∀h t P f.
      ¬P (FST h) ⇒
-     peg_eval G (h::t, tok P f) (Failure (SND h) G.tokFALSE)) ∧
+     peg_eval G (h::t, tok P f) (Failure (SND h) G.tokFALSE))
 [~tok_failureEOF:]
-  (∀P f. peg_eval G ([], tok P f) (Failure EOF G.tokEOF)) ∧
+  (∀P f. peg_eval G ([], tok P f) (Failure EOF G.tokEOF))
 [~not_success:]
   (∀e s c fr.
      peg_eval G (s, e) fr ∧ isFailure fr ⇒
-     peg_eval G (s, not e c) (Success s c NONE)) ∧
+     peg_eval G (s, not e c) (Success s c NONE))
 [~not_failure:]
   (∀e s r c.
      peg_eval G (s, e) r ∧ isSuccess r ⇒
-     peg_eval G (s, not e c) (Failure (sloc s) G.notFAIL))  ∧
+     peg_eval G (s, not e c) (Failure (sloc s) G.notFAIL))
 [~seq_fail1:]
   (∀e1 e2 s f fl fe.
      peg_eval G (s, e1) (Failure fl fe) ⇒
-     peg_eval G (s, seq e1 e2 f) (Failure fl fe))  ∧
+     peg_eval G (s, seq e1 e2 f) (Failure fl fe))
 [~seq_fail2:]
   (∀e1 e2 f s0 eo s1 c1 fl fe.
      peg_eval G (s0, e1) (Success s1 c1 eo) ∧
      peg_eval G (s1, e2) (Failure fl fe) ⇒
-     peg_eval G (s0, seq e1 e2 f) (Failure fl fe)) ∧
+     peg_eval G (s0, seq e1 e2 f) (Failure fl fe))
 [~seq_success:]
   (∀e1 e2 s0 s1 s2 c1 c2 f eo1 eo2.
      peg_eval G (s0, e1) (Success s1 c1 eo1) ∧
      peg_eval G (s1, e2) (Success s2 c2 eo2) ⇒
-     peg_eval G (s0, seq e1 e2 f) (Success s2 (f c1 c2) eo2)) ∧
+     peg_eval G (s0, seq e1 e2 f) (Success s2 (f c1 c2) eo2))
 [~choice_fail:]
   (∀e1 e2 s f fl1 fe1 fl2 fe2.
      peg_eval G (s, e1) (Failure fl1 fe1) ∧
      peg_eval G (s, e2) (Failure fl2 fe2) ⇒
      peg_eval G (s, choice e1 e2 f)
-              (UNCURRY Failure (MAXerr (fl1,fe1) (fl2,fe2)))) ∧
+              (UNCURRY Failure (MAXerr (fl1,fe1) (fl2,fe2))))
 [~choice_success1:]
   (∀e1 e2 s0 f s r eo.
      peg_eval G (s0, e1) (Success s r eo) ⇒
-     peg_eval G (s0, choice e1 e2 f) (Success s (f (INL r)) eo)) ∧
+     peg_eval G (s0, choice e1 e2 f) (Success s (f (INL r)) eo))
 [~choice_success2:]
   (∀e1 e2 s0 s r eo f fl fe.
      peg_eval G (s0, e1) (Failure fl fe) ∧
      peg_eval G (s0, e2) (Success s r eo) ⇒
      peg_eval G (s0, choice e1 e2 f)
-              (Success s (f (INR r)) (optmax MAXerr (SOME (fl,fe)) eo))) ∧
+              (Success s (f (INR r)) (optmax MAXerr (SOME (fl,fe)) eo)))
 [~error:]
-  (∀e s. peg_eval G (s, error e) (Failure (sloc s) e)) ∧
+  (∀e s. peg_eval G (s, error e) (Failure (sloc s) e))
 [~rpt:]
   (∀e f s s1 list err.
      peg_eval_list G (s, e) (s1,list,err) ⇒
-     peg_eval G (s, rpt e f) (Success s1 (f list) (SOME err))) ∧
+     peg_eval G (s, rpt e f) (Success s1 (f list) (SOME err)))
 [~list_nil:]
   (∀e s fl fe. peg_eval G (s, e) (Failure fl fe) ⇒
-               peg_eval_list G (s, e) (s,[],(fl,fe))) ∧
+               peg_eval_list G (s, e) (s,[],(fl,fe)))
 [~list_cons:]
   (∀e eo0 eo s0 s1 s2 c cs.
      peg_eval G (s0, e) (Success s1 c eo0) ∧
@@ -379,13 +377,13 @@ QED
 Theorem lemma4_1a = lemma4_1a0 |> SIMP_RULE (srw_ss() ++ DNF_ss) [AND_IMP_INTRO]
 
 Inductive wfpeg:
-  (∀n f. n ∈ FDOM G.rules ∧ wfpeg G (G.rules ' n) ⇒ wfpeg G (nt n f)) ∧
+  (∀n f. n ∈ FDOM G.rules ∧ wfpeg G (G.rules ' n) ⇒ wfpeg G (nt n f))
 [~_empty[simp]:]
-  (∀c. wfpeg G (empty c)) ∧
+  (∀c. wfpeg G (empty c))
 [~_any[simp]:]
-  (∀f. wfpeg G (any f)) ∧
+  (∀f. wfpeg G (any f))
 [~tok[simp]:]
-  (∀t f. wfpeg G (tok t f)) ∧
+  (∀t f. wfpeg G (tok t f))
 [~_error[simp]:]
   (∀e. wfpeg G (error e)) ∧
   (∀e c. wfpeg G e ⇒ wfpeg G (not e c)) ∧
@@ -422,7 +420,8 @@ Proof
   simp[Gexprs_def, subexprs_included]
 QED
 
-val wfG_def = Define`wfG G ⇔ ∀e. e ∈ Gexprs G ⇒ wfpeg G e`;
+Definition wfG_def:  wfG G ⇔ ∀e. e ∈ Gexprs G ⇒ wfpeg G e
+End
 
 Theorem IN_subexprs_TRANS:
   ∀a b c. a ∈ subexprs b ∧ b ∈ subexprs c ⇒ a ∈ subexprs c
@@ -523,26 +522,26 @@ QED
 Definition pegf_def:  pegf sym f = seq sym (empty ARB) (λl1 l2. f l1)
 End
 
-val ignoreL_def = Define`
+Definition ignoreL_def:
   ignoreL s1 s2 = seq s1 s2 (λa b. b)
-`;
+End
 val _ = set_mapped_fixity{fixity = Infixl 500, term_name = "ignoreL",
                           tok = "~>"}
 
-val ignoreR_def = Define`
+Definition ignoreR_def:
   ignoreR s1 s2 = seq s1 s2 (λa b. a)
-`;
+End
 val _ = set_mapped_fixity{fixity = Infixl 500, term_name = "ignoreR",
                           tok = "<~"}
 
-val choicel_def = Define`
+Definition choicel_def:
   (choicel [] = not (empty ARB) ARB) ∧
   (choicel (h::t) = choice h (choicel t) (λs. sum_CASE s I I))
-`;
+End
 
-val checkAhead_def = Define`
+Definition checkAhead_def:
   checkAhead P s = not (not (tok P ARB) ARB) ARB ~> s
-`;
+End
 
 Theorem peg_eval_seq_SOME:
   peg_eval G (i0, seq s1 s2 f) (Success i r eo) ⇔
@@ -571,7 +570,8 @@ Theorem peg_eval_tok_SOME:
 Proof simp[Once peg_eval_cases, pairTheory.EXISTS_PROD] >> metis_tac[]
 QED
 
-Theorem peg_eval_empty[simp]: peg_eval G (i, empty r) x ⇔ x = Success i r NONE
+Theorem peg_eval_empty[simp,allow_rebind]:
+  peg_eval G (i, empty r) x ⇔ x = Success i r NONE
 Proof simp[Once peg_eval_cases]
 QED
 
@@ -625,21 +625,22 @@ Proof
   metis_tac[]
 QED
 
-Theorem peg_eval_rpt:
+Theorem peg_eval_rpt[allow_rebind]:
   peg_eval G (i0, rpt s f) x ⇔
     ∃i l err. peg_eval_list G (i0,s) (i,l,err) ∧ x = Success i (f l) (SOME err)
 Proof simp[Once peg_eval_cases, SimpLHS] >> metis_tac[]
 QED
 
-val peg_eval_list = Q.store_thm(
-  "peg_eval_list",
-  `peg_eval_list G (i0, e) (i, r, err) ⇔
+Theorem peg_eval_list:
+   peg_eval_list G (i0, e) (i, r, err) ⇔
      (∃fl fe. peg_eval G (i0, e) (Failure fl fe) ∧ i = i0 ∧ r = [] ∧
              err = (fl,fe)) ∨
      (∃i1 rh rt eo0.
         peg_eval G (i0, e) (Success i1 rh eo0) ∧
-        peg_eval_list G (i1, e) (i, rt, err) ∧ r = rh::rt)`,
-  simp[Once peg_eval_cases, SimpLHS] >> metis_tac[]);
+        peg_eval_list G (i1, e) (i, rt, err) ∧ r = rh::rt)
+Proof
+  simp[Once peg_eval_cases, SimpLHS] >> metis_tac[]
+QED
 
 Theorem pegfail_empty[simp]:
   pegfail G (empty r) = F
@@ -686,4 +687,3 @@ Proof
   simp[pegf_def]
 QED
 
-val _ = export_theory()

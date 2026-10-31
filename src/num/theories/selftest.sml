@@ -1,5 +1,7 @@
 open arithmeticTheory HolKernel boolLib Parse testutils
 
+val _ = new_theory "scratch"
+
 fun fail() = die "FAILED\n"
 
 val _ = tprint "Testing that I can parse num$0"
@@ -89,6 +91,20 @@ val colourtests =
 
 val _ = app colourpp_test colourtests
 
+fun good_oneline th =
+    null (hyp th) andalso
+    (let val cs = strip_conj (concl th)
+     in
+       length cs = 1 andalso is_eq (hd cs)
+     end)
+
+fun test msg th =
+    (tprint ("one_line_ify on " ^ msg);
+     require_msg (check_result good_oneline)
+                 (trace("assumptions", 1) thm_to_string)
+                 (DefnBase.one_line_ify NONE) th)
+val _ = test "cv_sub_def" cvTheory.cv_sub_def
+
 open groundEval numeralTheory
 
 val _ = overload_on ("B1", ``BIT1``);
@@ -124,3 +140,4 @@ val _ = testdot ``4 + 5 + 9`` ``18``;
 
 val _ = testdot ``(\x. x + y) 5`` ``5 + y``;
 val _ = testdot ``(\x. x + x + 1) ((\y. y + 10) 4)`` ``29``;
+

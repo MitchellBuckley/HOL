@@ -1,5 +1,8 @@
 (* tests for string and character parsing *)
 open HolKernel Parse boolLib bossLib testutils
+
+val _ = new_theory "scratch"
+
 fun q (QUOTE s) = "Q\"" ^ String.toString s ^ "\""
   | q (ANTIQUOTE a) = "AQ"
 
@@ -8,7 +11,7 @@ fun printq [] = ""
   | printq (x::xs) = q x ^ " " ^ printq xs
 
 open stringSyntax
-val testdata = [
+val testdata: (term frag list * term) list = [
   (`#"("`, fromMLchar #"("),
   (`"\n`)"`, fromMLstring "\n`)"),
   (`"\n^`)"`, fromMLstring "\n^`)"),
@@ -107,15 +110,12 @@ val _ = if s = "\"\\042)\"" then OK()
     ASCIInumbersLib's compsets
    ---------------------------------------------------------------------- *)
 
-val cs = let
-  val cs = listLib.list_compset()
-in
-  stringLib.add_string_compset cs;
-  numposrepLib.add_numposrep_compset cs;
-  bitLib.add_bit_compset cs;
-  ASCIInumbersLib.add_ASCIInumbers_compset cs;
-  cs
-end
+val cs =
+  listLib.list_compset
+  |> stringLib.add_string_compset
+  |> numposrepLib.add_numposrep_compset
+  |> bitLib.add_bit_compset
+  |> ASCIInumbersLib.add_ASCIInumbers_compset
 
 fun test (in_t, expected_t) =
     convtest ("ASCIInumbersLib: " ^ term_to_string in_t ^ " = " ^

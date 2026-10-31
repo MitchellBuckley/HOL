@@ -50,10 +50,16 @@ type stdconvdata = { name: string,
 (*---------------------------------------------------------------------------*)
 
 (* boolean argument to c is whether or not the rewrite is bounded *)
-fun appconv (c,UNBOUNDED) solver stk tm = c false solver stk tm
-  | appconv (c,BOUNDED r) solver stk tm = if !r = 0 then failwith "exceeded rewrite bound"
-                                          else c true solver stk tm before
-                                            Portable.dec r
+fun appconv (c,UNBOUNDED) = c false (* do not eta expand! *)
+  | appconv (c,BOUNDED r) =
+    let
+      val c = c true (* do not inline! *)
+    in
+      (fn solver => fn stk => fn tm =>
+      if !r = 0 then failwith "exceeded rewrite bound"
+      else c solver stk tm before
+      Portable.dec r)
+    end
 
 fun split_name {Thy,Name} = (SOME Thy, Name)
 fun mk_rewr_convdata (nmopt,(thm,tag)) : tagged_convdata option = let
@@ -121,19 +127,29 @@ fun ssf_upd_rewrs f (SSFRAG_CON s) =
     maintain a global database of (named) ssfrags
    ---------------------------------------------------------------------- *)
 
-val ssfragDB = Sref.new (Symtab.empty : ssfrag Symtab.table)
+local
+  val ssfragDB_slot : ssfrag Symtab.table Context.Data.slot =
+      Context.Data.new
+        {name = "simpLib.ssfragDB",
+         empty = Symtab.empty,
+         pp = fn _ => "<simpLib.ssfragDB>"}
+in
+  fun ssfragDB_of ctxt = Context.Data.get ssfragDB_slot ctxt
+  fun ssfragDB () = ssfragDB_of (Context.snapshot())
+  val upd_ssfragDB = Context.Data.modify ssfragDB_slot
+end
 fun register_frag ssf =
     case frag_name ssf of
         NONE => raise ERR ("register_frag", "Can only register named ssfrags")
       | SOME n =>
-        (case Symtab.lookup (Sref.value ssfragDB) n of
-             NONE => (Sref.update ssfragDB (Symtab.update(n,ssf)); ssf)
+        (case Symtab.lookup (ssfragDB ()) n of
+             NONE => (upd_ssfragDB (Symtab.update(n,ssf)); ssf)
            | SOME _ => (HOL_WARNING "simpLib" "register_frag"
                                     ("Discarding existing entry for "^n);
-                        Sref.update ssfragDB $ Symtab.update(n,ssf);
+                        upd_ssfragDB (Symtab.update(n,ssf));
                         ssf))
-fun lookup_named_frag n = Symtab.lookup (Sref.value ssfragDB) n
-fun all_named_frags() = Symtab.keys (Sref.value ssfragDB)
+fun lookup_named_frag n = Symtab.lookup (ssfragDB ()) n
+fun all_named_frags() = Symtab.keys (ssfragDB ())
 
 (*---------------------------------------------------------------------------*)
 (* Operation on ssfrag values                                                *)
@@ -248,16 +264,24 @@ datatype simpset =
             initial_net : net,
             dprocs      : reducer list,
             travrules   : travrules,
-            limit       : int option}
+            limit       : int option,
+            (* Names of fragments that are forbidden from being added by ++.
+               Set by `exclude_ssfrags`; cleared per-name by `force_add`. *)
+            excluded    : string Binaryset.set}
 
-fun ssupd_net f (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit}) =
+val empty_excluded : string Binaryset.set = Binaryset.empty String.compare
+
+fun ssupd_net f (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
+                    excluded}) =
     SS{mk_rewrs = mk_rewrs, history = history, initial_net = f initial_net,
-       dprocs = dprocs, travrules = travrules, limit = limit}
+       dprocs = dprocs, travrules = travrules, limit = limit,
+       excluded = excluded}
 
  val empty_ss = SS {mk_rewrs=fn x => [x],
                     history = [], limit = NONE,
                     initial_net=empty,
-                    dprocs=[],travrules=EQ_tr};
+                    dprocs=[],travrules=EQ_tr,
+                    excluded = empty_excluded};
 
  fun ssfrags_of (SS x) =
      List.mapPartial (fn ADDFRAG sf => SOME sf | _ => NONE) (#history x)
@@ -302,7 +326,8 @@ fun dphas_name_from nms (REDUCER {name = SOME n,...}) = Lib.mem n nms
   | dphas_name_from _ _ = false
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 
-fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit}) -* nms =
+fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
+              excluded}) -* nms =
     if null nms then ss
     else
       SS{initial_net = filter_net_by_names nms initial_net,
@@ -310,7 +335,9 @@ fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit}) -* nms =
          mk_rewrs = mk_rewrs,
          dprocs = filter_dprocs_by_names nms dprocs,
          travrules = travrules,
-         limit = limit}
+         limit = limit,
+         excluded = excluded}
+fun remove_simps nms ss = ss -* nms
 
 
   (* ---------------------------------------------------------------------
@@ -372,9 +399,11 @@ fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit}) -* nms =
           |> List.mapPartial ssfrag_name
           |> Lib.mk_set
 
- fun fupdlimit f (SS{mk_rewrs,history,travrules,initial_net,dprocs,limit}) =
+ fun fupdlimit f (SS{mk_rewrs,history,travrules,initial_net,dprocs,limit,
+                     excluded}) =
      SS{mk_rewrs = mk_rewrs, history = history, travrules = travrules,
-        initial_net = initial_net, dprocs = dprocs, limit = f limit}
+        initial_net = initial_net, dprocs = dprocs, limit = f limit,
+        excluded = excluded}
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -390,8 +419,9 @@ fun getlimit (SS ss) = #limit ss
      in
        refl x
      end
+     val congproc = CONGPROC mk_refl th (* do not inline *)
    in
-     CONGPROC mk_refl th
+     (fn rel => QCHANGED_CONV o congproc rel) (* do not eta expand *)
    end
  in
    TRAVRULES {relations = rels,
@@ -400,11 +430,13 @@ fun getlimit (SS ss) = #limit ss
  end
 
  fun add_weakener (wd as (rels,congs,dp)) simpset = let
-   val SS {mk_rewrs,history,travrules,initial_net,dprocs,limit} = simpset
+   val SS {mk_rewrs,history,travrules,initial_net,dprocs,limit,excluded} =
+       simpset
  in
    SS {mk_rewrs = mk_rewrs, history = ADDWEAKENER wd :: history,
        travrules = merge_travrules [travrules, wk_mk_travrules(rels,congs)],
-       initial_net = initial_net, dprocs = dprocs @ [dp], limit = limit}
+       initial_net = initial_net, dprocs = dprocs @ [dp], limit = limit,
+       excluded = excluded}
  end
 
 (* ----------------------------------------------------------------------
@@ -606,9 +638,15 @@ fun getlimit (SS ss) = #limit ss
      end
 
 
- fun op++(SS sset, f as SSFRAG_CON ssf) = let
-   val {mk_rewrs=mk_rewrs',history,travrules,initial_net,dprocs=dprocs',limit}=
-       sset
+ fun is_excluded (SS{excluded,...}) f =
+     case frag_name f of
+         SOME n => Binaryset.member(excluded, n)
+       | NONE => false
+
+ fun op++(ss as SS sset, f as SSFRAG_CON ssf) = if is_excluded ss f then ss else
+   let
+   val {mk_rewrs=mk_rewrs',history,travrules,initial_net,dprocs=dprocs',limit,
+        excluded}= sset
    val {convs,rewrs,filter,ac,dprocs,congs,relsimps,...} = ssf
    val mk_rewrs = case filter of
                     SOME f => f oo mk_rewrs'
@@ -637,6 +675,7 @@ fun getlimit (SS ss) = #limit ss
        initial_net = net,
        limit       = limit,
        dprocs      = new_dprocs,
+       excluded    = excluded,
        travrules   = merge_travrules
                          (travrules::mk_travrules relations congs::reltravs)
    }
@@ -655,7 +694,12 @@ fun build_from_history h0 =
       List.foldl foldthis empty_ss (List.rev h0)
     end
 
-fun remove_ssfrags names (ss as SS{history,limit,...}) =
+fun setexcluded e (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
+                       excluded=_}) =
+    SS{mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
+       dprocs=dprocs, travrules=travrules, limit=limit, excluded=e}
+
+fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
     let
       val s = Set.addList (Binaryset.empty String.compare, names)
       val nil_included = Set.member(s, "")
@@ -668,6 +712,48 @@ fun remove_ssfrags names (ss as SS{history,limit,...}) =
               raise Conv.UNCHANGED
     in
       build_from_history history' |> fupdlimit (fn _ => limit)
+                                  |> setexcluded excluded
+    end
+
+(* Like `remove_ssfrags`, but additionally records the names so that any
+   subsequent `++` of a fragment with one of those names is silently
+   skipped.  `force_add` is the override that bypasses (and clears) this
+   prohibition for a given fragment.  Never raises Conv.UNCHANGED.
+
+   Desired invariant on every simpset:
+       no ADDFRAG in `history` has a name in `excluded`.
+   The other simpset operations (`++`, `-*`, `add_weakener`, `force_add`,
+   `remove_ssfrags`) all preserve this invariant, so in principle we
+   could filter `history` against `names` alone here.  We defensively
+   filter against `excluded ∪ names` instead so that this function stays
+   correct in isolation even if some future operation accidentally
+   introduces an ADDFRAG of an already-excluded name. *)
+fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
+    let
+      val excluded' = Binaryset.addList (excluded, names)
+      val nil_included = Binaryset.member(excluded', "")
+      fun isexcl (SSFRAG_CON{name = SOME n,...}) =
+            Binaryset.member(excluded',n)
+        | isexcl (SSFRAG_CON{name = NONE,...}) = nil_included
+      fun filterthis (hi as ADDFRAG f) = not(isexcl f)
+        | filterthis hi = true
+      val history' = List.filter filterthis history
+    in
+      build_from_history history' |> fupdlimit (fn _ => limit)
+                                  |> setexcluded excluded'
+    end
+
+(* Force-include a fragment, even if its name is in the simpset's
+   excluded set — and remove that name from the excluded set so that
+   subsequent `++` of the same fragment also succeeds. *)
+fun force_add (ss as SS sset) f =
+    let val excluded' =
+            case frag_name f of
+                SOME n => (Binaryset.delete(#excluded sset, n)
+                           handle NotFound => #excluded sset)
+              | NONE => #excluded sset
+    in
+      setexcluded excluded' ss ++ f
     end
 
 (*---------------------------------------------------------------------------*)
@@ -715,32 +801,12 @@ val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
 
-local open markerSyntax markerLib
+local open markerLib
 in
-fun is_AC thm = same_const(fst(strip_comb(concl thm))) AC_tm
-fun is_Cong thm = same_const(fst(strip_comb(concl thm))) Cong_tm
-
-fun extract_excls (excls, exfrags, rest) l =
-    case l of
-        [] => (List.rev excls, List.rev exfrags, List.rev rest)
-      | th::ths =>
-        case markerLib.destExcl th of
-            SOME nm => extract_excls (nm::excls, exfrags, rest) ths
-          | NONE => case markerLib.destExclSF th of
-                        NONE => extract_excls (excls, exfrags, th::rest) ths
-                      | SOME nm => extract_excls (excls, nm::exfrags, rest) ths
-
-fun extract_frags (frags, rest) l =
-    case l of
-        [] => (List.rev frags, List.rev rest)
-      | th :: ths => case markerLib.destFRAG th of
-                         NONE => extract_frags (frags, th :: rest) ths
-                       | SOME fragnm => (
-                         case lookup_named_frag fragnm of
-                             NONE => raise ERR ("extract_frags",
-                                                "No frag called " ^ fragnm)
-                           | SOME sf => extract_frags (sf::frags, rest) ths
-                       )
+fun frag_of fragnm =
+    case lookup_named_frag fragnm of
+        NONE => raise ERR ("process_tags", "No frag called " ^ fragnm)
+      | SOME sf => sf
 
 fun SF ssfrag =
     case frag_name ssfrag of
@@ -755,25 +821,60 @@ fun SF ssfrag =
                        | _ => ());
                     markerLib.FRAG nm)
 
+fun tactic_only name =
+    raise ERR ("process_tags",
+               name ^ " is a tactic directive; it cannot be honoured by a " ^
+               "conversion or rule")
+
+(* Sort a theorem-list argument by directive, keeping argument order.
+   Requirement directives are honoured only by the tactics, which strip
+   them (mk_require_tac) before reaching here; one arriving anyway would
+   be used as a rewrite and carry its marker$ hypothesis into every
+   result, so it is an error.  Assumption-policy directives are the
+   tactic layer's too, but rule-level calls inside a tactic (SIMP_RULE
+   within FULL_SIMP_TAC) still see them, so they are dropped.  Bounded
+   rewrites are honoured by the rewriter and pass through. *)
 fun process_tags ss thl =
-    let val (Congs,rst) = Lib.partition is_Cong thl
-        val (ACs,rst) = Lib.partition is_AC rst
-        val (excludes, exclfrags, rst) = extract_excls ([],[],[]) rst
-        val (frags, rst) = extract_frags ([],[]) rst
+    let
+      fun sort (th, acc as (congs, acs, excls, exclfrags, frags, rest)) =
+          case dest_directive th of
+              NONE => (congs, acs, excls, exclfrags, frags, th :: rest)
+            | SOME (DCong c) =>
+                (normCong c :: congs, acs, excls, exclfrags, frags, rest)
+            | SOME (DAC p) => (congs, p :: acs, excls, exclfrags, frags, rest)
+            | SOME (DExcl nm) =>
+                (congs, acs, nm :: excls, exclfrags, frags, rest)
+            | SOME (DExclSF nm) =>
+                (congs, acs, excls, nm :: exclfrags, frags, rest)
+            | SOME (DFRAG nm) =>
+                (congs, acs, excls, exclfrags, frag_of nm :: frags, rest)
+            | SOME (DBounded _) =>
+                (congs, acs, excls, exclfrags, frags, th :: rest)
+            | SOME (DReq0 _) => tactic_only "Req0"
+            | SOME (DReqD _) => tactic_only "ReqD"
+            | SOME DNoAsms => acc
+            | SOME (DIgnAsm _) => acc
+            | SOME (DAbbr _) => acc
+            | SOME (DLabel _) => acc
+      val (congs, acs, excludes, exclfrags, frags, rst) =
+          List.foldr sort ([], [], [], [], [], []) thl
     in
-      if null Congs andalso null ACs andalso null excludes andalso
+      if null congs andalso null acs andalso null excludes andalso
          null frags andalso null exclfrags
-      then (ss,thl)
+      then (ss, rst)
       else
         let val base = remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
+            val cong_ac =
+                SSFRAG_CON{name=SOME"Cong and/or AC", relsimps = [],
+                           ac=acs, congs=congs,
+                           convs=[],rewrs=[],filter=NONE,dprocs=[]}
+            (* Cong/AC is named but never user-excludable; SF-derived frags
+               go through force_add so they override any active exclusion. *)
+            val withCongAc = base ++ cong_ac
+            val withFrags = List.foldl (fn (f,ss) => force_add ss f)
+                                       withCongAc frags
         in
-          (List.foldl (flip op++) base (
-            SSFRAG_CON{name=SOME"Cong and/or AC", relsimps = [],
-                       ac=map unAC ACs, congs=map (normCong o unCong) Congs,
-                       convs=[],rewrs=[],filter=NONE,dprocs=[]} ::
-            frags
-           ) -* excludes,
-           rst)
+          (withFrags -* excludes, rst)
         end
     end
 
@@ -811,16 +912,11 @@ fun SIMP_RULE ss l = CONV_RULE (SIMP_CONV ss l)
 
 fun ASM_SIMP_RULE ss l th = SIMP_RULE ss (l@map ASSUME (hyp th)) th;
 
-fun SIMP_TAC0 ss l = markerLib.ABBRS_THEN (CONV_TAC o SIMP_CONV ss) l;
-fun SIMP_TAC ss = markerLib.mk_require_tac (SIMP_TAC0 ss)
-val simp_tac = SIMP_TAC
-
-fun ASM_SIMP_TAC0 ss =
-   markerLib.ABBRS_THEN
-    (fn thl => fn gl as (asl,_) =>
-         SIMP_TAC ss (markerLib.LLABEL_RESOLVE thl asl) gl);
-fun ASM_SIMP_TAC ss = markerLib.mk_require_tac (ASM_SIMP_TAC0 ss)
+fun ASM_SIMP_TAC ss ths =
+    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
 val asm_simp_tac = ASM_SIMP_TAC
+fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
+val simp_tac = SIMP_TAC
 
 (* differs from default strip_assume_tac base in that it doesn't call
    OPPOSITE_TAC or DISCARD_TAC.
@@ -837,10 +933,10 @@ type simptac_config =
 
 (* back/front assume_tac; backp is true if the new assumption should go at the
    back of the list *)
-fun BF_ASSUME_TAC backp th (g as (asl,w)) =
+fun BF_ASSUME_TAC backp th (g as (asl,w)) ctxt =
     if backp then ([(asl @ [concl th], w)],
                    fn resths => PROVE_HYP th (hd resths))
-    else ASSUME_TAC th g
+    else ASSUME_TAC th g ctxt
 
 (* contr/accept/assume *)
 fun caa_tac0 backp (c : simptac_config) th =
@@ -856,7 +952,7 @@ local
    val caa_tac =
        caa_tac0 false {elimvars = false, droptrues = false, strip = false,
                        oldestfirst = true}
-   val STRIP_ASSUME_TAC' = REPEAT_TCL STRIP_THM_THEN caa_tac
+   val STRIP_ASSUME_TAC' = STRIP_ALL_THEN caa_tac
    fun drop r =
       fn n =>
          POP_ASSUM_LIST
@@ -890,7 +986,7 @@ end
 fun stdcon (c : simptac_config) th =
     if #elimvars c andalso eliminable (concl th) then VSUBST_TAC th
     else
-      (if #strip c then REPEAT_TCL STRIP_THM_THEN else I)
+      (if #strip c then STRIP_ALL_THEN else I)
         (caa_tac0 (not (#oldestfirst c)) c)
         th
 
@@ -923,12 +1019,7 @@ fun global_simp_tac cfg ss0 =
 
 
 
-fun track f x =
- let val _ = (used_rewrites := [])
-     val res = Lib.with_flag(track_rewrites,true) f x
- in used_rewrites := rev (!used_rewrites)
-  ; res
- end;
+val track = with_tracking
 
 (* ----------------------------------------------------------------------
     creating per-type ssdata values
@@ -939,10 +1030,12 @@ fun tyi_to_ssdata tyinfo =
       val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
       val tyname = thy ^ "$" ^ tyop
       val {rewrs = rws0, convs} = TypeBasePure.simpls_of tyinfo;
+      fun name_of th i =
+          case DB.revlookup th of
+              DB_dtype.Stored {Thy, Name} :: _ => {Thy = Thy, Name = Name}
+            | _ => {Thy = "", Name = tyname ^ " simpl. " ^ Int.toString i}
       fun reduce (th, (i,A)) =
-          (i + 1,
-           (SOME {Thy = "", Name = tyname ^ " simpl. " ^ Int.toString i}, th) ::
-           A)
+          (i + 1, (SOME (name_of th i), th) :: A)
       val (_, rewrs) = foldl reduce (1,[]) rws0
     in
       SSFRAG_CON {name = SOME("Datatype "^tyname),

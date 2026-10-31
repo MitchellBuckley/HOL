@@ -33,7 +33,7 @@ fun pairths f [x, y] = f x y
  *---------------------------------------------------------------------------*)
 
 val ACCEPT_TAC: thm_tactic =
-   fn th => fn (asl, w) =>
+   fn th => fn (asl, w) => fn _ (* ctxt *) =>
       if aconv (concl th) w then ([], empty th) else raise ERR "ACCEPT_TAC" ""
 
 (* --------------------------------------------------------------------------*
@@ -55,7 +55,7 @@ fun DISCARD_TAC th (asl, w) =
  *---------------------------------------------------------------------------*)
 
 val CONTR_TAC: thm_tactic =
-   fn cth => fn (asl, w) =>
+   fn cth => fn (asl, w) => fn _ (* ctxt *) =>
       let
          val th = CONTR w cth
       in
@@ -91,7 +91,8 @@ end
  *       -                                                                   *
  *---------------------------------------------------------------------------*)
 
-fun CCONTR_TAC (asl, w) = ([(mk_neg w :: asl, boolSyntax.F)], sing (CCONTR w))
+fun CCONTR_TAC (asl, w) _ (* ctxt *) =
+    ([(mk_neg w :: asl, boolSyntax.F)], sing (CCONTR w))
 
 (*---------------------------------------------------------------------------*
  * Put a theorem onto the assumption list.                                   *
@@ -104,9 +105,15 @@ fun CCONTR_TAC (asl, w) = ([(mk_neg w :: asl, boolSyntax.F)], sing (CCONTR w))
  *---------------------------------------------------------------------------*)
 
 val ASSUME_TAC: thm_tactic =
-   fn bth => fn (asl, w) => ([(concl bth :: asl, w)], sing (PROVE_HYP bth))
+   fn bth => fn (asl, w) => fn _ (* ctxt *) =>
+      ([(concl bth :: asl, w)], sing (PROVE_HYP bth))
 
 val assume_tac = ASSUME_TAC
+
+fun LAST_ASSUME_TAC th (g as (asl,w:term)) ctxt =
+  ([(asl @ [concl th], w)], (fn resths => PROVE_HYP th (hd resths)))
+
+val last_assume_tac = LAST_ASSUME_TAC
 
 (*---------------------------------------------------------------------------*
  * "Freeze" a theorem to prevent instantiation                               *
@@ -117,9 +124,9 @@ val assume_tac = ASSUME_TAC
  *---------------------------------------------------------------------------*)
 
 val FREEZE_THEN: thm_tactical =
-   fn ttac: thm_tactic => fn bth => fn g =>
+   fn ttac: thm_tactic => fn bth => fn g => fn ctxt =>
       let
-         val (gl, prf) = ttac (ASSUME (concl bth)) g
+         val (gl, prf) = ttac (ASSUME (concl bth)) g ctxt
       in
          (gl, PROVE_HYP bth o prf)
       end
@@ -133,7 +140,7 @@ val FREEZE_THEN: thm_tactical =
  *---------------------------------------------------------------------------*)
 
 val CONJ_TAC: tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       let
          val (conj1, conj2) = dest_conj w
       in
@@ -159,14 +166,14 @@ val conj_asm2_tac = CONJ_ASM2_TAC
  *                                                                           *
  *---------------------------------------------------------------------------*)
 
-fun DISJ1_TAC (asl, w) =
+fun DISJ1_TAC (asl, w) _ (* ctxt *) =
    let
       val (disj1, disj2) = dest_disj w
    in
       ([(asl, disj1)], sing (fn th => DISJ1 th disj2))
    end
    handle HOL_ERR _ => raise ERR "DISJ1_TAC" ""
-val disj1_tac = DISJ1_TAC
+val disj1_tac : tactic = DISJ1_TAC
 
 (*---------------------------------------------------------------------------*
  *      A \/ B                                                               *
@@ -175,14 +182,14 @@ val disj1_tac = DISJ1_TAC
  *                                                                           *
  *---------------------------------------------------------------------------*)
 
-fun DISJ2_TAC (asl, w) =
+fun DISJ2_TAC (asl, w) _ (* ctxt *) =
    let
       val (disj1, disj2) = dest_disj w
    in
       ([(asl, disj2)], sing (DISJ2 disj1))
    end
    handle HOL_ERR _ => raise ERR "DISJ2_TAC" ""
-val disj2_tac = DISJ2_TAC
+val disj2_tac : tactic = DISJ2_TAC
 
 (*---------------------------------------------------------------------------*
  * Implication elimination                                                   *
@@ -193,9 +200,20 @@ val disj2_tac = DISJ2_TAC
  *                                                                           *
  *---------------------------------------------------------------------------*)
 
-fun MP_TAC thb (asl, w) =
+fun MP_TAC thb (asl, w) _ (* ctxt *) =
    ([(asl, mk_imp (concl thb, w))], sing (fn thimp => MP thimp thb))
-val mp_tac = MP_TAC
+val mp_tac : thm_tactic = MP_TAC
+
+(* ----------------------------------------------------------------------
+    EQ_MP_TAC : thm -> tactic
+
+    |- B           A
+           ==================
+                 B = A
+   ---------------------------------------------------------------------- *)
+
+fun EQ_MP_TAC thB (asl, w) _ (* ctxt *) =
+    ([(asl, mk_eq (concl thB, w))], sing (fn eqth => EQ_MP eqth thB))
 
 (*---------------------------------------------------------------------------*
  * Equality Introduction                                                     *
@@ -207,15 +225,16 @@ val mp_tac = MP_TAC
  *---------------------------------------------------------------------------*)
 
 val EQ_TAC: tactic =
-   fn (asl, t) =>
+   fn (asl, t) => fn _ (* ctxt *) =>
       let
          val (lhs, rhs) = dest_eq t
       in
          ([(asl, mk_imp (lhs, rhs)), (asl, mk_imp (rhs, lhs))],
           fn [th1, th2] => IMP_ANTISYM_RULE th1 th2 | _ => raise Match)
       end
-      handle HOL_ERR _ => raise ERR "EQ_TAC" ""
+      handle HOL_ERR _ => raise ERR "EQ_TAC" "Goal is not a boolean equality"
 val eq_tac = EQ_TAC
+val iff_tac = EQ_TAC
 
 (*---------------------------------------------------------------------------*
  * Universal quantifier                                                      *
@@ -253,7 +272,7 @@ val eq_tac = EQ_TAC
  *---------------------------------------------------------------------------*)
 
 fun X_GEN_TAC x1 : tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       if is_var x1
          then let
                  val (Bvar, Body) = dest_forall w
@@ -275,13 +294,14 @@ fun X_GEN_TAC x1 : tactic =
  *---------------------------------------------------------------------------*)
 
 val GEN_TAC: tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn ctxt =>
       let
          val (Bvar, _) = with_exn dest_forall w (ERR "GEN_TAC" "not a forall")
       in
          X_GEN_TAC
-             (gen_variant Parse.is_constname "" (free_varsl (w :: asl)) Bvar)
-             (asl, w)
+             (gen_variant (Parse.get_is_constname ctxt) ""
+                          (free_varsl (w :: asl)) Bvar)
+             (asl, w) ctxt
       end
 val gen_tac = GEN_TAC
 
@@ -296,12 +316,12 @@ val gen_tac = GEN_TAC
  *---------------------------------------------------------------------------*)
 
 fun SPEC_TAC (t, x) : tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       ([(asl, mk_forall (x, subst [t |-> x] w))], sing (SPEC t))
       handle HOL_ERR _ => raise ERR "SPEC_TAC" ""
 
 fun ID_SPEC_TAC x : tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       ([(asl, mk_forall (x, w))], sing (SPEC x))
       handle HOL_ERR _ => raise ERR "SPEC_TAC" ""
 
@@ -314,7 +334,7 @@ fun ID_SPEC_TAC x : tactic =
  *---------------------------------------------------------------------------*)
 
 fun EXISTS_TAC t : tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       let
          val (Bvar, Body) = dest_exists w
       in
@@ -337,7 +357,7 @@ fun ID_EX_TAC(g as (_,w)) =
  * are not invertible;  only SUBST is.                                       *
  *---------------------------------------------------------------------------*)
 
-fun GSUBST_TAC substfn ths (asl, w) =
+fun GSUBST_TAC substfn ths (asl, w) ctxt =
    let
       val (theta1, theta2, theta3) =
          itlist (fn th => fn (theta1, theta2, theta3) =>
@@ -380,11 +400,13 @@ fun SUBST_OCCS_TAC nlths =
  * Works nicely with tacticals.                                              *
  *---------------------------------------------------------------------------*)
 
-fun SUBST1_TAC rthm = SUBST_TAC [rthm]
+fun SUBST1_TAC rthm : tactic = SUBST_TAC [rthm]
 
 val ignore_fullresult as
     {record_delta = export_ignore, get_global_value = get_ignores,
-     update_global_value = upd_ignores, ...} =
+     get_global_value_of = get_ignores_of,
+     update_global_value = upd_ignores,
+     update_global_value_of = upd_ignores_of, ...} =
     let open ThyDataSexp AncestryData KernelSig
         fun ignore_delta (kn : KernelSig.kernelname) kset = HOLset.add(kset, kn)
         val ignore_adata_info =
@@ -401,19 +423,34 @@ val ignore_fullresult as
                }
     end
 
-fun ignorable th =
+(* Which constants a rule mapped over the assumptions should leave
+   alone, asked of the context the tactic was given rather than of the
+   ambient one.  `RULE_ASSUM_TAC` asks per assumption, which made this
+   the single heaviest ambient read in the system: three quarters of
+   them, across the theories measured in
+   `developers/discussion/context-passing-tactics.md`. *)
+fun ignorable ctxt th =
     let val (f, _) = strip_comb (concl th)
         val {Thy,Name,...} = dest_thy_const f
     in
-      HOLset.member(get_ignores(), {Thy=Thy,Name=Name})
+      HOLset.member(get_ignores_of ctxt, {Thy=Thy,Name=Name})
     end handle HOL_ERR _ => false
 
-fun unignoring kname f x =
-    let val ks0 = get_ignores()
-        val ks = HOLset.delete(ks0, kname) handle HOLset.NotFound => ks0
-    in
-      AncestryData.with_temp_value ignore_fullresult ks f x
-    end
+(* Run `tac` with `kname` taken off the ignore set.
+
+   The set travels in the context, so this hands the tactic an adjusted
+   one rather than assigning to a global for the duration.  A temporary
+   assignment cannot work here: `tac g` only builds the closure that
+   the context is later applied to, so the window closes before the
+   tactic runs.  It read as working only because `ignorable` used to be
+   consulted while the goal was applied, which is inside that window --
+   the sort of coincidence this whole migration exists to remove. *)
+fun unignoring kname (tac : tactic) : tactic =
+    fn g => fn ctxt =>
+       tac g (upd_ignores_of
+                (fn ks => HOLset.delete (ks, kname)
+                          handle HOLset.NotFound => ks)
+                ctxt)
 
 fun unignoringc t =
     let val {Name, Thy, ...} = dest_thy_const t
@@ -425,13 +462,19 @@ fun unignoringc t =
  * Map an inference rule over the assumptions, replacing them.               *
  *---------------------------------------------------------------------------*)
 
+(* `rule'` is built inside the context's scope, not around the tactic:
+   `POP_ASSUM_LIST (...) g` is a closure awaiting the context, so a
+   `rule'` closed over out here would consult whatever was ambient
+   instead of what `unignoring` put in the context. *)
 fun RULE_ASSUM_TAC rule : tactic =
-    let
-      fun rule' th = if ignorable th then th else rule th
-    in
-      POP_ASSUM_LIST
-        (fn asl => MAP_EVERY ASSUME_TAC (rev_itlist (cons o rule') asl []))
-    end
+    fn g => fn ctxt =>
+      let
+        fun rule' th = if ignorable ctxt th then th else rule th
+      in
+        POP_ASSUM_LIST
+          (fn asl => MAP_EVERY ASSUME_TAC (rev_itlist (cons o rule') asl []))
+          g ctxt
+      end
 val rule_assum_tac = RULE_ASSUM_TAC
 
 fun RULE_L_ASSUM_TAC rule : tactic =
@@ -449,7 +492,7 @@ val CHECK_ASSUME_TAC: thm_tactic =
       FIRST [CONTR_TAC gth, ACCEPT_TAC gth, OPPOSITE_TAC gth,
              DISCARD_TAC gth, ASSUME_TAC gth]
 
-val STRIP_ASSUME_TAC = REPEAT_TCL STRIP_THM_THEN CHECK_ASSUME_TAC
+val STRIP_ASSUME_TAC = STRIP_ALL_THEN CHECK_ASSUME_TAC
 val strip_assume_tac = STRIP_ASSUME_TAC
 
 (*---------------------------------------------------------------------------*
@@ -470,10 +513,10 @@ val strip_assume_tac = STRIP_ASSUME_TAC
  *---------------------------------------------------------------------------*)
 
 val STRUCT_CASES_TAC =
-   REPEAT_TCL STRIP_THM_THEN (fn th => SUBST1_TAC th ORELSE ASSUME_TAC th)
+   STRIP_ALL_THEN (fn th => SUBST1_TAC th ORELSE ASSUME_TAC th)
 
 val FULL_STRUCT_CASES_TAC =
-   REPEAT_TCL STRIP_THM_THEN (fn th => SUBST_ALL_TAC th ORELSE ASSUME_TAC th)
+   STRIP_ALL_THEN (fn th => SUBST_ALL_TAC th ORELSE ASSUME_TAC th)
 
 (*---------------------------------------------------------------------------*
  * COND_CASES_TAC: tactic for doing a case split on the condition p          *
@@ -572,8 +615,8 @@ fun FILTER_DISCH_THEN ttac tm = fn (asl, w) =>
 fun FILTER_STRIP_THEN ttac tm =
    FIRST [FILTER_GEN_TAC tm, FILTER_DISCH_THEN ttac tm, CONJ_TAC]
 
-fun DISCH_TAC g =
-   DISCH_THEN ASSUME_TAC g handle HOL_ERR _ => raise ERR "DISCH_TAC" ""
+fun DISCH_TAC g ctxt =
+   DISCH_THEN ASSUME_TAC g ctxt handle HOL_ERR _ => raise ERR "DISCH_TAC" ""
 
 val disch_tac = DISCH_TAC
 
@@ -585,8 +628,8 @@ val CHOOSE_TAC = CHOOSE_THEN ASSUME_TAC
 
 fun X_CHOOSE_TAC x = X_CHOOSE_THEN x ASSUME_TAC
 
-fun STRIP_TAC g =
-   STRIP_GOAL_THEN STRIP_ASSUME_TAC g
+fun STRIP_TAC g ctxt =
+   STRIP_GOAL_THEN STRIP_ASSUME_TAC g ctxt
    handle HOL_ERR _ => raise ERR "STRIP_TAC" ""
 val strip_tac = STRIP_TAC
 
@@ -608,7 +651,7 @@ fun ASM_CASES_TAC t = DISJ_CASES_TAC (SPEC t EXCLUDED_MIDDLE)
  * Also revised to retain assumptions.                                       *
  *---------------------------------------------------------------------------*)
 
-fun REFL_TAC (asl, g) =
+fun REFL_TAC (asl, g) _ (* ctxt *) =
    let
       val (lhs, rhs) = with_exn dest_eq g (ERR "REFL_TAC" "not an equation")
       val asms = itlist ADD_ASSUM asl
@@ -616,6 +659,19 @@ fun REFL_TAC (asl, g) =
       if aconv lhs rhs then ([], K (asms (REFL lhs)))
       else raise ERR "REFL_TAC" "lhs and rhs not alpha-equivalent"
    end
+
+(* ----------------------------------------------------------------------
+    SYM_TAC : flips the direction of an equality goal
+
+        G ?- x = y
+      ==============
+        G ?- y = x
+   ---------------------------------------------------------------------- *)
+
+fun SYM_TAC g ctxt = CONV_TAC (REWR_CONV EQ_SYM_EQ) g ctxt
+                     handle HOL_ERR _ =>
+                            raise ERR "SYM_TAC" "Term not an equality"
+val sym_tac = SYM_TAC
 
 (*---------------------------------------------------------------------------*
  * UNDISCH_TAC - moves one of the assumptions as LHS of an implication       *
@@ -629,7 +685,7 @@ fun REFL_TAC (asl, g) =
  *        [ t1;t2;...;tn;...tz ]  tm ==> t                                   *
  *---------------------------------------------------------------------------*)
 
-fun UNDISCH_TAC wf (asl, w) =
+fun UNDISCH_TAC wf (asl, w) ( _ : Context.t ) =
    if op_mem term_eq wf asl
       then ([(op_set_diff term_eq asl [wf], mk_imp (wf, w))],
             UNDISCH o Lib.trye hd)
@@ -651,7 +707,7 @@ fun UNDISCH_TAC wf (asl, w) =
 local
    fun ER s = ERR "AP_TERM_TAC" s
 in
-   fun AP_TERM_TAC (asl, gl) =
+   fun AP_TERM_TAC (asl, gl) ctxt =
       let
          val (lhs, rhs) = with_exn dest_eq gl (ER "not an equation")
          val (g, x) = with_exn dest_comb lhs (ER "lhs not a comb")
@@ -676,7 +732,7 @@ end
 local
    fun ER s = ERR "AP_THM_TAC" s
 in
-   fun AP_THM_TAC (asl, gl) =
+   fun AP_THM_TAC (asl, gl) ctxt =
       let
          val (lhs, rhs) = with_exn dest_eq gl (ER "not an equation")
          val (g, x) = with_exn dest_comb lhs (ER "lhs not a comb")
@@ -695,7 +751,7 @@ end
 local
    fun ER s = ERR "MK_COMB_TAC" s
 in
-   fun MK_COMB_TAC (asl, w) =
+   fun MK_COMB_TAC (asl, w) ctxt =
       let
          val (lhs, rhs) = with_exn dest_eq w (ER "not an equation")
          val (l1, l2) = with_exn dest_comb lhs (ER "lhs not a comb")
@@ -704,6 +760,7 @@ in
          ([(asl, mk_eq (l1, r1)), (asl, mk_eq (l2, r2))],
           end_itlist (curry MK_COMB))
       end
+   val MK_COMB_TAC : tactic = MK_COMB_TAC
 end
 
 (*---------------------------------------------------------------------------*
@@ -712,15 +769,17 @@ end
 
 val BINOP_TAC = MK_COMB_TAC THENL [AP_TERM_TAC, ALL_TAC]
 
-(*---------------------------------------------------------------------------*
- * ABS_TAC: inverts the ABS inference rule.                                  *
- *                                                                           *
- *   \x. f x = \x. g x                                                       *
- * =====================                                                     *
- *       f x = g x                                                           *
- *                                                                           *
- * Added: TT 2009.12.23                                                      *
- *---------------------------------------------------------------------------*)
+(* ----------------------------------------------------------------------
+    ABS_TAC: inverts the ABS inference rule.
+
+       G ?-  (\x. M) = (\y. N)
+      ========================== (x and y may or may not appear in M, N)
+       G ?-  M[x:=v] = N[y:=v]
+
+    v chosen to be x, y, or some variant as necessary to avoid clashing
+    with existing free variables.
+
+   ---------------------------------------------------------------------- *)
 
 local
    fun ER s = ERR "ABS_TAC" s
@@ -730,12 +789,21 @@ in
          val (lhs, rhs) = with_exn dest_eq gl (ER "not an equation")
          val (x, g) = with_exn dest_abs lhs (ER "lhs not an abstraction")
          val (y, f) = with_exn dest_abs rhs (ER "rhs not an abstraction")
-         val f_thm = if aconv x y then REFL rhs else ALPHA_CONV x rhs
-         val (_, f') = dest_abs (rand (concl f_thm))
+         val avoids = FVL (gl::asl) empty_tmset
+         val var_to_use =
+             if HOLset.member(avoids, x) then
+               if HOLset.member(avoids, y) then
+                 variant (HOLset.listItems avoids) x
+               else y
+             else x
+         val (dty,rty) = dom_rng (type_of lhs)
+         val funeq_rwt = FUN_EQ_THM
+                           |> INST_TYPE [alpha |-> dty, beta |-> rty]
+                           |> SPECL [lhs, rhs]
       in
-         ([(asl, mk_eq (g, f'))],
-          CONV_RULE (RHS_CONV (K (GSYM f_thm))) o ABS x o Lib.trye hd)
-      end
+        CONV_TAC (K funeq_rwt) THEN X_GEN_TAC var_to_use THEN
+        CONV_TAC (BINOP_CONV BETA_CONV)
+      end (asl,gl)
 end
 
 (*---------------------------------------------------------------------------*
@@ -751,7 +819,7 @@ val ntac = NTAC
  *---------------------------------------------------------------------------*)
 
 fun WEAKEN_TAC P : tactic =
-   fn (asl, w) =>
+   fn (asl, w) => fn _ (* ctxt *) =>
       let
          fun robustP x = Lib.trye P x handle HOL_ERR _ => false
          val (tm, rst) =
@@ -769,7 +837,7 @@ fun WEAKEN_TAC P : tactic =
 fun MATCH_ACCEPT_TAC thm : tactic =
    let
       val fmatch = PART_MATCH Lib.I thm
-      fun atac (asl, w) = ([], Lib.K (fmatch w))
+      fun atac (asl, w) _ (* ctxt *) = ([], Lib.K (fmatch w))
    in
       REPEAT GEN_TAC THEN atac
    end
@@ -823,17 +891,19 @@ in
         val hyptyvars = HOLset.listItems (hyp_tyvars thm)
         val (gvs, imp) = strip_forall (concl thm)
       in
-          fn (A,g) =>
+          fn (A,g) => fn _ (* ctxt *) =>
              let
                  val (ant, conseq) =
-                     with_exn dest_imp imp (ERR "MATCH_MP_TAC" "Not an implication")
+                     with_exn dest_imp imp
+                              (ERR "MATCH_MP_TAC" "Not an implication")
                  val (cvs, con) = strip_forall conseq
                  val th1 = SPECL cvs (UNDISCH (SPECL gvs thm))
                  val (vs, evs) = partition (C Term.free_in con) gvs
                  val th2 = uncurry DISCH (itlist efn evs (ant, th1))
                  val (vs, gl) = strip_forall g
                  val ins = match_terml hyptyvars lconsts con gl
-                           handle HOL_ERR _ => raise ERR "MATCH_MP_TAC" "No match"
+                           handle HOL_ERR _ =>
+                                  raise ERR "MATCH_MP_TAC" "No match"
                  val ith = INST_TY_TERM ins th2
                  val gth = GENL vs (UNDISCH ith)
                            handle HOL_ERR _ => raise ERR "MATCH_MP_TAC"
@@ -873,6 +943,51 @@ fun irule_at pos thm =
     end
 val IRULE_TAC = irule
 
+(* --------------------------------------------------------------------------*
+ * TRANS_TAC: Takes a 'transitivity' theorem of the form                     *
+ *                                                                           *
+ *       |- !x y z. R1 x y /\ R2 y z ==> R3 x z                              *
+ *                                                                           *
+ * and a term ‘t’, TRANS_TAC produces a tactic that reduces a goal with      *
+ * conclusion of the form ‘R3 s u’ to one with conclusion ‘R1 st /\ R2 t u’: *
+ *                                                                           *
+ *     A |- R3 s u                                                           *
+ * ======================= TRANS_TAC (|- !. R1 x y /\ R2 y z ==> R3 x z) ‘t’ *
+ *  A |- R1 s t /\ R2 t u                                                    *
+ * --------------------------------------------------------------------------*)
+(*
+ NOTE: This tactic was ported from HOL-Light by Chun Tian, 26/4/2024.
+
+"The effect of {TRANS_TAC th t} can often be replicated by the more primitive
+tactic sequence {MATCH_MP_TAC th THEN EXISTS_TAC t}. The use of {TRANS_TAC} is
+not only less verbose, but it is also more general in that it ensures correct
+type-instantiation of the theorem, whereas in highly polymorphic theorems the
+use of {MATCH_MP_TAC} may leave the wrong types for the subsequent {EXISTS_TAC}
+step." -- from HOL-Light's "TRANS_TAC.hlp".
+ *)
+
+(* NOTE: if the ‘op’ of ‘op x y’ is actually an overload of the negation of
+   another constant, e.g. ‘x < y’ is actually an overload of ‘~(y <= x)’, the
+   following versions of lhand and rand will still correctly retrieve x and y,
+   resp. With the original lhand/rand such terms (is_neg) are not valid inputs.
+ *)
+fun lhand' tm =
+    if is_neg tm then rand (dest_neg tm) else lhand tm;
+
+fun rand' tm =
+    if is_neg tm then lhand (dest_neg tm) else rand tm;
+
+fun TRANS_TAC th tm (gl as (asl,w)) = let
+    val ctm = snd(strip_forall(concl th));
+    val (cl,cr) = dest_conj(lhand ctm);
+    val x = lhand' cl and y = rand' cl and z = rand' cr;
+    val l = lhand' w and r = rand' w;
+    val ilist : (hol_type, hol_type)Lib.subst =
+        flatten (map2 match_type (map type_of [x,y,z]) (map type_of [l,tm,r]));
+    val th' = INST_TYPE ilist th
+in
+    (MATCH_MP_TAC th' THEN EXISTS_TAC tm) gl
+end
 
 (* ----------------------------------------------------------------------*
  * Definition of the standard resolution tactics IMP_RES_TAC and RES_TAC *
@@ -895,13 +1010,13 @@ val IRULE_TAC = irule
 local
    open Thm_cont
 in
-   fun IMP_RES_TAC th g =
-      IMP_RES_THEN (REPEAT_GTCL IMP_RES_THEN STRIP_ASSUME_TAC) th g
-      handle HOL_ERR _ => ALL_TAC g
+   fun IMP_RES_TAC th g ctxt =
+      IMP_RES_THEN (REPEAT_GTCL IMP_RES_THEN STRIP_ASSUME_TAC) th g ctxt
+      handle HOL_ERR _ => ALL_TAC g ctxt
 
-   fun RES_TAC g =
-      RES_THEN (REPEAT_GTCL IMP_RES_THEN STRIP_ASSUME_TAC) g
-      handle HOL_ERR _ => ALL_TAC g
+   fun RES_TAC g ctxt =
+      RES_THEN (REPEAT_GTCL IMP_RES_THEN STRIP_ASSUME_TAC) g ctxt
+      handle HOL_ERR _ => ALL_TAC g ctxt
 
    val res_tac = RES_TAC
    val imp_res_tac = IMP_RES_TAC
@@ -913,12 +1028,12 @@ end
 
 (* First we need a variant on THEN. *)
 
-fun THENF (tac1: tactic, tac2: tactic, tac3: tactic) g =
-    case tac1 g of
+fun THENF (tac1: tactic, tac2: tactic, tac3: tactic) g ctxt =
+    case tac1 g ctxt of
        (h::rst, p) =>
           let
-             val (gl0, p0) = tac2 h
-             val (gln, pn) = unzip (map tac3 rst)
+             val (gl0, p0) = tac2 h ctxt
+             val (gln, pn) = unzip (map (fn g => tac3 g ctxt) rst)
              val gll = gl0 @ flatten gln
           in
              (gll, p o mapshape (length gl0 :: map length gln) (p0 :: pn))
@@ -944,7 +1059,7 @@ val BETA_TAC = CONV_TAC (DEPTH_CONV BETA_CONV)
 fun HO_MATCH_ACCEPT_TAC thm =
    let
       val fmatch = HO_PART_MATCH I thm
-      fun atac (asl, w) = ([], K (fmatch w))
+      fun atac (asl, w) _ (* ctxt *) = ([], K (fmatch w))
    in
       REPEAT GEN_TAC THEN atac
    end
@@ -958,7 +1073,7 @@ fun HO_BACKCHAIN_TAC th =
    let
       val match_fn = HO_PART_MATCH (snd o dest_imp_only) th
    in
-      fn (asl, w) =>
+      fn (asl, w) => fn _ (* ctxt *) =>
          let
             val th1 = match_fn w
             val (ant, _) = dest_imp_only (concl th1)
@@ -986,7 +1101,7 @@ fun HO_MATCH_MP_TAC th =
          handle HOL_ERR _ => raise ERR "HO_MATCH_MP_TAC" "Bad theorem"
       val match_fun = HO_PART_MATCH (snd o dest_imp_only) sth
    in
-      fn (asl, w) =>
+      fn (asl, w) => fn _ (* ctxt *) =>
          let
             val xth = match_fun w
             val lant = fst (dest_imp_only (concl xth))
@@ -1066,7 +1181,7 @@ fun IMP2AND_CONV t =
       then (RAND_CONV IMP2AND_CONV THENC TRY_CONV (REWR_CONV AND_IMP_INTRO)) t
    else ALL_CONV t
 
-fun DEEP_INTROk_TAC th tac (asl, g) =
+fun DEEP_INTROk_TAC th tac (asl, g) ctxt =
    let
       val th = th |> CONV_RULE (TOP_DEPTH_CONV RIGHT_IMP_FORALL_CONV THENC
                                 STRIP_QUANT_CONV IMP2AND_CONV)
@@ -1096,7 +1211,7 @@ fun DEEP_INTROk_TAC th tac (asl, g) =
          handle HOL_ERR _ (* if match fails *) => false
       fun continuation subt =
          (CONV_TAC (UNBETA_CONV subt) THEN
-          MATCH_MP_TAC th THEN BETA_TAC THEN tac) (asl, g)
+          MATCH_MP_TAC th THEN BETA_TAC THEN tac) (asl, g) ctxt
    in
       case bvk_find_term test continuation g of
          SOME result => result
@@ -1175,29 +1290,46 @@ val impl_keep_tac =
   disch_then (provehyp_then (fn lth => fn rth => assume_tac lth >> mp_tac rth))
 
 
+(*
+Like EVERY_ASSUM but does not fail if a ttac fails
+fails if the ttac never succeeds
+*)
+local
+fun every_try [] = NO_TAC
+  | every_try (t::ts) =
+     (IF t (EVERY (map TRY ts)) (every_try ts))
+fun map_every_try tacf lst = every_try (map tacf lst)
+in
+val every_assum_try = ASSUM_LIST o map_every_try
+end
+
 open mp_then
 fun dGEN sel pos k = sel o mp_then pos k
 val drule                  = dGEN first_assum   (Pos hd) mp_tac
 val rev_drule              = dGEN last_assum    (Pos hd) mp_tac
 val dxrule                 = dGEN first_x_assum (Pos hd) mp_tac
 val rev_dxrule             = dGEN last_x_assum  (Pos hd) mp_tac
+val every_drule            = dGEN every_assum_try (Pos hd) mp_tac
 
 fun drule_then k           = dGEN first_assum   (Pos hd)    k
 fun dxrule_then k          = dGEN first_x_assum (Pos hd)    k
 fun rev_drule_then k       = dGEN last_assum    (Pos hd)    k
 fun rev_dxrule_then k      = dGEN last_x_assum  (Pos hd)    k
+fun every_drule_then k     = dGEN every_assum_try (Pos hd)  k
 
 fun drule_at p             = dGEN first_assum       p    mp_tac
 fun dxrule_at p            = dGEN first_x_assum     p    mp_tac
 fun rev_drule_at p         = dGEN last_assum        p    mp_tac
 fun rev_dxrule_at p        = dGEN last_x_assum      p    mp_tac
+fun every_drule_at p       = dGEN every_assum_try   p    mp_tac
 
 fun drule_at_then p k      = dGEN first_assum       p       k
 fun dxrule_at_then p k     = dGEN first_x_assum     p       k
 fun rev_drule_at_then p k  = dGEN last_assum        p       k
 fun rev_dxrule_at_then p k = dGEN last_x_assum      p       k
+fun every_drule_at_then p k = dGEN every_assum_try  p       k
 
-fun isfa_imp th = th |> concl |> strip_forall |> #2 |> is_imp
+fun isfa_imp th = th |> concl |> strip_forall |> #2 |> is_imp_only
 fun dall_prim k fa ith0 g =
   REPEAT_GTCL (fn ttcl => fn th => fa (mp_then (Pos hd) ttcl th))
               (k o assert (not o isfa_imp))

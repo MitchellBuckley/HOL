@@ -14,6 +14,8 @@ struct
 
 open HolKernel Parse boolLib folTools folMapping;
 
+exception OutOfDateTerm of string
+
 (* ------------------------------------------------------------------------- *)
 (* Chatting and error handling.                                              *)
 (* ------------------------------------------------------------------------- *)
@@ -205,12 +207,15 @@ fun contains s =
 fun const_scheme c =
   let val {Thy, Name, ...} = dest_thy_const c
   in prim_mk_const {Name = Name, Thy = Thy}
+     handle HOL_ERR _ => raise OutOfDateTerm Name
   end;
 
 fun trap f g x =
   f x
-  handle e as HOL_ERR {message, ...} =>
-    (if not (contains "proof translation error" message) then raise e else
+  handle e as HOL_ERR herr =>
+    (if not (contains "proof translation error" (message_of herr)) then
+       raise e
+     else
        (chatting 1 andalso
         chat "metis: proof translation error: trying again with types.\n";
         g x));
@@ -360,9 +365,9 @@ local
   fun mk_set ts = Binaryset.addList (Binaryset.empty compare, ts);
   fun member x s = Binaryset.member (s,x);
 
-  val empty : (term, bool * int) Binarymap.dict = Binarymap.mkDict compare;
-  fun update ts x n = Binarymap.insert (ts,x,n);
-  fun lookup ts x = Binarymap.peek (ts,x);
+  val empty : (bool * int) Termtab.table = Termtab.empty;
+  fun update ts x n = Termtab.update (x,n) ts;
+  fun lookup ts x = Termtab.lookup ts x;
 
   fun bump Full _ = Full
     | bump Higher Full = Full
@@ -412,7 +417,15 @@ local
     end;
 in
   fun classify fms = order (First,empty) fms
-    handle HOL_ERR _ => raise BUG "metisTools.classify" "shouldn't fail";
+    handle
+    HOL_ERR e => (
+      print "metisTools.classify: error in classifying:\n";
+      print (format_ERR e);
+      raise BUG "metisTools.classify" "shouldn't fail"
+    )
+  | OutOfDateTerm nm =>
+    raise ERR "classify"
+          ("Input thm includes out-of-date constant with name " ^ nm)
 end;
 
 fun METIS_TTAC (cs,ths) =

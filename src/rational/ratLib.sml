@@ -3,11 +3,12 @@ struct
 
 open HolKernel boolLib Parse bossLib;
 
-open simpLib pairLib integerTheory intLib intExtensionTheory jbUtils
-     schneiderUtils fracTheory fracLib fracUtils ratTheory ratUtils
-     integerRingLib ratSyntax;
+open simpLib pairLib integerTheory intLib intExtensionTheory
+     schneiderUtils fracTheory fracLib fracUtils ratTheory ratUtils ratSyntax;
 
 val ERR = mk_HOL_ERR "ratLib";
+
+val IMP_AND_RULE = REWRITE_RULE[GSYM AND_IMP_INTRO];
 
 (*--------------------------------------------------------------------------
  *  imported from fracLib
@@ -83,26 +84,26 @@ fun RAT_ADDSUB_TAC t1 t2 = SUBST1_TAC (SUBS [SPEC t2 (GSYM RAT_ADD_RINV)] (SPEC 
  *  RAT_EQ_LMUL_TAC : tactic
  *--------------------------------------------------------------------------*)
 
-fun RAT_EQ_LMUL_TAC term1 (asm_list,goal) =
+fun RAT_EQ_LMUL_TAC term1 (asm_list,goal) ctxt =
 let
         val (eq_lhs,eq_rhs) = dest_eq goal;
 in
         SUBST_TAC[GSYM (UNDISCH_ALL (SPECL [eq_lhs,eq_rhs,term1] RAT_EQ_LMUL))]
 end
-        (asm_list,goal)
+        (asm_list,goal) ctxt
 handle HOL_ERR _ => raise ERR "RAT_EQ_RMUL_TAC" "";
 
 (*--------------------------------------------------------------------------
  *  RAT_EQ_RMUL_TAC : tactic
  *--------------------------------------------------------------------------*)
 
-fun RAT_EQ_RMUL_TAC term1 (asm_list,goal) =
+fun RAT_EQ_RMUL_TAC term1 (asm_list,goal) ctxt =
 let
         val (eq_lhs,eq_rhs) = dest_eq goal;
 in
         SUBST_TAC[GSYM (UNDISCH_ALL (SPECL [eq_lhs,eq_rhs,term1] RAT_EQ_RMUL))]
 end
-        (asm_list,goal)
+        (asm_list,goal) ctxt
 handle HOL_ERR _ => raise ERR "RAT_EQ_RMUL_TAC" "";
 
 (*==========================================================================
@@ -162,7 +163,7 @@ in
       val subst_list =
           map (fn x => fst(x) |-> snd(x)) (ListPair.zip (arg_vars,arg_thms));
       (* subst_term: t1 = top_rator arg_vars[1] ... arg_vars[n] *)
-      val subst_term =  mk_eq (t1 , list_mk_comb (top_rator,arg_vars))
+      val subst_term = mk_eq (t1 , list_mk_comb (top_rator,arg_vars))
 
       val thm1 = SUBST subst_list subst_term thm;
       val (thm1_lhs, thm1_rhs) = dest_eq(concl thm1);
@@ -240,7 +241,7 @@ fun RAT_STRICT_CALC_TAC (asm_list,goal) =
  *  assumptions that were needed for the simplification are added to the goal
  *--------------------------------------------------------------------------*)
 
-fun RAT_CALC_TAC (asm_list,goal) =
+fun RAT_CALC_TAC (asm_list,goal) (_ : Context.t) =
         let
                         (* extract terms of type ``:rat`` *)
                 val rat_terms = extract_rat goal;
@@ -432,10 +433,8 @@ val RAT_ELIMINATE_MINV_TAC = CONV_TAC RAT_ELIMINATE_MINV_CONV;
  * rewrite rules to calculate rational expressions
  *--------------------------------------------------------------------------*)
 
-(* rewrites to calculate operations on integers
-   (TODO) remove dependencies: numRingTheory and integerRingTheory
- *)
-local open numeralTheory numRingTheory integerRingTheory in
+(* rewrites to calculate operations on integers *)
+local open numeralTheory in
 
 val num_rewrites =
    [numeral_distrib, numeral_eq, numeral_suc, numeral_iisuc, numeral_add,
@@ -502,18 +501,8 @@ fun mk_rvar s = mk_var(s, rat_ty);
 val x = mk_rvar "x"
 val y = mk_rvar "y"
 val z = mk_rvar "z"
-val l_asscomm = prove(
-  mk_eq(mk_rat_add(mk_rat_add(x,y), z),
-        mk_rat_add(mk_rat_add(x,z), y)),
-  CONV_TAC (BINOP_CONV (REWR_CONV (GSYM ratTheory.RAT_ADD_ASSOC))) >>
-  CONV_TAC (LAND_CONV (RAND_CONV (REWR_CONV ratTheory.RAT_ADD_COMM))) >>
-  REFL_TAC);
-val r_asscomm = prove(
-  mk_eq(mk_rat_add(x, mk_rat_add(y, z)),
-        mk_rat_add(y, mk_rat_add(x,z))),
-  CONV_TAC (BINOP_CONV (REWR_CONV ratTheory.RAT_ADD_ASSOC)) >>
-  CONV_TAC (LAND_CONV (LAND_CONV (REWR_CONV ratTheory.RAT_ADD_COMM))) >>
-  REFL_TAC);
+val l_asscomm = SPECL [x, y, z] ratTheory.RAT_ADD_ASSOC_COMM_L
+val r_asscomm = SPECL [x, y, z] ratTheory.RAT_ADD_ASSOC_COMM_R
 
 val one_r = ratSyntax.mk_rat_of_num (numSyntax.mk_numeral Arbnum.one)
 

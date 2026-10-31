@@ -45,6 +45,7 @@ val imp =     U 0x21D2
 val neg =     U 0x00AC
 val iff =     U 0x21D4
 val not_iff = U 0x21CE
+val fwAmpersand = U 0xFF06
 
 (* not constants, but might be useful *)
 val neq =       U 0x2260
@@ -218,18 +219,16 @@ fun foldthis (s, (sm,im,i)) =
     let
       val ((_, k), _) = valOf (UTF8.getChar s)
     in
-      (Binarymap.insert(sm,s,i), Binarymap.insert(im,k,i), i + 1)
+      (Symtab.update (s,i) sm, Inttab.update (k,i) im, i + 1)
     end
 val (supdigits_smap, supdigits_imap, _) =
-    List.foldl foldthis (Binarymap.mkDict String.compare,
-                         Binarymap.mkDict Int.compare,
-                         0)
+    List.foldl foldthis (Symtab.empty, Inttab.empty, 0)
                [sup_0, sup_1, sup_2, sup_3, sup_4, sup_5, sup_6, sup_7,
                 sup_8, sup_9]
-fun supDigitVal s = Binarymap.peek(supdigits_smap, s)
-fun supDigitVal_i i = Binarymap.peek(supdigits_imap, i)
+fun supDigitVal s = Symtab.lookup supdigits_smap s
+fun supDigitVal_i i = Inttab.lookup supdigits_imap i
 
-fun isSupDigit_i i = isSome (Binarymap.peek(supdigits_imap, i))
+fun isSupDigit_i i = isSome (Inttab.lookup supdigits_imap i)
 fun isSupDigit s = isSome (supDigitVal s)
 
 

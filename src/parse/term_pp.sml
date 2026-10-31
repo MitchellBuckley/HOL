@@ -5,10 +5,43 @@ open Portable HolKernel term_grammar
      HOLtokens HOLgrammars GrammarSpecials
      PrecAnalysis
 
+infix >> >-
+
 val PP_ERR = mk_HOL_ERR "term_pp";
 
 fun PRINT s = print (s ^ "\n")
 fun LEN l = Int.toString (length l)
+
+(* Pretty-printer variants of Term.dest_thy_const / Type.dest_thy_type:
+   apply Globals.oldify to Name/Tyop when the underlying constant or
+   type-op has been retired, so retired constants don't match the
+   special-syntax hooks below and print with an "old"-tagged name.
+   Term.dest_thy_const / Type.dest_thy_type now skip this check
+   because they sit on the hot path (BloomApprox term hashing, kernel
+   sdest_monop/binop, is-a-specific-constant checks, etc.).
+
+   Call through Term.display_name_of_id / Type.display_name_of_id
+   (exposed in FinalTerm / FinalType) so this works uniformly under
+   both --stdknl (which uses Context.termsig / typesig's baked field)
+   and --expk (which uses its own Context.Data slot). *)
+fun dest_thy_const t =
+    let val {Thy, Name = id, Ty} = Term.dest_thy_constid t
+    in {Thy = Thy, Name = Term.display_name_of_id id, Ty = Ty}
+    end
+
+fun dest_thy_type ty =
+    let val {Thy, Tyop = id, Args} = Type.dest_thy_typeid ty
+    in {Thy = Thy, Tyop = Type.display_name_of_id id, Args = Args}
+    end
+
+(* Term.dest_term's CONST case calls Term.dest_thy_const, which is fast
+   and returns plain (non-oldified) names.  For pretty-printing we want
+   the oldified name so retired constants print with an "old"-tag; use
+   the shadowed dest_thy_const above. *)
+fun dest_term t =
+    case Term.dest_term t of
+        CONST _ => CONST (dest_thy_const t)
+      | other => other
 fun option_to_string p NONE = "NONE"
   | option_to_string p (SOME x) = "SOME(" ^ p x ^ ")"
 
@@ -91,16 +124,11 @@ fun convert_case tm =
       end
 
 val prettyprint_cases = ref true;
-val prettyprint_cases_dt = ref false;
 val _ = register_btrace ("pp_cases", prettyprint_cases)
-val _ = register_btrace ("pp_cases_dt", prettyprint_cases_dt)
 
 val {get = read_qblock_smash, ...} =
     create_trace {name = "PP.qblock_smash_limit", max = 1000,
                   initial = 4}
-
-fun prettyprint_cases_name () =
-    if !prettyprint_cases_dt then "dtcase" else "case";
 
 
 
@@ -228,7 +256,7 @@ fun pneeded_by_style (rr: term_grammar.rule_record, pgrav, fname, fprec) =
   | OnlyIfNecessary => false
   | NotEvenIfRand => false
   | ParoundName => grav_name pgrav <> fname
-  | ParoundPrec => grav_prec pgrav <> fprec
+  | ParoundPrec => grav_prec pgrav = fprec
   | IfNotTop {realonly=true} => pgrav <> RealTop
   | IfNotTop {realonly=false} => pgrav <> RealTop andalso pgrav <> Top
 
@@ -530,7 +558,7 @@ fun pp_term (G : grammar) TyG backend = let
     fun val_insert (tstamp,r) NONE = [(n,tstamp,r)]
       | val_insert (tstamp,r) (SOME l) = sortinsert (tstamp,r) l
     fun myinsert ((k, (tstamp, r)), acc) = let
-      val existing = Binarymap.peek(acc, k)
+      val existing = Symtab.lookup acc k
       val newvalue =
         case existing of
           NONE => [(n,tstamp,r)]
@@ -539,15 +567,13 @@ fun pp_term (G : grammar) TyG backend = let
           if tstamp > t' then (n,tstamp,r)::old::rest
           else old::(n,tstamp,r)::rest
     in
-      Binarymap.insert(acc, k, newvalue)
+      Symtab.update (k, newvalue) acc
     end
   in
     (List.foldl myinsert acc keys_n_rules)
   end
-  val rule_table = List.foldl insert
-                              (Binarymap.mkDict String.compare)
-                              (term_grammar.rules G)
-  fun lookup_term s = Binarymap.peek(rule_table, s)
+  val rule_table = List.foldl insert Symtab.empty (term_grammar.rules G)
+  fun lookup_term s = Symtab.lookup rule_table s
   val comb_prec = #1 (hd (valOf (lookup_term fnapp_special)))
     handle Option =>
       raise PP_ERR "pp_term" "Grammar has no function application"
@@ -980,7 +1006,7 @@ fun pp_term (G : grammar) TyG backend = let
                 pr_vstruct bv >> add_break (1,0) >>
                 record_bvars (free_vars (bv2term bv)) (recurse rest)
         in
-          block INCONSISTENT 2 (recurse vsl)
+          block INCONSISTENT 0 (recurse vsl)
         end
 
     fun pr_vstrblock (tok, _, vsl0) =
@@ -1970,7 +1996,7 @@ fun pp_term (G : grammar) TyG backend = let
                              )
                    in
                      p (block PP.CONSISTENT 0
-                            (add_string (prettyprint_cases_name ()) >>
+                            (add_string "case" >>
                              add_break(1,2) >>
                              pr_term split_on Top Top Top (decdepth depth) >>
                              add_break(1,0) >> add_string "of") >>

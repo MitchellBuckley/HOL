@@ -1,12 +1,20 @@
 *Script
 *Theory.sig
 *Theory.sml
+*Theory.html
 *Theory.dat
+*.dumpedheap
+!Theory.sig
+!Theory.sml
 *.uo
 *.ui
 *.o
+.hol
+.hol-vscode
+*.tr
+*.tr.gz
+.holobjs
 .hollogs
-.HOLMK
 *.lex.sml
 *.grm.sig
 *.grm.sml
@@ -53,14 +61,14 @@ tools/Holmake/Parser.sig
 tools/Holmake/Parser.sml
 
 sigobj/*
-tools/hol-mode.el
 tools/quote-filter/filter.sml
 tools/quote-filter/quote-filter
 tools/quote-filter/selftest
-tools/vim/filetype.vim
-tools/vim/hol-config.sml
-tools/vim/hol.vim
-tools/vim/vimhol.sml
+tools/editor-modes/emacs/hol-mode.el
+tools/editor-modes/vim/filetype.vim
+tools/editor-modes/vim/hol-config.sml
+tools/editor-modes/vim/hol.vim
+tools/editor-modes/vim/vimhol.sml
 tools-poly/build-logs
 tools/build-stamp
 tools/lastbuildoptions
@@ -68,9 +76,10 @@ tools/build-logs
 
 help/Docfiles/*.txt
 help/Docfiles/HTML/*
+help/generated-alias-docs/
 help/HOLindex.html
-help/index.html
 help/HOL.Help
+help/HOL.LanderFragment.html
 help/src-sml/htmlsigs
 help/src-sml/index.tex
 help/src-sml/index.txt
@@ -79,6 +88,7 @@ help/theorygraph/theories.dot
 help/theorygraph/theories.imap
 help/theorygraph/theories.svg
 help/theorygraph/theories.pdf
+help/theorygraph/thypaths.txt
 
 src/bool/SharingTables.*
 src/emit/ML/*.sml
@@ -132,3 +142,9 @@ examples/l3-machine-code/**/*-heap
 *Script_ttt.sml
 *.tttsave
 /TAGS
+/.claude/*
+!/.claude/skills/
+/.codex/
+/.pi/
+CLAUDE.local.md
+__pycache__

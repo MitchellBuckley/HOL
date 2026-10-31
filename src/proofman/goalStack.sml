@@ -165,29 +165,34 @@ local
                end
     | expand_msg _ _ = imp_err "3" ;
 in
-fun expandf _ (GSTK{prop=PROVED _, ...}) =
-       raise ERR "expandf" "goal has already been proved"
-  | expandf tac (GSTK{prop as POSED g, stack,final}) =
+fun expandf_in _ _ (GSTK{prop=PROVED _, ...}) =
+       raise ERR "expandf_in" "goal has already been proved"
+  | expandf_in ctxt tac (GSTK{prop as POSED g, stack,final}) =
      let val arg = (case stack of [] => g | tr::_ => hd (#goals tr))
-         val (glist,vf) = tac arg
+         val (glist,vf) = tac arg ctxt
          val dpth = length stack
          val gs = return(GSTK{prop=prop,final=final,
                               stack={goals=glist, validation=vf} :: stack})
      in expand_msg dpth gs ; gs end
 
-(* note - expand_listf, unlike expandf, replaces the top member of the stack *)
-fun expand_listf ltac (GSTK{prop=PROVED _, ...}) =
-        raise ERR "expand_listf" "goal has already been proved"
-  | expand_listf ltac (GSTK{prop as POSED g, stack = [], final}) =
-    expand_listf ltac (GSTK{prop = POSED g,
+(* note - expand_listf_in, unlike expandf_in, replaces the top member of
+   the stack *)
+fun expand_listf_in _ _ (GSTK{prop=PROVED _, ...}) =
+        raise ERR "expand_listf_in" "goal has already been proved"
+  | expand_listf_in ctxt ltac (GSTK{prop as POSED g, stack = [], final}) =
+    expand_listf_in ctxt ltac (GSTK{prop = POSED g,
       stack = [{goals = [g], validation = hd}], final = final})
-  | expand_listf ltac (GSTK{prop, stack as {goals,validation}::rst, final}) =
-    let val (new_goals, new_vf) = ltac goals
+  | expand_listf_in ctxt ltac
+                    (GSTK{prop, stack as {goals,validation}::rst, final}) =
+    let val (new_goals, new_vf) = ltac goals ctxt
       val dpth = length stack - 1 (* because we don't augment the stack *)
       val new_gs = return (GSTK{prop=prop, final=final,
         stack={goals=new_goals, validation=validation o new_vf} :: rst})
     in expand_msg dpth new_gs ; new_gs end ;
 end ;
+
+fun expandf tac gs = expandf_in (Context.snapshot()) tac gs
+fun expand_listf ltac gs = expand_listf_in (Context.snapshot()) ltac gs
 
 fun expand tac gs = expandf (Tactical.VALID tac) gs;
 fun expand_list ltac gs = expand_listf (Tactical.VALID_LT ltac) gs;
@@ -235,16 +240,16 @@ fun check_vars (g as (asl,w)) =
           let
             val (nm,ty_s) = (I ## ty2s) (dest_var v)
           in
-            case Binarymap.peek(acc, nm) of
-                NONE => Binarymap.insert(acc, nm, [ty_s])
-              | SOME vs => Binarymap.insert(acc, nm, ty_s::vs)
+            case Symtab.lookup acc nm of
+                NONE => Symtab.update (nm, [ty_s]) acc
+              | SOME vs => Symtab.update (nm, ty_s::vs) acc
           end
-      val m = HOLset.foldl foldthis (Binarymap.mkDict String.compare) fvs
-      fun foldthis (nm,vtys,msg) =
+      val m = HOLset.foldl foldthis Symtab.empty fvs
+      fun foldthis (nm,vtys) msg =
           if length vtys > 1 then
             ("  " ^ nm ^ " : " ^ String.concatWith ", " vtys) :: msg
           else msg
-      val msg = Binarymap.foldl foldthis [] m
+      val msg = Symtab.fold foldthis m []
     in
       if null msg then nothing
       else (
@@ -336,17 +341,14 @@ fun ppgoal (g as (asl,w)) =
 
    val goal_printer = ref (Parse.mlower o ppgoal)
 in
- val mppgoal = ppgoal
+ val pr_goal = ppgoal
  val std_pp_goal = Parse.mlower o ppgoal
  val pp_goal = !goal_printer
  fun set_goal_pp pp = !goal_printer before (goal_printer := pp)
 end;
 
-(* not clear that this function is used; certainly, default interactive system
-   uses Manager.sml's printer instead. *)
 fun pp_gstk gstk =
  let open smpp
-     val pr_goal = mppgoal
      fun pr (GSTK{prop = POSED g, stack = [], ...}) =
              block Portable.CONSISTENT 0 (
                add_string"Initial goal:" >> add_newline >> add_newline >>
@@ -399,11 +401,13 @@ fun pp_gstk gstk =
 
 val pp_gstk = Parse.mlower o pp_gstk
 
-fun print_tac pfx g = let
+fun print_tac pfx g ctxt = let
 in
   print pfx;
   HOLPP.prettyPrint(print,!Globals.linewidth) (pp_goal g);
-  Tactical.ALL_TAC g
+  Tactical.ALL_TAC g ctxt
 end
+
+fun note_tac msg g ctxt = (print (msg ^ "\n"); Tactical.ALL_TAC g ctxt)
 
 end (* goalStack *)

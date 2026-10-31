@@ -9,10 +9,12 @@
 (*                 mind.                                                 *)
 (* ===================================================================== *)
 
-open HolKernel Parse
-open Unicode TexTokenMap
+Theory bool[bare]
+Libs
+  HolKernel Parse TexTokenMap Portable GrammarSpecials[qualified]
+  boolpp[qualified]
 
-val _ = new_theory "bool";
+open Unicode
 
 (*---------------------------------------------------------------------------*
  *             BASIC DEFINITIONS                                             *
@@ -29,7 +31,7 @@ val _ = TeX_notation {hol = UChar.lambda, TeX = ("\\HOLTokenLambda{}", 1)}
 val _ = TeX_notation {hol = "@", TeX = ("\\HOLTokenHilbert{}", 1)}
 
 (* iff *)
-val _ = overload_on ("<=>", “(=) : bool -> bool -> bool”)
+Overload "<=>" = “(=) : bool -> bool -> bool”
 val _ = set_fixity "<=>" (Infix(NONASSOC, 100))
 val _ = unicode_version {u = UChar.iff, tmnm = "<=>"}
 val _ = TeX_notation {hol = "<=>", TeX = ("\\HOLTokenEquiv{}",3)}
@@ -54,32 +56,46 @@ val _ = TeX_notation {hol = "if",   TeX = ("\\HOLKeyword{if}", 2)}
 val _ = TeX_notation {hol = "then", TeX = ("\\HOLKeyword{then}", 4)}
 val _ = TeX_notation {hol = "else", TeX = ("\\HOLKeyword{else}", 4)}
 
+(* type syntax *)
+val _ = TeX_notation {hol = "->",   TeX = ("\\HOLTokenMap{}", 1)}
+val _ = TeX_notation {hol = "'a",   TeX = ("\\alpha{}", 1)}
+val _ = TeX_notation {hol = "'b",   TeX = ("\\beta{}", 1)}
+val _ = TeX_notation {hol = "'c",   TeX = ("\\gamma{}", 1)}
+val _ = TeX_notation {hol = "'d",   TeX = ("\\delta{}", 1)}
+val _ = TeX_notation {hol = "'e",   TeX = ("\\epsilon{}", 1)}
+(* past this point the Greek letters are likely to be more confusing than
+   helpful *)
 
-val T_DEF =
- Definition.new_definition
-   ("T_DEF",          “T = ((\x:bool. x) = \x:bool. x)”);
+fun mkloc(s,n) = DB_dtype.mkloc(s,n,true)
+fun def l (n,t) = Definition.located_new_definition {loc=mkloc l,name=n,def=t}
+fun thm l (n,th) = Theory.gen_save_thm{loc=mkloc l,name=n,private=false,thm=th}
+fun ax l (n,t) = Theory.gen_new_axiom(n,t,mkloc l)
+val T_DEF = def (#(FILE),#(LINE))
+  ("T_DEF",
+   “T = ((\x:bool. x) = \x:bool. x)”);
+val _ = Thm.register_T T_DEF;
 
-val FORALL_DEF =
- Definition.new_definition
-   ("FORALL_DEF",     “! = \P:'a->bool. P = \x. T”);
+val FORALL_DEF = def (#(FILE), #(LINE))
+    ("FORALL_DEF", “! = \P:'a->bool. P = \x. T”)
+val _ = Thm.register_forall FORALL_DEF;
 
 val _ = set_fixity "!" Binder
 val _ = unicode_version {u = UChar.forall, tmnm = "!"};
 val _ = TeX_notation {hol = "!", TeX = ("\\HOLTokenForall{}",1)}
 val _ = TeX_notation {hol = UChar.forall, TeX = ("\\HOLTokenForall{}",1)}
 
-val EXISTS_DEF =
- Definition.new_definition
-   ("EXISTS_DEF",     “? = \P:'a->bool. P ($@ P)”);
+val EXISTS_DEF = def (#(FILE), #(LINE))
+                     ("EXISTS_DEF",     “? = \P:'a->bool. P ($@ P)”);
+val _ = Thm.register_exists EXISTS_DEF;
 
 val _ = set_fixity "?" Binder
 val _ = unicode_version {u = UChar.exists, tmnm = "?"}
 val _ = TeX_notation {hol = "?", TeX = ("\\HOLTokenExists{}",1)}
 val _ = TeX_notation {hol = UChar.exists, TeX = ("\\HOLTokenExists{}",1)}
 
-val AND_DEF =
- Definition.new_definition
-   ("AND_DEF",        “/\ = \t1 t2. !t. (t1 ==> t2 ==> t) ==> t”);
+val AND_DEF = def (#(FILE), #(LINE))
+            ("AND_DEF",        “/\ = \t1 t2. !t. (t1 ==> t2 ==> t) ==> t”);
+val _ = Thm.register_conj AND_DEF;
 
 val _ = set_fixity "/\\" (Infixr 400);
 val _ = unicode_version {u = UChar.conj, tmnm = "/\\"};
@@ -87,9 +103,9 @@ val _ = TeX_notation {hol = "/\\", TeX = ("\\HOLTokenConj{}",1)}
 val _ = TeX_notation {hol = UChar.conj, TeX = ("\\HOLTokenConj{}",1)}
 
 
-val OR_DEF =
- Definition.new_definition
+val OR_DEF = def (#(FILE), #(LINE))
    ("OR_DEF",         “\/ = \t1 t2. !t. (t1 ==> t) ==> (t2 ==> t) ==> t”)
+val _ = Thm.register_disj OR_DEF;
 
 val _ = set_fixity "\\/" (Infixr 300)
 val _ = unicode_version {u = UChar.disj, tmnm = "\\/"}
@@ -97,16 +113,16 @@ val _ = TeX_notation {hol = "\\/", TeX = ("\\HOLTokenDisj{}",1)}
 val _ = TeX_notation {hol = UChar.disj, TeX = ("\\HOLTokenDisj{}",1)}
 
 
-val F_DEF =
- Definition.new_definition
+val F_DEF = def (#(FILE), #(LINE))
    ("F_DEF",          “F = !t. t”);
+val _ = Thm.register_F F_DEF;
 
-val NOT_DEF =
- Definition.new_definition
+val NOT_DEF = def (#(FILE), #(LINE))
    ("NOT_DEF",        “~ = \t. t ==> F”);
+val _ = Thm.register_neg NOT_DEF;
 
 (* now allows parsing of not equal *)
-val _ = overload_on ("<>", “\x:'a y:'a. ~(x = y)”)
+Overload "<>" = “\x:'a y:'a. ~(x = y)”
 val _ = set_fixity "<>" (Infix(NONASSOC, 450))
 val _ = TeX_notation {hol="<>", TeX = ("\\HOLTokenNotEqual{}",1)}
 
@@ -116,10 +132,9 @@ val _ = TeX_notation {hol=UChar.neq, TeX = ("\\HOLTokenNotEqual{}",1)}
 
 
 
-val EXISTS_UNIQUE_DEF =
-Definition.new_definition
-("EXISTS_UNIQUE_DEF", “?! = \P:'a->bool.
-                                    $? P /\ !x y. P x /\ P y ==> (x=y)”);
+val EXISTS_UNIQUE_DEF = def (#(FILE), #(LINE))
+  ("EXISTS_UNIQUE_DEF",
+   “?! = \P:'a->bool. $? P /\ !x y. P x /\ P y ==> (x=y)”);
 
 val _ = set_fixity "?!" Binder
 
@@ -127,41 +142,36 @@ val _ = unicode_version { u = UChar.exists ^ "!", tmnm = "?!"}
 val _ = TeX_notation {hol = "?!", TeX = ("\\HOLTokenUnique{}",2)}
 val _ = TeX_notation {hol = UChar.exists ^ "!", TeX = ("\\HOLTokenUnique{}",2)}
 
-val LET_DEF =
- Definition.new_definition
+val LET_DEF = def (#(FILE), #(LINE))
    ("LET_DEF",        “LET = λ(f:'a->'b) x. f x”);
 
-val COND_DEF =
- Definition.new_definition
+val COND_DEF = def (#(FILE), #(LINE))
    ("COND_DEF",       “COND = \t t1 t2.
                                       @x:'a. ((t=T) ==> (x=t1)) /\
                                              ((t=F) ==> (x=t2))”);
-val _ = overload_on ("case", “COND”)
+Overload case = “COND”
 
-val ONE_ONE_DEF =
- Definition.new_definition
+val ONE_ONE_DEF = def (#(FILE), #(LINE))
    ("ONE_ONE_DEF",    “ONE_ONE = \f:'a->'b. !x1 x2.
                                          (f x1 = f x2) ==> (x1 = x2)”);
 
-val ONTO_DEF =
- Definition.new_definition
+val ONTO_DEF = def (#(FILE), #(LINE))
    ("ONTO_DEF",       “ONTO = \f:'a->'b. !y. ?x. y = f x”);
 
-val TYPE_DEFINITION =
- Definition.new_definition
+val TYPE_DEFINITION = def (#(FILE), #(LINE))
    ("TYPE_DEFINITION",
                       “TYPE_DEFINITION = \P:'a->bool. \rep:'b->'a.
                               (!x' x''. (rep x' = rep x'') ==> (x' = x'')) /\
                               (!x. P x = (?x'. x = rep x'))”);
+val _ = Thm.register_type_definition TYPE_DEFINITION;
 
 
 (*---------------------------------------------------------------------------*
  *   Parsing directives for some of the basic operators.                     *
  *---------------------------------------------------------------------------*)
 
-open Portable;
 Overload "~" = “~”
-Overload "¬" = “~”                                                     (* UOK *)
+Overload "¬" = “~”
 val _ = add_rule {term_name   = "~",
                   fixity      = Prefix 900,
                   pp_elements = [TOK "~"],
@@ -215,20 +225,16 @@ val _ = add_rule{term_name   = "COND",
  * HOL logic was provable.                                                   *
  *---------------------------------------------------------------------------*)
 
-val BOOL_CASES_AX =
- new_axiom
+val BOOL_CASES_AX = ax(#(FILE), #(LINE))
    ("BOOL_CASES_AX", “!t. (t=T) \/ (t=F)”);
 
-val ETA_AX =
- new_axiom
+val ETA_AX = ax(#(FILE), #(LINE))
    ("ETA_AX",        “!t:'a->'b. (\x. t x) = t”);
 
-val SELECT_AX =
- new_axiom
+val SELECT_AX = ax(#(FILE), #(LINE))
    ("SELECT_AX",     “!(P:'a->bool) x. P x ==> P ($@ P)”);
 
-val INFINITY_AX =
- new_axiom
+val INFINITY_AX = ax(#(FILE), #(LINE))
    ("INFINITY_AX",   “?f:ind->ind. ONE_ONE f /\ ~ONTO f”);
 
 
@@ -238,14 +244,12 @@ val INFINITY_AX =
 
 val arb = new_constant("ARB",alpha);  (* Doesn't have to be defined at all. *)
 
-val literal_case_DEF =
- Definition.new_definition
+val literal_case_DEF = def (#(FILE), #(LINE))
    ("literal_case_DEF",  “literal_case = λ(f:'a->'b) x. f x”);
 
-val _ = overload_on ("case", “bool$literal_case”);
+Overload case = “bool$literal_case”
 
-val IN_DEF =
- Definition.new_definition
+val IN_DEF = def (#(FILE), #(LINE))
    ("IN_DEF",         “IN = \x (f:'a->bool). f x”);
 
 val _ = set_fixity "IN" (Infix(NONASSOC, 425))
@@ -253,28 +257,24 @@ val _ = unicode_version {u = UChar.setelementof, tmnm = "IN"};
 val _ = TeX_notation {hol = "IN", TeX = ("\\HOLTokenIn{}",1)}
 val _ = TeX_notation {hol = UChar.setelementof, TeX = ("\\HOLTokenIn{}",1)}
 
-val RES_FORALL_DEF =
- Definition.new_definition
+val RES_FORALL_DEF = def (#(FILE), #(LINE))
    ("RES_FORALL_DEF", “RES_FORALL = \p m. !x : 'a. x IN p ==> m x”);
 
 val _ = associate_restriction ("!",  "RES_FORALL")
 
-val RES_EXISTS_DEF =
- Definition.new_definition
+val RES_EXISTS_DEF = def (#(FILE), #(LINE))
    ("RES_EXISTS_DEF", “RES_EXISTS = \p m. ?x : 'a. x IN p /\ m x”);
 
 val _ = associate_restriction ("?",  "RES_EXISTS")
 
-val RES_EXISTS_UNIQUE_DEF =
- Definition.new_definition
+val RES_EXISTS_UNIQUE_DEF = def (#(FILE), #(LINE))
    ("RES_EXISTS_UNIQUE_DEF",
     “RES_EXISTS_UNIQUE =
           \p m. (?(x : 'a) :: p. m x) /\ !x y :: p. m x /\ m y ==> (x = y)”);
 
 val _ = associate_restriction ("?!",  "RES_EXISTS_UNIQUE");
 
-val RES_SELECT_DEF =
- Definition.new_definition
+val RES_SELECT_DEF = def (#(FILE), #(LINE))
    ("RES_SELECT_DEF", “RES_SELECT = \p m. @x : 'a. x IN p /\ m x”);
 
 val _ = associate_restriction ("@",  "RES_SELECT")
@@ -285,8 +285,7 @@ val _ = associate_restriction ("@",  "RES_SELECT")
 (* Experimental rewriting directives                                         *)
 (*---------------------------------------------------------------------------*)
 
-val BOUNDED_DEF =
-  Definition.new_definition
+val BOUNDED_DEF = def (#(FILE), #(LINE))
     ("BOUNDED_DEF",
      “BOUNDED = λ(v:bool). T”);
 
@@ -294,8 +293,7 @@ val BOUNDED_DEF =
 (* Support for detecting datatypes in theory files                           *)
 (*---------------------------------------------------------------------------*)
 
-val DATATYPE_TAG_DEF =
-  Definition.new_definition
+val DATATYPE_TAG_DEF = def (#(FILE), #(LINE))
     ("DATATYPE_TAG_DEF",
      “DATATYPE = \x. T”);
 
@@ -304,7 +302,6 @@ val DATATYPE_TAG_DEF =
  *---------------------------------------------------------------------------*)
 
 val op --> = Type.-->
-infix ## |->;
 
 val ERR = Feedback.mk_HOL_ERR "boolScript"
 
@@ -432,7 +429,8 @@ val ya = Av "y"
  *  |- T
  *---------------------------------------------------------------------------*)
 
-val TRUTH = save_thm("TRUTH", EQ_MP (SYM T_DEF) (REFL “\x:bool. x”));
+val TRUTH = thm (#(FILE),#(LINE))
+  ("TRUTH", EQ_MP (SYM T_DEF) (REFL “\x:bool. x”));
 
 fun EQT_ELIM th = EQ_MP (SYM th) TRUTH;
 
@@ -470,7 +468,7 @@ infixr ==>
 val op==> = mk_imp
 infix ==
 val op== = mk_eq
-val IMP_ANTISYM_AX = save_thm(
+val IMP_ANTISYM_AX = thm (#(FILE), #(LINE))(
   "IMP_ANTISYM_AX",
   let fun dsch t1 t2 th = DISCH (t2 ==> t1) (DISCH (t1 ==> t2) th)
       fun sch t1 t2 = (t1==>t2) ==> (t2==>t1) ==> (t1 == t2)
@@ -494,7 +492,7 @@ fun IMP_ANTISYM_RULE th1 th2 =
  * |- !t. F ==> t
  *---------------------------------------------------------------------------*)
 
-val FALSITY = save_thm("FALSITY", GEN tb (FALSITY_CONV tb))
+val FALSITY = thm (#(FILE), #(LINE))("FALSITY", GEN tb (FALSITY_CONV tb))
 
 fun CONTR tm th = MP (SPEC tm FALSITY) th
 
@@ -602,13 +600,14 @@ fun SELECT_RULE th =
      ETA_THM = |- !M. (\x. M x) = M
  ---------------------------------------------------------------------------*)
 
-val ETA_THM = save_thm("ETA_THM", GEN_ALL(ETA_CONV “\x:'a. (M x:'b)”));
+val ETA_THM = thm (#(FILE), #(LINE))
+                  ("ETA_THM", GEN_ALL(ETA_CONV “\x:'a. (M x:'b)”));
 
 (*---------------------------------------------------------------------------
  *  |- !t. t \/ ~t
  *---------------------------------------------------------------------------*)
 
-val EXCLUDED_MIDDLE = save_thm(
+val EXCLUDED_MIDDLE = thm (#(FILE), #(LINE))(
   "EXCLUDED_MIDDLE",
   let val th1 = RIGHT_BETA(AP_THM NOT_DEF tb)
       val th2 = DISJ1 (EQT_ELIM (ASSUME (tb == T))) (mk_neg tb)
@@ -632,7 +631,7 @@ fun IMP_ELIM th =
  *  |- !f y. (\x. f x) y = f y                                               *
  *---------------------------------------------------------------------------*)
 
-val BETA_THM = save_thm(
+val BETA_THM = thm (#(FILE), #(LINE))(
   "BETA_THM",
   GENL [fabt, ya] (BETA_CONV “(\x. (f:'a->'b) x) y”))
 
@@ -640,19 +639,19 @@ val BETA_THM = save_thm(
      LET_THM = |- !f x. LET f x = f x
  ---------------------------------------------------------------------------*)
 
-val LET_THM = save_thm(
+val LET_THM = thm (#(FILE), #(LINE))(
   "LET_THM",
   GEN fabt (GEN xa
     (RIGHT_BETA(AP_THM (RIGHT_BETA(AP_THM LET_DEF fabt)) xa))))
 
 (* |- $! f <=> !x. f x *)
-val FORALL_THM = save_thm(
+val FORALL_THM = thm (#(FILE), #(LINE))(
   "FORALL_THM",
   SYM (AP_TERM “$! :('a->bool)->bool”
                (ETA_CONV “\x:'a. f x:bool”)))
 
 (* |- $? f <=> ?x. f x *)
-val EXISTS_THM = save_thm(
+val EXISTS_THM = thm (#(FILE), #(LINE))(
   "EXISTS_THM",
   SYM (AP_TERM “$? :('a->bool)->bool”
                (ETA_CONV “\x:'a. f x:bool”)));
@@ -661,7 +660,7 @@ val EXISTS_THM = save_thm(
  *  |- !t1:'a. !t2:'b. (\x. t1) t2 = t1                                      *
  *---------------------------------------------------------------------------*)
 
-val ABS_SIMP = save_thm("ABS_SIMP",
+val ABS_SIMP = thm (#(FILE), #(LINE))("ABS_SIMP",
    GENL [“t1:'a”, “t2:'b”]
         (BETA_CONV “(\x:'b. t1:'a) t2”));
 
@@ -669,7 +668,7 @@ val ABS_SIMP = save_thm("ABS_SIMP",
  *   |- !t. (!x.t)  =  t
  *---------------------------------------------------------------------------*)
 
-val FORALL_SIMP = save_thm(
+val FORALL_SIMP = thm (#(FILE), #(LINE))(
   "FORALL_SIMP",
   GEN tb (IMP_ANTISYM_RULE
            (DISCH “!^xa. ^tb” (SPEC xa (ASSUME “!^xa.^tb”)))
@@ -679,7 +678,7 @@ val FORALL_SIMP = save_thm(
  *   |- !t. (?x.t)  =  t
  *---------------------------------------------------------------------------*)
 
-val EXISTS_SIMP = save_thm(
+val EXISTS_SIMP = thm (#(FILE), #(LINE))(
   "EXISTS_SIMP",
   let val ext = mk_exists(xa,tb)
   in
@@ -692,7 +691,7 @@ val EXISTS_SIMP = save_thm(
  *       |- !t1 t2. t1 ==> t2 ==> t1 /\ t2
  *---------------------------------------------------------------------------*)
 
-val AND_INTRO_THM = save_thm(
+val AND_INTRO_THM = thm (#(FILE), #(LINE))(
   "AND_INTRO_THM",
    let val t12 = t1b ==> t2b ==> tb
        val th1 = GEN tb (DISCH t12 (MP (MP (ASSUME t12)
@@ -707,7 +706,7 @@ val AND_INTRO_THM = save_thm(
  * |- !t1 t2. t1 /\ t2 ==> t1
  *---------------------------------------------------------------------------*)
 
-val AND1_THM = save_thm(
+val AND1_THM = thm (#(FILE), #(LINE))(
   "AND1_THM",
   let val t12 = mk_conj(t1b, t2b)
       val th2 = RIGHT_BETA(AP_THM (RIGHT_BETA(AP_THM AND_DEF t1b)) t2b)
@@ -721,7 +720,7 @@ val AND1_THM = save_thm(
  *    |- !t1 t2. t1 /\ t2 ==> t2
  *---------------------------------------------------------------------------*)
 
-val AND2_THM = save_thm("AND2_THM",
+val AND2_THM = thm (#(FILE), #(LINE))("AND2_THM",
   let val t1 = “t1:bool”
       and t2 = “t2:bool”
       val th1 = ASSUME “^t1 /\ ^t2”
@@ -745,7 +744,7 @@ val LIST_CONJ = end_itlist CONJ
  *   |- !t1 t2. (t1 /\ t2) = (t2 /\ t1)
  *---------------------------------------------------------------------------*)
 
-val CONJ_SYM = save_thm("CONJ_SYM",
+val CONJ_SYM = thm (#(FILE), #(LINE))("CONJ_SYM",
   let val t1 = “t1:bool”
       and t2 = “t2:bool”
       val th1 = ASSUME “^t1 /\ ^t2”
@@ -758,13 +757,13 @@ val CONJ_SYM = save_thm("CONJ_SYM",
                         (CONJ(CONJUNCT2 th2)(CONJUNCT1 th2)))))
   end);
 
-val _ = save_thm("CONJ_COMM", CONJ_SYM);
+val _ = thm (#(FILE), #(LINE))("CONJ_COMM", CONJ_SYM);
 
 (*---------------------------------------------------------------------------
  * |- !t1 t2 t3. t1 /\ (t2 /\ t3) = (t1 /\ t2) /\ t3
  *---------------------------------------------------------------------------*)
 
-val CONJ_ASSOC = save_thm("CONJ_ASSOC",
+val CONJ_ASSOC = thm (#(FILE), #(LINE))("CONJ_ASSOC",
   let val t1 = “t1:bool”
       and t2 = “t2:bool”
       and t3 = “t3:bool”
@@ -786,7 +785,7 @@ val CONJ_ASSOC = save_thm("CONJ_ASSOC",
  *  |- !t1 t2. t1 ==> t1 \/ t2
  *---------------------------------------------------------------------------*)
 
-val OR_INTRO_THM1 = save_thm("OR_INTRO_THM1",
+val OR_INTRO_THM1 = thm (#(FILE), #(LINE))("OR_INTRO_THM1",
   let val t = “t:bool”
       and t1 = “t1:bool”
       and t2 = “t2:bool”
@@ -802,7 +801,7 @@ val OR_INTRO_THM1 = save_thm("OR_INTRO_THM1",
  * |- !t1 t2. t2 ==> t1 \/ t2
  *---------------------------------------------------------------------------*)
 
-val OR_INTRO_THM2 = save_thm("OR_INTRO_THM2",
+val OR_INTRO_THM2 = thm (#(FILE), #(LINE))("OR_INTRO_THM2",
   let val t  = “t:bool”
       and t1 = “t1:bool”
       and t2 = “t2:bool”
@@ -818,7 +817,7 @@ val OR_INTRO_THM2 = save_thm("OR_INTRO_THM2",
  * |- !t t1 t2. (t1 \/ t2) ==> (t1 ==> t) ==> (t2 ==> t) ==> t
  *---------------------------------------------------------------------------*)
 
-val OR_ELIM_THM = save_thm("OR_ELIM_THM",
+val OR_ELIM_THM = thm (#(FILE), #(LINE))("OR_ELIM_THM",
    let val t =  “t:bool”
        and t1 = “t1:bool”
        and t2 = “t2:bool”
@@ -841,7 +840,7 @@ fun DISJ_CASES_UNION dth ath bth =
  * |- !t. (t ==> F) ==> ~t
  *---------------------------------------------------------------------------*)
 
-val IMP_F = save_thm("IMP_F",
+val IMP_F = thm (#(FILE), #(LINE))("IMP_F",
    let val t = “t:bool”
        val th1 = RIGHT_BETA (AP_THM NOT_DEF t)
    in
@@ -853,7 +852,7 @@ val IMP_F = save_thm("IMP_F",
  * |- !t. ~t ==> (t ==> F)
  *---------------------------------------------------------------------------*)
 
-val F_IMP = save_thm("F_IMP",
+val F_IMP = thm (#(FILE), #(LINE))("F_IMP",
    let val t = “t:bool”
        val th1 = RIGHT_BETA(AP_THM NOT_DEF t)
    in
@@ -865,7 +864,7 @@ val F_IMP = save_thm("F_IMP",
  * |- !t. ~t ==> (t=F)
  *---------------------------------------------------------------------------*)
 
-val NOT_F = save_thm("NOT_F",
+val NOT_F = thm (#(FILE), #(LINE))("NOT_F",
    let val t = “t:bool”
        val th1 = MP (SPEC t F_IMP) (ASSUME “~ ^t”)
        and th2 = SPEC t FALSITY
@@ -878,7 +877,7 @@ val NOT_F = save_thm("NOT_F",
  *  |- !t. ~(t /\ ~t)
  *---------------------------------------------------------------------------*)
 
-val NOT_AND = save_thm("NOT_AND",
+val NOT_AND = thm (#(FILE), #(LINE))("NOT_AND",
    let val th = ASSUME “t /\ ~t”
    in NOT_INTRO(DISCH “t /\ ~t” (MP (CONJUNCT2 th) (CONJUNCT1 th)))
    end);
@@ -953,7 +952,7 @@ val AND_CLAUSE5 =
  *         (t /\ t) = t
  *---------------------------------------------------------------------------*)
 
-val AND_CLAUSES = save_thm("AND_CLAUSES",
+val AND_CLAUSES = thm (#(FILE), #(LINE))("AND_CLAUSES",
    let val t = “t:bool”
    in
    GEN t (LIST_CONJ [SPEC t AND_CLAUSE1, SPEC t AND_CLAUSE2,
@@ -1034,7 +1033,7 @@ val OR_CLAUSE5 =
  *        (t \/ t) = t
  *---------------------------------------------------------------------------*)
 
-val OR_CLAUSES = save_thm("OR_CLAUSES",
+val OR_CLAUSES = thm (#(FILE), #(LINE))("OR_CLAUSES",
    let val t = “t:bool”
    in
    GEN t (LIST_CONJ [SPEC t OR_CLAUSE1, SPEC t OR_CLAUSE2,
@@ -1103,7 +1102,7 @@ val IMP_CLAUSE5 =
  *         (t ==> F) = ~t
  *---------------------------------------------------------------------------*)
 
-val IMP_CLAUSES = save_thm("IMP_CLAUSES",
+val IMP_CLAUSES = thm (#(FILE), #(LINE))("IMP_CLAUSES",
    let val t = “t:bool”
    in GEN t
       (LIST_CONJ [SPEC t IMP_CLAUSE1, SPEC t IMP_CLAUSE3,
@@ -1123,7 +1122,9 @@ val EQ_IMPLIES =
     val th0 = MK_COMB(impt1,t1_eq_t2)
     val imp_refl = IMP_CLAUSES |> SPEC t1b |> CONJUNCTS |> el 4 |> EQT_ELIM
   in
-    save_thm("EQ_IMPLIES", EQ_MP th0 imp_refl |> DISCH eqt |> GENL [t1b,t2b])
+    thm (#(FILE), #(LINE))(
+      "EQ_IMPLIES", EQ_MP th0 imp_refl |> DISCH eqt |> GENL [t1b,t2b]
+    )
   end
 
 
@@ -1131,7 +1132,7 @@ val EQ_IMPLIES =
  *    |- (~~t = t) /\ (~T = F) /\ (~F = T)
  *---------------------------------------------------------------------------*)
 
-val NOT_CLAUSES = save_thm("NOT_CLAUSES",
+val NOT_CLAUSES = thm (#(FILE), #(LINE))("NOT_CLAUSES",
  CONJ
   (GEN “t:bool”
     (IMP_ANTISYM_RULE
@@ -1150,20 +1151,20 @@ val NOT_CLAUSES = save_thm("NOT_CLAUSES",
  *   |- !x. x=x
  *---------------------------------------------------------------------------*)
 
-val EQ_REFL = save_thm("EQ_REFL", GEN “x : 'a” (REFL “x : 'a”));
+val EQ_REFL = thm (#(FILE), #(LINE))("EQ_REFL", GEN “x : 'a” (REFL “x : 'a”));
 
 (*---------------------------------------------------------------------------
  *   |- !x. (x=x) = T
  *---------------------------------------------------------------------------*)
 
-val REFL_CLAUSE = save_thm("REFL_CLAUSE",
+val REFL_CLAUSE = thm (#(FILE), #(LINE))("REFL_CLAUSE",
   GEN “x: 'a” (EQT_INTRO(SPEC “x:'a” EQ_REFL)));
 
 (*---------------------------------------------------------------------------
  *   |- !x y. x=y  ==>  y=x
  *---------------------------------------------------------------------------*)
 
-val EQ_SYM = save_thm("EQ_SYM",
+val EQ_SYM = thm (#(FILE), #(LINE))("EQ_SYM",
  let val x = “x:'a”
      and y = “y:'a”
  in
@@ -1174,7 +1175,7 @@ val EQ_SYM = save_thm("EQ_SYM",
  *    |- !x y. (x = y) = (y = x)
  *---------------------------------------------------------------------------*)
 
-val EQ_SYM_EQ = save_thm("EQ_SYM_EQ",
+val EQ_SYM_EQ = thm (#(FILE), #(LINE))("EQ_SYM_EQ",
    GEN “x:'a”
     (GEN “y:'a”
       (IMP_ANTISYM_RULE (SPEC “y:'a” (SPEC “x:'a” EQ_SYM))
@@ -1184,7 +1185,7 @@ val EQ_SYM_EQ = save_thm("EQ_SYM_EQ",
  *    |- !f g. (!x. f x = g x)  ==>  f=g
  *---------------------------------------------------------------------------*)
 
-val EQ_EXT = save_thm("EQ_EXT",
+val EQ_EXT = thm (#(FILE), #(LINE))("EQ_EXT",
    let val f = “f:'a->'b”
        and g = “g: 'a -> 'b”
    in
@@ -1196,7 +1197,7 @@ val EQ_EXT = save_thm("EQ_EXT",
       FUN_EQ_THM  |- !f g. (f = g) = !x. f x = g x
  ---------------------------------------------------------------------------*)
 
-val FUN_EQ_THM = save_thm("FUN_EQ_THM",
+val FUN_EQ_THM = thm (#(FILE), #(LINE))("FUN_EQ_THM",
   let val f = mk_var("f", Type.alpha --> Type.beta)
       val g = mk_var("g", Type.alpha --> Type.beta)
       val x = mk_var("x", Type.alpha)
@@ -1214,7 +1215,7 @@ val FUN_EQ_THM = save_thm("FUN_EQ_THM",
  *    |- !x y z. x=y  /\  y=z  ==>  x=z
  *---------------------------------------------------------------------------*)
 
-val EQ_TRANS = save_thm("EQ_TRANS",
+val EQ_TRANS = thm (#(FILE), #(LINE))("EQ_TRANS",
    let val x = “x:'a”
        and y = “y:'a”
        and z = “z:'a”
@@ -1232,7 +1233,7 @@ val EQ_TRANS = save_thm("EQ_TRANS",
  *     |- ~(T=F) /\ ~(F=T)
  *---------------------------------------------------------------------------*)
 
-val BOOL_EQ_DISTINCT = save_thm("BOOL_EQ_DISTINCT",
+val BOOL_EQ_DISTINCT = thm (#(FILE), #(LINE))("BOOL_EQ_DISTINCT",
    let val TF = “T = F”
        and FT = “F = T”
    in
@@ -1306,7 +1307,7 @@ val EQ_CLAUSE4 =
  *          (t = F)  =  ~t
  *---------------------------------------------------------------------------*)
 
-val EQ_CLAUSES = save_thm("EQ_CLAUSES",
+val EQ_CLAUSES = thm (#(FILE), #(LINE))("EQ_CLAUSES",
    let val t = “t:bool”
    in
    GEN t (LIST_CONJ [SPEC t EQ_CLAUSE1, SPEC t EQ_CLAUSE2,
@@ -1385,7 +1386,7 @@ val COND_CLAUSE2 =
  *    |- !t1:'a.!t2:'a. ((T => t1 | t2) = t1) /\ ((F => t1 | t2) = t2)
  *---------------------------------------------------------------------------*)
 
-val COND_CLAUSES = save_thm("COND_CLAUSES",
+val COND_CLAUSES = thm (#(FILE), #(LINE))("COND_CLAUSES",
    let val (t1,t2) = (“t1:'a”, “t2:'a”)
    in
    GEN t1 (GEN t2 (CONJ(SPEC t2(SPEC t1 COND_CLAUSE1))
@@ -1397,7 +1398,7 @@ val COND_CLAUSES = save_thm("COND_CLAUSES",
 (*                                                         TFM 90.07.23 *)
 (*--------------------------------------------------------------------- *)
 
-val COND_ID = save_thm("COND_ID",
+val COND_ID = thm (#(FILE), #(LINE))("COND_ID",
    let val b = “b:bool”
        and t = “t:'a”
        val def = INST_TYPE [beta |-> alpha] COND_DEF
@@ -1429,7 +1430,7 @@ val COND_ID = save_thm("COND_ID",
       SELECT_THM = |- !P. P (@x. P x) = ?x. P x
  ---------------------------------------------------------------------------*)
 
-val SELECT_THM = save_thm("SELECT_THM",
+val SELECT_THM = thm (#(FILE), #(LINE))("SELECT_THM",
   GEN “P:'a->bool”
    (SYM (RIGHT_BETA(RIGHT_BETA
           (AP_THM EXISTS_DEF “\x:'a. P x:bool”)))));
@@ -1438,7 +1439,7 @@ val SELECT_THM = save_thm("SELECT_THM",
 (* SELECT_REFL = |- !x. (@y. y = x) = x                                 *)
 (* ---------------------------------------------------------------------*)
 
-val SELECT_REFL = save_thm("SELECT_REFL",
+val SELECT_REFL = thm (#(FILE), #(LINE))("SELECT_REFL",
   let val th1 = SPEC “x:'a” (SPEC “\y:'a. y = x” SELECT_AX)
       val ths = map BETA_CONV [“(\y:'a. y = x) x”,
                                “(\y:'a. y = x)(@y. y = x)”]
@@ -1448,7 +1449,7 @@ val SELECT_REFL = save_thm("SELECT_REFL",
   GEN “x:'a” (MP th2 (REFL “x:'a”))
   end);
 
-val SELECT_REFL_2 = save_thm("SELECT_REFL_2",
+val SELECT_REFL_2 = thm (#(FILE), #(LINE))("SELECT_REFL_2",
   let val x = mk_var("x",   Type.alpha)
       val y = mk_var("y",   Type.alpha)
       val th1 = REFL x
@@ -1465,7 +1466,7 @@ val SELECT_REFL_2 = save_thm("SELECT_REFL_2",
 (* SELECT_UNIQUE = |- !P x. (!y. P y = (y = x)) ==> ($@ P = x)               *)
 (*---------------------------------------------------------------------------*)
 
-val SELECT_UNIQUE = save_thm("SELECT_UNIQUE",
+val SELECT_UNIQUE = thm (#(FILE), #(LINE))("SELECT_UNIQUE",
   let fun mksym tm = DISCH tm (SYM(ASSUME tm))
       val th0 = IMP_ANTISYM_RULE (mksym “y:'a = x”)
                                  (mksym “x:'a = y”)
@@ -1502,14 +1503,17 @@ val SELECT_ELIM_THM = let
   val PselP_th0 = UNDISCH (SPEC_ALL SELECT_AX)
   val PselP_th = CHOOSE(x, ex_th) PselP_th0
 in
-  save_thm("SELECT_ELIM_THM", GENL [P, Q] (DISCH_ALL (MP imp_th PselP_th)))
+  thm (#(FILE), #(LINE))(
+    "SELECT_ELIM_THM",
+    GENL [P, Q] (DISCH_ALL (MP imp_th PselP_th))
+  )
 end
 
 (* -------------------------------------------------------------------------*)
 (* NOT_FORALL_THM = |- !P. ~(!x. P x) = ?x. ~P x                            *)
 (* -------------------------------------------------------------------------*)
 
-val NOT_FORALL_THM = save_thm("NOT_FORALL_THM",
+val NOT_FORALL_THM = thm (#(FILE), #(LINE))("NOT_FORALL_THM",
     let val f = “P:'a->bool”
         val x = “x:'a”
         val t = mk_comb(f,x)
@@ -1529,7 +1533,7 @@ val NOT_FORALL_THM = save_thm("NOT_FORALL_THM",
 (* NOT_EXISTS_THM = |- !P. ~(?x. P x) = (!x. ~P x)                          *)
 (* ------------------------------------------------------------------------- *)
 
-val NOT_EXISTS_THM = save_thm("NOT_EXISTS_THM",
+val NOT_EXISTS_THM = thm (#(FILE), #(LINE))("NOT_EXISTS_THM",
     let val f = “P:'a->bool”
         val x = “x:'a”
         val t = mk_comb(f,x)
@@ -1549,7 +1553,7 @@ val NOT_EXISTS_THM = save_thm("NOT_EXISTS_THM",
 (* FORALL_AND_THM |- !P Q. (!x. P x /\ Q x) = ((!x. P x) /\ (!x. Q x))       *)
 (* ------------------------------------------------------------------------- *)
 
-val FORALL_AND_THM = save_thm("FORALL_AND_THM",
+val FORALL_AND_THM = thm (#(FILE), #(LINE))("FORALL_AND_THM",
     let val f = “P:'a->bool”
         val g = “Q:'a->bool”
         val x = “x:'a”
@@ -1565,7 +1569,7 @@ val FORALL_AND_THM = save_thm("FORALL_AND_THM",
 (* LEFT_AND_FORALL_THM = |- !P Q. (!x. P x) /\ Q = (!x. P x /\ Q)            *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_AND_FORALL_THM = save_thm("LEFT_AND_FORALL_THM",
+val LEFT_AND_FORALL_THM = thm (#(FILE), #(LINE))("LEFT_AND_FORALL_THM",
     let val x = “x:'a”
         val f = “P:'a->bool”
         val Q = “Q:bool”
@@ -1581,7 +1585,7 @@ val LEFT_AND_FORALL_THM = save_thm("LEFT_AND_FORALL_THM",
 (* RIGHT_AND_FORALL_THM = |- !P Q. P /\ (!x. Q x) = (!x. P /\ Q x)           *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_AND_FORALL_THM = save_thm("RIGHT_AND_FORALL_THM",
+val RIGHT_AND_FORALL_THM = thm (#(FILE), #(LINE))("RIGHT_AND_FORALL_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1597,7 +1601,7 @@ val RIGHT_AND_FORALL_THM = save_thm("RIGHT_AND_FORALL_THM",
 (* EXISTS_OR_THM |- !P Q. (?x. P x \/ Q x) = ((?x. P x) \/ (?x. Q x))        *)
 (* ------------------------------------------------------------------------- *)
 
-val EXISTS_OR_THM = save_thm("EXISTS_OR_THM",
+val EXISTS_OR_THM = thm (#(FILE), #(LINE))("EXISTS_OR_THM",
     let val f = “P:'a->bool”
         val g = “Q:'a->bool”
         val x = “x:'a”
@@ -1623,7 +1627,7 @@ val EXISTS_OR_THM = save_thm("EXISTS_OR_THM",
 (* LEFT_OR_EXISTS_THM = |- (?x. P x) \/ Q = (?x. P x \/ Q)                   *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_OR_EXISTS_THM = save_thm("LEFT_OR_EXISTS_THM",
+val LEFT_OR_EXISTS_THM = thm (#(FILE), #(LINE))("LEFT_OR_EXISTS_THM",
     let val x = “x:'a”
         val Q = “Q:bool”
         val f = “P:'a->bool”
@@ -1647,7 +1651,7 @@ val LEFT_OR_EXISTS_THM = save_thm("LEFT_OR_EXISTS_THM",
 (* RIGHT_OR_EXISTS_THM = |- P \/ (?x. Q x) = (?x. P \/ Q x)                  *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_OR_EXISTS_THM = save_thm("RIGHT_OR_EXISTS_THM",
+val RIGHT_OR_EXISTS_THM = thm (#(FILE), #(LINE))("RIGHT_OR_EXISTS_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1670,7 +1674,7 @@ val RIGHT_OR_EXISTS_THM = save_thm("RIGHT_OR_EXISTS_THM",
 (* BOTH_EXISTS_AND_THM = |- !P Q. (?x. P /\ Q) = (?x. P) /\ (?x. Q)          *)
 (* ------------------------------------------------------------------------- *)
 
-val BOTH_EXISTS_AND_THM = save_thm("BOTH_EXISTS_AND_THM",
+val BOTH_EXISTS_AND_THM = thm (#(FILE), #(LINE))("BOTH_EXISTS_AND_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val Q = “Q:bool”
@@ -1697,7 +1701,7 @@ val BOTH_EXISTS_AND_THM = save_thm("BOTH_EXISTS_AND_THM",
 (* LEFT_EXISTS_AND_THM = |- !P Q. (?x. P x /\ Q) = (?x. P x) /\ Q            *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_EXISTS_AND_THM = save_thm("LEFT_EXISTS_AND_THM",
+val LEFT_EXISTS_AND_THM = thm (#(FILE), #(LINE))("LEFT_EXISTS_AND_THM",
     let val x = “x:'a”
         val f = “P:'a->bool”
         val P = mk_comb(f,x)
@@ -1724,7 +1728,7 @@ val LEFT_EXISTS_AND_THM = save_thm("LEFT_EXISTS_AND_THM",
 (* RIGHT_EXISTS_AND_THM = |- !P Q. (?x. P /\ Q x) = P /\ (?x. Q x)           *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_EXISTS_AND_THM = save_thm("RIGHT_EXISTS_AND_THM",
+val RIGHT_EXISTS_AND_THM = thm (#(FILE), #(LINE))("RIGHT_EXISTS_AND_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1750,7 +1754,7 @@ val RIGHT_EXISTS_AND_THM = save_thm("RIGHT_EXISTS_AND_THM",
 (* BOTH_FORALL_OR_THM = |- !P Q. (!x. P \/ Q) = (!x. P) \/ (!x. Q)           *)
 (* ------------------------------------------------------------------------- *)
 
-val BOTH_FORALL_OR_THM = save_thm("BOTH_FORALL_OR_THM",
+val BOTH_FORALL_OR_THM = thm (#(FILE), #(LINE))("BOTH_FORALL_OR_THM",
   let val x = “x:'a”
       val P = “P:bool”
       val Q = “Q:bool”
@@ -1770,7 +1774,7 @@ val BOTH_FORALL_OR_THM = save_thm("BOTH_FORALL_OR_THM",
 (* LEFT_FORALL_OR_THM = |- !P Q. (!x. P x \/ Q) = (!x. P x) \/ Q             *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_FORALL_OR_THM = save_thm("LEFT_FORALL_OR_THM",
+val LEFT_FORALL_OR_THM = thm (#(FILE), #(LINE))("LEFT_FORALL_OR_THM",
   let val x = “x:'a”
       val f = “P:'a->bool”
       val P = mk_comb(f,x)
@@ -1793,7 +1797,7 @@ val LEFT_FORALL_OR_THM = save_thm("LEFT_FORALL_OR_THM",
 (* RIGHT_FORALL_OR_THM = |- !P Q. (!x. P \/ Q x) = P \/ (!x. Q x)            *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_FORALL_OR_THM = save_thm("RIGHT_FORALL_OR_THM",
+val RIGHT_FORALL_OR_THM = thm (#(FILE), #(LINE))("RIGHT_FORALL_OR_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1817,7 +1821,7 @@ val RIGHT_FORALL_OR_THM = save_thm("RIGHT_FORALL_OR_THM",
 (* BOTH_FORALL_IMP_THM = |- (!x. P ==> Q) = ((?x.P) ==> (!x.Q))              *)
 (* ------------------------------------------------------------------------- *)
 
-val BOTH_FORALL_IMP_THM = save_thm("BOTH_FORALL_IMP_THM",
+val BOTH_FORALL_IMP_THM = thm (#(FILE), #(LINE))("BOTH_FORALL_IMP_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val Q = “Q:bool”
@@ -1836,7 +1840,7 @@ val BOTH_FORALL_IMP_THM = save_thm("BOTH_FORALL_IMP_THM",
 (* LEFT_FORALL_IMP_THM = |- (!x. P[x]==>Q) = ((?x.P[x]) ==> Q)               *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_FORALL_IMP_THM = save_thm("LEFT_FORALL_IMP_THM",
+val LEFT_FORALL_IMP_THM = thm (#(FILE), #(LINE))("LEFT_FORALL_IMP_THM",
     let val x = “x:'a”
         val f = “P:'a->bool”
         val P = mk_comb(f,x)
@@ -1856,7 +1860,7 @@ val LEFT_FORALL_IMP_THM = save_thm("LEFT_FORALL_IMP_THM",
 (* RIGHT_FORALL_IMP_THM = |- (!x. P==>Q[x]) = (P ==> (!x.Q[x]))              *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_FORALL_IMP_THM = save_thm("RIGHT_FORALL_IMP_THM",
+val RIGHT_FORALL_IMP_THM = thm (#(FILE), #(LINE))("RIGHT_FORALL_IMP_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1873,7 +1877,7 @@ val RIGHT_FORALL_IMP_THM = save_thm("RIGHT_FORALL_IMP_THM",
 (* BOTH_EXISTS_IMP_THM = |- (?x. P ==> Q) = ((!x.P) ==> (?x.Q))              *)
 (* ------------------------------------------------------------------------- *)
 
-val BOTH_EXISTS_IMP_THM = save_thm("BOTH_EXISTS_IMP_THM",
+val BOTH_EXISTS_IMP_THM = thm (#(FILE), #(LINE))("BOTH_EXISTS_IMP_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val Q = “Q:bool”
@@ -1894,7 +1898,7 @@ val BOTH_EXISTS_IMP_THM = save_thm("BOTH_EXISTS_IMP_THM",
 (* LEFT_EXISTS_IMP_THM = |- (?x. P[x] ==> Q) = ((!x.P[x]) ==> Q)             *)
 (* ------------------------------------------------------------------------- *)
 
-val LEFT_EXISTS_IMP_THM = save_thm("LEFT_EXISTS_IMP_THM",
+val LEFT_EXISTS_IMP_THM = thm (#(FILE), #(LINE))("LEFT_EXISTS_IMP_THM",
     let val x = “x:'a”
         val f = “P:'a->bool”
         val P = mk_comb(f,x)
@@ -1906,7 +1910,7 @@ val LEFT_EXISTS_IMP_THM = save_thm("LEFT_EXISTS_IMP_THM",
         val imp1 = DISCH tm (CHOOSE(x,ASSUME tm)(DISCH allp thm1))
         val otm = rand(concl imp1)
         val thm2 = EXISTS(tm,x)(DISCH P (UNDISCH(ASSUME otm)))
-        val nex =  mk_exists(x,mk_neg P)
+        val nex = mk_exists(x,mk_neg P)
         val asm1 = EXISTS (nex, x) (ASSUME (mk_neg P))
         val th2 = CCONTR P (MP (ASSUME (mk_neg nex)) asm1)
         val th3 = CCONTR nex (MP (ASSUME (mk_neg allp)) (GEN x th2))
@@ -1922,7 +1926,7 @@ val LEFT_EXISTS_IMP_THM = save_thm("LEFT_EXISTS_IMP_THM",
 (* RIGHT_EXISTS_IMP_THM = |- (?x. P ==> Q[x]) = (P ==> (?x.Q[x]))            *)
 (* ------------------------------------------------------------------------- *)
 
-val RIGHT_EXISTS_IMP_THM = save_thm("RIGHT_EXISTS_IMP_THM",
+val RIGHT_EXISTS_IMP_THM = thm (#(FILE), #(LINE))("RIGHT_EXISTS_IMP_THM",
     let val x = “x:'a”
         val P = “P:bool”
         val g = “Q:'a->bool”
@@ -1945,7 +1949,7 @@ val RIGHT_EXISTS_IMP_THM = save_thm("RIGHT_EXISTS_IMP_THM",
 (* [TFM 90.06.28]                                                        *)
 (* --------------------------------------------------------------------- *)
 
-val OR_IMP_THM = save_thm("OR_IMP_THM",
+val OR_IMP_THM = thm (#(FILE), #(LINE))("OR_IMP_THM",
  let val t1 = “A:bool” and t2 = “B:bool”
      val asm1 = ASSUME “^t1 = (^t2 \/ ^t1)”
      and asm2 = EQT_INTRO(ASSUME t2)
@@ -1967,7 +1971,7 @@ val OR_IMP_THM = save_thm("OR_IMP_THM",
 (* [TFM 90.07.09]                                                        *)
 (* --------------------------------------------------------------------- *)
 
-val NOT_IMP = save_thm("NOT_IMP",
+val NOT_IMP = thm (#(FILE), #(LINE))("NOT_IMP",
 let val t1 = “A:bool” and t2 = “B:bool”
     val asm1 = ASSUME “~(^t1 ==> ^t2)”
     val thm1 = SUBST [t1 |-> EQF_INTRO (ASSUME (mk_neg t1))] (concl asm1) asm1
@@ -1975,7 +1979,7 @@ let val t1 = “A:bool” and t2 = “B:bool”
     val thm3 = SUBST [t2 |-> EQT_INTRO (ASSUME t2)] (concl asm1) asm1
     val thm4 = NOT_INTRO(DISCH t2 (MP thm3 (DISCH t1 (ADD_ASSUM t1 TRUTH))))
     val imp1 = DISCH (concl asm1) (CONJ thm2 thm4)
-    val conj =  ASSUME “^t1 /\ ~^t2”
+    val conj = ASSUME “^t1 /\ ~^t2”
     val (asm2,asm3) = (CONJUNCT1 conj, CONJUNCT2 conj)
     val asm4 = ASSUME “^t1 ==> ^t2”
     val thm5 = MP (SUBST [t2 |-> EQF_INTRO asm3] (concl asm4) asm4) asm2
@@ -1989,7 +1993,7 @@ let val t1 = “A:bool” and t2 = “B:bool”
 (* DISJ_ASSOC: |- !A B C. A \/ B \/ C = (A \/ B) \/ C                    *)
 (* --------------------------------------------------------------------- *)
 
-val DISJ_ASSOC = save_thm("DISJ_ASSOC",
+val DISJ_ASSOC = thm (#(FILE), #(LINE))("DISJ_ASSOC",
 let val t1 = “A:bool” and t2 = “B:bool” and t3 = “C:bool”
     val at1 = DISJ1 (DISJ1 (ASSUME t1) t2) t3 and
         at2 = DISJ1 (DISJ2 t1 (ASSUME t2)) t3 and
@@ -2011,7 +2015,7 @@ let val t1 = “A:bool” and t2 = “B:bool” and t3 = “C:bool”
 (* DISJ_SYM: |- !A B. A \/ B = B \/ A                                    *)
 (* --------------------------------------------------------------------- *)
 
-val DISJ_SYM = save_thm("DISJ_SYM",
+val DISJ_SYM = thm (#(FILE), #(LINE))("DISJ_SYM",
 let val t1   = “A:bool” and t2 = “B:bool”
     val th1  = DISJ1 (ASSUME t1) t2 and th2 = DISJ2 t1 (ASSUME t2)
     val thm1 = DISJ_CASES (ASSUME(mk_disj(t2,t1))) th2 th1
@@ -2023,14 +2027,14 @@ let val t1   = “A:bool” and t2 = “B:bool”
    GENL [t1,t2] (IMP_ANTISYM_RULE imp2 imp1)
  end);
 
-val _ = save_thm("DISJ_COMM", DISJ_SYM);
+val _ = thm (#(FILE), #(LINE))("DISJ_COMM", DISJ_SYM);
 
 (* --------------------------------------------------------------------- *)
 (* DE_MORGAN_THM:                                                        *)
 (*  |- !A B. (~(t1 /\ t2) = ~t1 \/ ~t2) /\ (~(t1 \/ t2) = ~t1 /\ ~t2)    *)
 (* --------------------------------------------------------------------- *)
 
-val DE_MORGAN_THM = save_thm("DE_MORGAN_THM",
+val DE_MORGAN_THM = thm (#(FILE), #(LINE))("DE_MORGAN_THM",
 let val t1 = “A:bool” and t2 = “B:bool”
     val thm1 =
       let val asm1 = ASSUME “~(^t1 /\ ^t2)”
@@ -2084,7 +2088,7 @@ let val t1 = “A:bool” and t2 = “B:bool”
 (* RIGHT_OR_OVER_AND  |- !A B C. B /\ C \/ A = (B \/ A) /\ (C \/ A)         *)
 (* -------------------------------------------------------------------------*)
 
-val LEFT_AND_OVER_OR = save_thm("LEFT_AND_OVER_OR",
+val LEFT_AND_OVER_OR = thm (#(FILE), #(LINE))("LEFT_AND_OVER_OR",
     let val t1 = “A:bool”
         and t2 = “B:bool”
         and t3 = “C:bool”
@@ -2101,7 +2105,7 @@ val LEFT_AND_OVER_OR = save_thm("LEFT_AND_OVER_OR",
       GEN t1 (GEN t2 (GEN t3 (IMP_ANTISYM_RULE imp1 imp2)))
     end);
 
-val RIGHT_AND_OVER_OR = save_thm("RIGHT_AND_OVER_OR",
+val RIGHT_AND_OVER_OR = thm (#(FILE), #(LINE))("RIGHT_AND_OVER_OR",
    let val t1 = “A:bool”
        and t2 = “B:bool”
        and t3 = “C:bool”
@@ -2118,7 +2122,7 @@ val RIGHT_AND_OVER_OR = save_thm("RIGHT_AND_OVER_OR",
      GEN t1 (GEN t2 (GEN t3 (IMP_ANTISYM_RULE imp1 imp2)))
    end);
 
-val LEFT_OR_OVER_AND = save_thm("LEFT_OR_OVER_AND",
+val LEFT_OR_OVER_AND = thm (#(FILE), #(LINE))("LEFT_OR_OVER_AND",
    let val t1 = “A:bool”
        and t2 = “B:bool”
        and t3 = “C:bool”
@@ -2137,7 +2141,7 @@ val LEFT_OR_OVER_AND = save_thm("LEFT_OR_OVER_AND",
      GEN t1 (GEN t2 (GEN t3 (IMP_ANTISYM_RULE imp1 imp2)))
    end);
 
-val RIGHT_OR_OVER_AND = save_thm("RIGHT_OR_OVER_AND",
+val RIGHT_OR_OVER_AND = thm (#(FILE), #(LINE))("RIGHT_OR_OVER_AND",
    let val t1 = “A:bool”
        and t2 = “B:bool”
        and t3 = “C:bool”
@@ -2160,7 +2164,7 @@ val RIGHT_OR_OVER_AND = save_thm("RIGHT_OR_OVER_AND",
  * IMP_DISJ_THM = |- !A B. A ==> B = ~A \/ B                                 *
  *---------------------------------------------------------------------------*)
 
-val IMP_DISJ_THM = save_thm("IMP_DISJ_THM",
+val IMP_DISJ_THM = thm (#(FILE), #(LINE))("IMP_DISJ_THM",
 let val A = “A:bool”
     val B = “B:bool”
     val th1 = ASSUME “A ==> B”
@@ -2214,7 +2218,8 @@ val DISJ_IMP_THM = let
   val r_from_q = MP q_imp_r ass_Q
   val rl_imp = DISCH rhs (DISCH porq (DISJ_CASES ass_porq r_from_p r_from_q))
 in
-  save_thm("DISJ_IMP_THM", GENL [P,Q,R] (IMP_ANTISYM_RULE lr_imp rl_imp))
+  thm (#(FILE), #(LINE))("DISJ_IMP_THM",
+                          GENL [P,Q,R] (IMP_ANTISYM_RULE lr_imp rl_imp))
 end
 
 (* ----------------------------------------------------------------------
@@ -2245,7 +2250,8 @@ val IMP_CONJ_THM = let
   val QaR_th = CONJ Q_th R_th
   val R2L = DISCH PiQaPiR (DISCH P QaR_th)
 in
-  save_thm("IMP_CONJ_THM", GENL [P,Q,R] (IMP_ANTISYM_RULE L2R R2L))
+  thm (#(FILE), #(LINE))("IMP_CONJ_THM",
+                          GENL [P,Q,R] (IMP_ANTISYM_RULE L2R R2L))
 end
 
 (* ---------------------------------------------------------------------*)
@@ -2261,7 +2267,7 @@ local fun nthCONJUNCT n cth =
            then CONJUNCT1 th else th
         end
 in
-val IMP_F_EQ_F = save_thm("IMP_F_EQ_F",
+val IMP_F_EQ_F = thm (#(FILE), #(LINE))("IMP_F_EQ_F",
    GEN “t:bool”
      (TRANS (nthCONJUNCT 5 (SPEC_ALL IMP_CLAUSES))
             (SYM (nthCONJUNCT 4 (SPEC_ALL EQ_CLAUSES)))))
@@ -2274,7 +2280,7 @@ end;
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val AND_IMP_INTRO = save_thm("AND_IMP_INTRO",
+val AND_IMP_INTRO = thm (#(FILE), #(LINE))("AND_IMP_INTRO",
 let val t1 = “t1:bool”
     and t2 = “t2:bool”
     and t3 = “t3:bool”
@@ -2304,7 +2310,7 @@ let val t1 = “t1:bool”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val EQ_IMP_THM = save_thm("EQ_IMP_THM",
+val EQ_IMP_THM = thm (#(FILE), #(LINE))("EQ_IMP_THM",
 let val t1 = “t1:bool”
     and t2 = “t2:bool”
     val conj = “$/\”
@@ -2333,7 +2339,7 @@ let val t1 = “t1:bool”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val EQ_EXPAND = save_thm("EQ_EXPAND",
+val EQ_EXPAND = thm (#(FILE), #(LINE))("EQ_EXPAND",
 let val t1 = “t1:bool” and t2 = “t2:bool”
     val conj = “$/\”   and disj = “$\/”
     val [NOT1,NOT2] = tl (CONJUNCTS NOT_CLAUSES)
@@ -2367,7 +2373,7 @@ let val t1 = “t1:bool” and t2 = “t2:bool”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_RATOR = save_thm("COND_RATOR",
+val COND_RATOR = thm (#(FILE), #(LINE))("COND_RATOR",
 let val f = “f: 'a -> 'b”
     val g = “g: 'a -> 'b”
     val x = “x:'a”
@@ -2402,7 +2408,7 @@ let val f = “f: 'a -> 'b”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_RAND = save_thm("COND_RAND",
+val COND_RAND = thm (#(FILE), #(LINE))("COND_RAND",
 let val f = “f: 'a -> 'b”
     val x = “x:'a”
     val y = “y:'a”
@@ -2436,7 +2442,7 @@ let val f = “f: 'a -> 'b”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_ABS = save_thm("COND_ABS",
+val COND_ABS = thm (#(FILE), #(LINE))("COND_ABS",
 let val b = “b:bool”
     val f = “f:'a->'b”
     val g = “g:'a->'b”
@@ -2455,7 +2461,7 @@ let val b = “b:bool”
 (*                                                         RJB 92.09.26 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_EXPAND = save_thm("COND_EXPAND",
+val COND_EXPAND = thm (#(FILE), #(LINE))("COND_EXPAND",
 let val b    = “b:bool”
     val t1   = “t1:bool”
     val t2   = “t2:bool”
@@ -2502,7 +2508,7 @@ let val b    = “b:bool”
 (*                                                          TT 09.03.18 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_EXPAND_IMP = save_thm("COND_EXPAND_IMP",
+val COND_EXPAND_IMP = thm (#(FILE), #(LINE))("COND_EXPAND_IMP",
 let val b    = “b:bool”
     val t1   = “t1:bool”
     val t2   = “t2:bool”
@@ -2530,7 +2536,7 @@ end);
 (*                                                          TT 09.03.18 *)
 (* ---------------------------------------------------------------------*)
 
-val COND_EXPAND_OR = save_thm("COND_EXPAND_OR",
+val COND_EXPAND_OR = thm (#(FILE), #(LINE))("COND_EXPAND_OR",
 let val b    = “b:bool”
     val t1   = “t1:bool”
     val t2   = “t2:bool”
@@ -2570,7 +2576,63 @@ let val b    = “b:bool”
  end);
 
 
-val TYPE_DEFINITION_THM = save_thm("TYPE_DEFINITION_THM",
+(* ---------------------------------------------------------------------*)
+(* COND_BOOL_CLAUSES                                                    *)
+(*                                                                      *)
+(* |- (!b e. (if b then T else e) = (b \/ e)) /\                        *)
+(*    (!b t. (if b then t else T) = (b ==> t)) /\                       *)
+(*    (!b e. (if b then F else e) = (~b /\ e)) /\                       *)
+(*    (!b t. (if b then t else F) = (b /\ t))                           *)
+(*                                                                      *)
+(* Each conjunct is one of the COND_EXPAND family with a T or an F for  *)
+(* one of the arms, tidied up with the relevant *_CLAUSES.              *)
+(* ---------------------------------------------------------------------*)
+
+val COND_BOOL_CLAUSES = thm (#(FILE), #(LINE))("COND_BOOL_CLAUSES",
+let val b = “b:bool”
+    val e = “e:bool”
+    val t = “t:bool”
+    val [AND1,AND2,_,AND4,_] = map GEN_ALL (CONJUNCTS (SPEC_ALL AND_CLAUSES))
+    and [_,OR2,OR3,OR4,_] = map GEN_ALL (CONJUNCTS (SPEC_ALL OR_CLAUSES))
+    and [_,IMP2,_,_,_] = map GEN_ALL (CONJUNCTS (SPEC_ALL IMP_CLAUSES))
+    val cnj1 =
+      let val th = SUBS [SPEC (mk_neg b) OR2] (SPECL [b,“T”,e] COND_EXPAND)
+      in GENL [b,e] (SUBS [SPEC (mk_disj(b,e)) AND1] th)
+      end
+    val cnj2 =
+      let val th = SUBS [SPEC (mk_neg b) IMP2]
+                        (SPECL [b,t,“T”] COND_EXPAND_IMP)
+      in GENL [b,t] (SUBS [SPEC (mk_imp(b,t)) AND2] th)
+      end
+    val cnj3 =
+      let val th = SUBS [SPEC b AND4] (SPECL [b,“F”,e] COND_EXPAND_OR)
+      in GENL [b,e] (SUBS [SPEC (mk_conj(mk_neg b,e)) OR3] th)
+      end
+    val cnj4 =
+      let val th = SUBS [SPEC (mk_neg b) AND4] (SPECL [b,t,“F”] COND_EXPAND_OR)
+      in GENL [b,t] (SUBS [SPEC (mk_conj(b,t)) OR4] th)
+      end
+in
+  CONJ cnj1 (CONJ cnj2 (CONJ cnj3 cnj4))
+end);
+
+(* ---------------------------------------------------------------------*)
+(* IF_THEN_T_IMP                                                        *)
+(*                                                                      *)
+(* |- !b e. (if b then T else e) = (~b ==> e)                           *)
+(* ---------------------------------------------------------------------*)
+
+val IF_THEN_T_IMP = thm (#(FILE), #(LINE))("IF_THEN_T_IMP",
+let val b = “b:bool”
+    val e = “e:bool”
+    val AND1 = GEN_ALL (CONJUNCT1 (SPEC_ALL AND_CLAUSES))
+    val IMP2 = GEN_ALL (el 2 (CONJUNCTS (SPEC_ALL IMP_CLAUSES)))
+    val th = SUBS [SPEC b IMP2] (SPECL [b,“T”,e] COND_EXPAND_IMP)
+in
+  GENL [b,e] (SUBS [SPEC (mk_imp(mk_neg b,e)) AND1] th)
+end);
+
+val TYPE_DEFINITION_THM = thm (#(FILE), #(LINE))("TYPE_DEFINITION_THM",
   let val P   = “P:'a-> bool”
       val rep = “rep :'b -> 'a”
   in
@@ -2579,14 +2641,14 @@ val TYPE_DEFINITION_THM = save_thm("TYPE_DEFINITION_THM",
           (RIGHT_BETA (AP_THM TYPE_DEFINITION P)) rep)))
   end);
 
-val ONTO_THM = save_thm(
+val ONTO_THM = thm (#(FILE), #(LINE))(
   "ONTO_THM",
   let val f = mk_var("f", Type.alpha --> Type.beta)
   in
       GEN f (RIGHT_BETA (AP_THM ONTO_DEF f))
   end);
 
-val ONE_ONE_THM = save_thm(
+val ONE_ONE_THM = thm (#(FILE), #(LINE))(
   "ONE_ONE_THM",
   let val f = mk_var("f", Type.alpha --> Type.beta)
   in
@@ -2599,7 +2661,7 @@ val ONE_ONE_THM = save_thm(
  *         ?rep abs. (!a. abs (rep a) = a) /\ !r. P r = (rep (abs r) = r)    *
  *---------------------------------------------------------------------------*)
 
-val ABS_REP_THM = save_thm("ABS_REP_THM",
+val ABS_REP_THM = thm (#(FILE), #(LINE))("ABS_REP_THM",
    let val th1 = ASSUME “?rep:'b->'a. TYPE_DEFINITION P rep”
        val th2 = MK_EXISTS (SPEC “P:'a->bool” TYPE_DEFINITION_THM)
        val def = EQ_MP th2 th1
@@ -2611,14 +2673,14 @@ val ABS_REP_THM = save_thm("ABS_REP_THM",
          in IMP_ANTISYM_RULE (SPECL [“a:'b”,“a':'b”] asm1) th1
          end
        val ABS = “\r:'a. @a:'b. r = rep a”
-       val absd =  RIGHT_BETA (AP_THM (REFL ABS) “rep (a:'b):'a”)
+       val absd = RIGHT_BETA (AP_THM (REFL ABS) “rep (a:'b):'a”)
        val lem = SYM(SELECT_RULE(EXISTS (“?a':'b.a=a'”,“a:'b”)
                                         (REFL “a:'b”)))
        val TH1 = GEN “a:'b”
                      (TRANS(TRANS absd (SELECT_EQ “a':'b” rep_eq)) lem)
        val t1 = SELECT_RULE(EQ_MP (SPEC “r:'a” asm2)
                                   (ASSUME “(P:'a->bool) r”))
-       val absd2 =  RIGHT_BETA (AP_THM (REFL ABS) “r:'a”)
+       val absd2 = RIGHT_BETA (AP_THM (REFL ABS) “r:'a”)
        val v = mk_var("v",type_of(rhs (concl absd2)))
        val (t1l,t1r) = dest_eq (concl t1)
        (* val rep = fst(strip_comb t1r) *)
@@ -2645,7 +2707,7 @@ val ABS_REP_THM = save_thm("ABS_REP_THM",
     LET_RAND =  P (let x = M in N x) = (let x = M in P (N x))
  ---------------------------------------------------------------------------*)
 
-val LET_RAND = save_thm("LET_RAND",
+val LET_RAND = thm (#(FILE), #(LINE))("LET_RAND",
  let val tm1 = “\x:'a. P (N x:'b):bool”
      val tm2 = “M:'a”
      val tm3 = “\x:'a. N x:'b”
@@ -2661,7 +2723,7 @@ val LET_RAND = save_thm("LET_RAND",
     LET_RATOR =  (let x = M in N x) b = (let x = M in N x b)
  ---------------------------------------------------------------------------*)
 
-val LET_RATOR = save_thm("LET_RATOR",
+val LET_RATOR = thm (#(FILE), #(LINE))("LET_RATOR",
  let val M = “M:'a”
      val b = “b:'b”
      val tm1 = “\x:'a. N x:'b->'c”
@@ -2678,7 +2740,7 @@ val LET_RATOR = save_thm("LET_RATOR",
            !P. (!x y. P x y) = (!y x. P x y)
  ---------------------------------------------------------------------------*)
 
-val SWAP_FORALL_THM = save_thm("SWAP_FORALL_THM",
+val SWAP_FORALL_THM = thm (#(FILE), #(LINE))("SWAP_FORALL_THM",
   let val P = mk_var("P", “:'a->'b->bool”)
       val x = mk_var("x", Type.alpha)
       val y = mk_var("y", Type.beta)
@@ -2695,7 +2757,7 @@ val SWAP_FORALL_THM = save_thm("SWAP_FORALL_THM",
            !P. (?x y. P x y) = (?y x. P x y)
  ---------------------------------------------------------------------------*)
 
-val SWAP_EXISTS_THM = save_thm("SWAP_EXISTS_THM",
+val SWAP_EXISTS_THM = thm (#(FILE), #(LINE))("SWAP_EXISTS_THM",
   let val P = mk_var("P", “:'a->'b->bool”)
       val x = mk_var("x", Type.alpha)
       val y = mk_var("y", Type.beta)
@@ -2723,7 +2785,7 @@ val SWAP_EXISTS_THM = save_thm("SWAP_EXISTS_THM",
      (?!x. P x) = (?x. P x) /\ (!x y. P x /\ P y ==> (x = y))
  ---------------------------------------------------------------------------*)
 
-val EXISTS_UNIQUE_THM = save_thm("EXISTS_UNIQUE_THM",
+val EXISTS_UNIQUE_THM = thm (#(FILE), #(LINE))("EXISTS_UNIQUE_THM",
  let val th1 = RIGHT_BETA (AP_THM EXISTS_UNIQUE_DEF “\x:'a. P x:bool”)
      val th2 = CONV_RULE (RAND_CONV (RAND_CONV
                 (QUANT_CONV (QUANT_CONV (RATOR_CONV
@@ -2739,7 +2801,7 @@ val EXISTS_UNIQUE_THM = save_thm("EXISTS_UNIQUE_THM",
     |- !P. (?!x. P x) <=> ?x. !y. P y <=> (y = x)
    ---------------------------------------------------------------------- *)
 
-val EXISTS_UNIQUE_ALT' = save_thm(
+val EXISTS_UNIQUE_ALT' = thm (#(FILE), #(LINE))(
   "EXISTS_UNIQUE_ALT'",
   let
     val eu_r = ASSUME (rhs (concl EXISTS_UNIQUE_THM))
@@ -2771,6 +2833,27 @@ val EXISTS_UNIQUE_ALT' = save_thm(
     TRANS EXISTS_UNIQUE_THM eqn
   end);
 
+(* ----------------------------------------------------------------------
+    EXISTS_UNIQUE_ALT
+
+    |- !P. (?!x. P x) <=> ?x. !y. P y <=> (x = y)
+
+    EXISTS_UNIQUE_ALT' with the witness equation the other way round.
+   ---------------------------------------------------------------------- *)
+
+val EXISTS_UNIQUE_ALT = thm (#(FILE), #(LINE))(
+  "EXISTS_UNIQUE_ALT",
+  let
+    val P = mk_var("P", alpha --> bool)
+    val x = mk_var("x", alpha)
+    val y = mk_var("y", alpha)
+    val Py = mk_comb(P,y)
+    val body = AP_TERM (rator (mk_eq(Py,Py))) (SPECL [y,x] EQ_SYM_EQ)
+    val inner = AP_TERM (rator (mk_forall(y,Py))) (ABS y body)
+  in
+    GEN P (TRANS EXISTS_UNIQUE_ALT' (MK_EXISTS (GEN x inner)))
+  end);
+
 
 (*---------------------------------------------------------------------------
   LET_CONG =
@@ -2779,7 +2862,7 @@ val EXISTS_UNIQUE_ALT' = save_thm(
                    (LET f M = LET g N)
  ---------------------------------------------------------------------------*)
 
-val LET_CONG = save_thm("LET_CONG",
+val LET_CONG = thm (#(FILE), #(LINE))("LET_CONG",
   let val f = mk_var("f",alpha-->beta)
       val g = mk_var("g",alpha-->beta)
       val M = mk_var("M",alpha)
@@ -2809,7 +2892,7 @@ val LET_CONG = save_thm("LET_CONG",
                    (x ==> y = x' ==> y')
  ---------------------------------------------------------------------------*)
 
-val IMP_CONG = save_thm("IMP_CONG",
+val IMP_CONG = thm (#(FILE), #(LINE))("IMP_CONG",
  let val x = mk_var("x",Type.bool)
      val x' = mk_var("x'",Type.bool)
      val y = mk_var("y",Type.bool)
@@ -2839,7 +2922,7 @@ val IMP_CONG = save_thm("IMP_CONG",
                             (P /\ Q = P' /\ Q')
  ---------------------------------------------------------------------------*)
 
-val AND_CONG = save_thm("AND_CONG",
+val AND_CONG = thm (#(FILE), #(LINE))("AND_CONG",
  let val P = mk_var("P",Type.bool)
      val P' = mk_var("P'",Type.bool)
      val Q = mk_var("Q",Type.bool)
@@ -2871,7 +2954,7 @@ val AND_CONG = save_thm("AND_CONG",
           (P /\ Q = P' /\ Q')
  ---------------------------------------------------------------------------*)
 
-val LEFT_AND_CONG = save_thm("LEFT_AND_CONG",
+val LEFT_AND_CONG = thm (#(FILE), #(LINE))("LEFT_AND_CONG",
  let val P = mk_var("P",Type.bool)
      val P' = mk_var("P'",Type.bool)
      val Q = mk_var("Q",Type.bool)
@@ -2904,7 +2987,7 @@ val LEFT_AND_CONG = save_thm("LEFT_AND_CONG",
                    (P \/ Q = P' \/ Q')
  ---------------------------------------------------------------------------*)
 
-val OR_CONG = save_thm("OR_CONG",
+val OR_CONG = thm (#(FILE), #(LINE))("OR_CONG",
  let val P = mk_var("P",Type.bool)
      val P' = mk_var("P'",Type.bool)
      val Q = mk_var("Q",Type.bool)
@@ -2957,7 +3040,7 @@ val OR_CONG = save_thm("OR_CONG",
           (P \/ Q = P' \/ Q')
  ---------------------------------------------------------------------------*)
 
-val LEFT_OR_CONG = save_thm("LEFT_OR_CONG",
+val LEFT_OR_CONG = thm (#(FILE), #(LINE))("LEFT_OR_CONG",
  let fun mk_boolvar s = mk_var(s,Type.bool)
      val [P,P',Q,Q'] = map mk_boolvar ["P","P'","Q","Q'"]
      val notP = mk_neg P
@@ -2994,7 +3077,7 @@ val LEFT_OR_CONG = save_thm("LEFT_OR_CONG",
 
 fun mk_cond {cond,larm,rarm} = “if ^cond then ^larm else ^rarm”;
 
-val COND_CONG = save_thm("COND_CONG",
+val COND_CONG = thm (#(FILE), #(LINE))("COND_CONG",
  let val P = mk_var("P",Type.bool)
      val Q = mk_var("Q",Type.bool)
      val x = mk_var("x",alpha)
@@ -3124,8 +3207,10 @@ val (RES_FORALL_CONG, RES_EXISTS_CONG) = let
   val ex_eqn = IMP_ANTISYM_RULE ex_pf_imp_qg ex_qg_imp_pf
 
 in
-  (save_thm("RES_FORALL_CONG", DISCH PeqQ_t (DISCH feqg_t fa_eqn)),
-   save_thm("RES_EXISTS_CONG", DISCH PeqQ_t (DISCH feqg_t ex_eqn)))
+  (thm (#(FILE), #(LINE))("RES_FORALL_CONG",
+                           DISCH PeqQ_t (DISCH feqg_t fa_eqn)),
+   thm (#(FILE), #(LINE))("RES_EXISTS_CONG",
+                           DISCH PeqQ_t (DISCH feqg_t ex_eqn)))
 end
 
 (* ------------------------------------------------------------------------- *)
@@ -3137,7 +3222,7 @@ end
 (* MONO_AND |- (x ==> y) /\ (z ==> w) ==> (x /\ z ==> y /\ w)                *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_AND = save_thm("MONO_AND",
+val MONO_AND = thm (#(FILE), #(LINE))("MONO_AND",
  let val tm1 = “x ==> y”
      val tm2 = “z ==> w”
      val tm3 = “x /\ z”
@@ -3160,7 +3245,7 @@ val MONO_AND = save_thm("MONO_AND",
 (* MONO_OR |- (x ==> y) /\ (z ==> w) ==> (x \/ z ==> y \/ w)                 *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_OR = save_thm("MONO_OR",
+val MONO_OR = thm (#(FILE), #(LINE))("MONO_OR",
  let val tm1 = “x ==> y”
      val tm2 = “z ==> w”
      val tm3 = “x \/ z”
@@ -3181,7 +3266,7 @@ val MONO_OR = save_thm("MONO_OR",
 (* MONO_IMP |- (y ==> x) /\ (z ==> w) ==> ((x ==> z) ==> (y ==> w))          *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_IMP = save_thm("MONO_IMP",
+val MONO_IMP = thm (#(FILE), #(LINE))("MONO_IMP",
  let val tm1 = “y ==> x”
      val tm2 = “z ==> w”
      val tm3 = “x ==> z”
@@ -3203,7 +3288,7 @@ val MONO_IMP = save_thm("MONO_IMP",
 (* MONO_NOT |- (y ==> x) ==> (~x ==> ~y)                                     *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_NOT = save_thm("MONO_NOT",
+val MONO_NOT = thm (#(FILE), #(LINE))("MONO_NOT",
  let val tm1 = “y ==> x”
      val tm2 = “~x”
      val tm3 = “y:bool”
@@ -3221,7 +3306,7 @@ val MONO_NOT = save_thm("MONO_NOT",
 (* MONO_NOT_EQ |- (y ==> x) = (~x ==> ~y)                                     *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_NOT_EQ = save_thm("MONO_NOT_EQ",
+val MONO_NOT_EQ = thm (#(FILE), #(LINE))("MONO_NOT_EQ",
  let val tm1 = “x:bool”
      val tm2 = “y:bool”
      val th1 = INST [tm1 |-> mk_neg tm2, tm2 |-> mk_neg tm1] MONO_NOT
@@ -3239,7 +3324,7 @@ val MONO_NOT_EQ = save_thm("MONO_NOT_EQ",
 (* MONO_ALL |- (!x. P x ==> Q x) ==> (!x. P x) ==> !x. Q x                   *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_ALL = save_thm("MONO_ALL",
+val MONO_ALL = thm (#(FILE), #(LINE))("MONO_ALL",
  let val tm1 = “!x:'a. P x ==> Q x”
      val tm2 = “!x:'a. P x”
      val tm3 = “x:'a”
@@ -3256,7 +3341,7 @@ val MONO_ALL = save_thm("MONO_ALL",
 (* MONO_EXISTS =  [] |- (!x. P x ==> Q x) ==> (?x. P x) ==> ?x. Q x          *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_EXISTS = save_thm("MONO_EXISTS",
+val MONO_EXISTS = thm (#(FILE), #(LINE))("MONO_EXISTS",
  let val tm1 = “!x:'a. P x ==> Q x”
      val tm2 = “?x:'a. P x”
      val tm3 = “@x:'a. P x”
@@ -3276,7 +3361,7 @@ val MONO_EXISTS = save_thm("MONO_EXISTS",
 (*              ==> (if b then x else z) ==> (if b then y else w)            *)
 (* ------------------------------------------------------------------------- *)
 
-val MONO_COND = save_thm("MONO_COND",
+val MONO_COND = thm (#(FILE), #(LINE))("MONO_COND",
  let val tm1 = “x ==> y”
      val tm2 = “z ==> w”
      val tm3 = “if b then x else z:bool”
@@ -3322,7 +3407,7 @@ val MONO_COND = save_thm("MONO_COND",
 (* EXISTS_REFL |- !a. ?x. x = a                                              *)
 (* ------------------------------------------------------------------------- *)
 
-val EXISTS_REFL = save_thm("EXISTS_REFL",
+val EXISTS_REFL = thm (#(FILE), #(LINE))("EXISTS_REFL",
  let val a = “a:'a”
      val th1 = REFL a
      val th2 = EXISTS (“?x:'a. x = a”, a) th1
@@ -3333,7 +3418,7 @@ val EXISTS_REFL = save_thm("EXISTS_REFL",
 (* EXISTS_UNIQUE_REFL |- !a. ?!x. x = a                                      *)
 (* ------------------------------------------------------------------------- *)
 
-val EXISTS_UNIQUE_REFL = save_thm("EXISTS_UNIQUE_REFL",
+val EXISTS_UNIQUE_REFL = thm (#(FILE), #(LINE))("EXISTS_UNIQUE_REFL",
  let val a = “a:'a”
      val P = “\x:'a. x = a”
      val tmx = “^P x”
@@ -3362,7 +3447,7 @@ val EXISTS_UNIQUE_REFL = save_thm("EXISTS_UNIQUE_REFL",
     EXISTS_UNIQUE_FALSE |- (?!x. F) <=> F
    ---------------------------------------------------------------------- *)
 
-val EXISTS_UNIQUE_FALSE = save_thm("EXISTS_UNIQUE_FALSE",
+val EXISTS_UNIQUE_FALSE = thm (#(FILE), #(LINE))("EXISTS_UNIQUE_FALSE",
   let
     val BINDER_CONV = RAND_CONV o ABS_CONV
     val LAND_CONV = RATOR_CONV o RAND_CONV
@@ -3388,7 +3473,7 @@ val EXISTS_UNIQUE_FALSE = save_thm("EXISTS_UNIQUE_FALSE",
 (* UNWIND1_THM |- !P a. (?x. (a = x) /\ P x) = P a                           *)
 (* ------------------------------------------------------------------------- *)
 
-val UNWIND_THM1 = save_thm("UNWIND_THM1",
+val UNWIND_THM1 = thm (#(FILE), #(LINE))("UNWIND_THM1",
  let val P = “P:'a->bool”
      val a = “a:'a”
      val Pa = “^P ^a”
@@ -3414,7 +3499,7 @@ val UNWIND_THM1 = save_thm("UNWIND_THM1",
 (* UNWIND_THM2  |- !P a. (?x. (x = a) /\ P x) = P a                          *)
 (* ------------------------------------------------------------------------- *)
 
-val UNWIND_THM2 = save_thm("UNWIND_THM2",
+val UNWIND_THM2 = thm (#(FILE), #(LINE))("UNWIND_THM2",
  let val P = “P:'a->bool”
      val a = “a:'a”
      val Px = “^P x”
@@ -3443,7 +3528,7 @@ val UNWIND_THM2 = save_thm("UNWIND_THM2",
 (* UNWIND_FORALL_THM1   |- !f v. (!x. (v = x) ==> f x) = f v                 *)
 (* ------------------------------------------------------------------------- *)
 
-val UNWIND_FORALL_THM1 = save_thm("UNWIND_FORALL_THM1",
+val UNWIND_FORALL_THM1 = thm (#(FILE), #(LINE))("UNWIND_FORALL_THM1",
  let val f = “f : 'a -> bool”
      val v = “v:'a”
      val fv = “^f ^v”
@@ -3465,7 +3550,7 @@ val UNWIND_FORALL_THM1 = save_thm("UNWIND_FORALL_THM1",
 (* UNWIND_FORALL_THM2   |- !f v. (!x. (x = v) ==> f x) = f v                 *)
 (* ------------------------------------------------------------------------- *)
 
-val UNWIND_FORALL_THM2 = save_thm("UNWIND_FORALL_THM2",
+val UNWIND_FORALL_THM2 = thm (#(FILE), #(LINE))("UNWIND_FORALL_THM2",
  let val f   = “f:'a->bool”
      val v   = “v:'a”
      val fv  = “^f ^v”
@@ -3487,7 +3572,7 @@ val UNWIND_FORALL_THM2 = save_thm("UNWIND_FORALL_THM2",
 (* Skolemization:    |- !P. (!x. ?y. P x y) <=> ?f. !x. P x (f x)            *)
 (* ------------------------------------------------------------------------- *)
 
-val SKOLEM_THM = save_thm("SKOLEM_THM",
+val SKOLEM_THM = thm (#(FILE), #(LINE))("SKOLEM_THM",
  let val P = “P:'a -> 'b -> bool”
      val x = “x:'a”
      val y = “y:'b”
@@ -3520,6 +3605,143 @@ val SKOLEM_THM = save_thm("SKOLEM_THM",
  end);
 
 
+(* ------------------------------------------------------------------------- *)
+(* UNIQUE_SKOLEM_ALT                                                         *)
+(*                                                                           *)
+(* Intuitionistic + intensional form of Skolem for unique existence:         *)
+(*   |- !P. (!x. ?!y. P x y) <=> ?f. !x y. P x y <=> (f x = y)               *)
+(* ------------------------------------------------------------------------- *)
+
+val UNIQUE_SKOLEM_ALT = thm (#(FILE), #(LINE))("UNIQUE_SKOLEM_ALT",
+ let val P = mk_var("P", alpha --> beta --> bool)
+     val x = mk_var("x", alpha)
+     val y = mk_var("y", beta)
+     val g = mk_var("g", beta)
+     val Pxy = mk_comb(mk_comb(P,x),y)
+     val Q = mk_abs(x, mk_abs(g, mk_forall(y, mk_eq(Pxy, mk_eq(g,y)))))
+     (* (?!y. P x y) <=> ?g. !y. P x y <=> (g = y), generalised over x *)
+     val inner = SPEC (mk_comb(P,x))
+                      (INST_TYPE [alpha |-> beta] EXISTS_UNIQUE_ALT)
+     val stepA = AP_TERM (rator (mk_forall(x,tb))) (ABS x inner)
+     (* Skolemise the inner existential; the instance needs two betas at
+        each of the two quantified positions. *)
+     fun BETA2 tm =
+       let val th = RATOR_CONV BETA_CONV tm
+       in TRANS th (BETA_CONV (rhs (concl th)))
+       end
+     val SK = SPEC Q SKOLEM_THM
+     val (skl,skr) = dest_eq (concl SK)
+     val stepB = TRANS (SYM (QUANT_CONV (QUANT_CONV BETA2) skl))
+                       (TRANS SK (QUANT_CONV (QUANT_CONV BETA2) skr))
+     val f = mk_var("f", alpha --> beta)
+     val target =
+       mk_eq(mk_forall(x, mk_exists1(y, Pxy)),
+             mk_exists(f, mk_forall(x, mk_forall(y,
+               mk_eq(Pxy, mk_eq(mk_comb(f,x), y))))))
+     val th = TRANS stepA stepB
+ in
+   GEN P (EQ_MP (ALPHA (concl th) target) th)
+ end);
+
+(* ------------------------------------------------------------------------- *)
+(* UNIQUE_SKOLEM_THM                                                         *)
+(*                                                                           *)
+(* Intuitionistic + extensional form of Skolem for unique existence:         *)
+(*   |- !P. (!x. ?!y. P x y) <=> ?!f. !x. P x (f x)                          *)
+(*                                                                           *)
+(* Both sides are put into the ALT form; what is left to prove is            *)
+(*   (?f. !x y. P x y <=> f x = y) <=> (?g. !h. (!x. P x (h x)) <=> g = h)   *)
+(* whose right-to-left half is the one that has to perturb a Skolem          *)
+(* function at a single point.                                              *)
+(* ------------------------------------------------------------------------- *)
+
+val UNIQUE_SKOLEM_THM = thm (#(FILE), #(LINE))("UNIQUE_SKOLEM_THM",
+ let val P = mk_var("P", alpha --> beta --> bool)
+     val x = mk_var("x", alpha)
+     val z = mk_var("z", alpha)
+     val y = mk_var("y", beta)
+     val f = mk_var("f", alpha --> beta)
+     val g = mk_var("g", alpha --> beta)
+     val h = mk_var("h", alpha --> beta)
+     fun Pap s t = mk_comb(mk_comb(P,s),t)
+     fun pointwise k = mk_forall(x, Pap x (mk_comb(k,x)))
+     val condths = INST_TYPE [alpha |-> beta] COND_CLAUSES
+     fun COND_T l r = CONJUNCT1 (SPECL [l,r] condths)
+     fun COND_F l r = CONJUNCT2 (SPECL [l,r] condths)
+     val Abody = mk_forall(x, mk_forall(y, mk_eq(Pap x y,
+                                                 mk_eq(mk_comb(f,x), y))))
+     val A = mk_exists(f, Abody)
+     val Bbody = mk_forall(h, mk_eq(pointwise h, mk_eq(g,h)))
+     val B = mk_exists(g, Bbody)
+     (* left to right: the Skolem function is the unique one *)
+     val af = ASSUME Abody
+     val d1 =
+       let val ph = pointwise h
+           val feqh = mk_eq(f,h)
+           val eqv = SPECL [x, mk_comb(h,x)] af
+           val d1a = DISCH ph
+             (EQ_MP (SYM (SPECL [f,h] FUN_EQ_THM))
+                    (GEN x (EQ_MP eqv (SPEC x (ASSUME ph)))))
+           val d1b = DISCH feqh
+             (GEN x (EQ_MP (SYM eqv) (AP_THM (ASSUME feqh) x)))
+       in
+         DISCH A (CHOOSE (f, ASSUME A)
+                   (EXISTS (B,f) (GEN h (IMP_ANTISYM_RULE d1a d1b))))
+       end
+     (* right to left: a unique Skolem function pins down each point *)
+     val bg = ASSUME Bbody
+     val Rg = EQ_MP (SYM (SPEC g bg)) (REFL g)
+     val d2 =
+       let val gxy = mk_eq(mk_comb(g,x), y)
+           val pxy = Pap x y
+           val d2b = DISCH gxy (SUBS [ASSUME gxy] (SPEC x Rg))
+           (* h is g, moved to y at x; it is pointwise good, so it is g *)
+           val hdef = mk_abs(z, mk_cond{cond = mk_eq(z,x), larm = y,
+                                        rarm = mk_comb(g,z)})
+           val zeqx = mk_eq(z,x)
+           val betaz = BETA_CONV (mk_comb(hdef,z))
+           val thT =
+             let val asm = ASSUME (mk_eq(zeqx,“T”))
+                 val hz = TRANS (SUBS [asm] betaz) (COND_T y (mk_comb(g,z)))
+                 val pzy = EQ_MP (SYM (AP_THM (AP_TERM P (EQT_ELIM asm)) y))
+                                 (ASSUME pxy)
+             in SUBS [SYM hz] pzy
+             end
+           val thF =
+             let val asm = ASSUME (mk_eq(zeqx,“F”))
+                 val hz = TRANS (SUBS [asm] betaz) (COND_F y (mk_comb(g,z)))
+             in SUBS [SYM hz] (SPEC z Rg)
+             end
+           val geqh = EQ_MP (SPEC hdef bg)
+                        (GEN z (DISJ_CASES (SPEC zeqx BOOL_CASES_AX) thT thF))
+           val hx = TRANS (SUBS [EQT_INTRO (REFL x)]
+                                (BETA_CONV (mk_comb(hdef,x))))
+                          (COND_T y (mk_comb(g,x)))
+           val d2a = DISCH pxy (TRANS (AP_THM geqh x) hx)
+       in
+         DISCH B (CHOOSE (g, ASSUME B)
+                   (EXISTS (A,g) (GENL [x,y] (IMP_ANTISYM_RULE d2a d2b))))
+       end
+     (* both sides in ALT form *)
+     val lhs_alt = SPEC P UNIQUE_SKOLEM_ALT
+     val rhs_alt =
+       let val Pf = mk_abs(f, pointwise f)
+           val th0 = SPEC Pf (INST_TYPE [alpha |-> (alpha --> beta)]
+                                        EXISTS_UNIQUE_ALT)
+           val (l0,r0) = dest_eq (concl th0)
+       in
+         TRANS (SYM (QUANT_CONV BETA_CONV l0))
+               (TRANS th0 (QUANT_CONV
+                            (QUANT_CONV (RATOR_CONV (RAND_CONV BETA_CONV)))
+                            r0))
+       end
+     val th = TRANS lhs_alt (TRANS (IMP_ANTISYM_RULE d1 d2) (SYM rhs_alt))
+     val target = mk_eq(mk_forall(x, mk_exists1(y, Pap x y)),
+                        mk_exists1(f, pointwise f))
+ in
+   GEN P (EQ_MP (ALPHA (concl th) target) th)
+ end);
+
 (*---------------------------------------------------------------------------
     Support for pattern matching on booleans.
 
@@ -3531,22 +3753,97 @@ val SKOLEM_THM = save_thm("SKOLEM_THM",
 val bool_case_thm = let
   val (vs,_) = strip_forall (concl COND_CLAUSES)
 in
-  save_thm("bool_case_thm",
+  thm (#(FILE), #(LINE))("bool_case_thm",
            COND_CLAUSES |> SPECL vs |> CONJUNCTS |> map (GENL vs) |> LIST_CONJ)
 end
 
+
+(*---------------------------------------------------------------------------
+    bool_case_eq =
+        |- (bool_case t1 t2 x = v) <=>
+        (x <=> T) /\ t1 = v \/ (x <=> F) /\ t2 = v
+ ---------------------------------------------------------------------------*)
+val bool_case_eq = thm (#(FILE), #(LINE))("bool_case_eq",
+let val x    = “x:bool”
+    val t1   = “t1:'a”
+    val t2   = “t2:'a”
+    val v    = “v:'a”
+    val eq = “$=”
+    val conj = “$/\”
+    val disj = “$\/”
+    val tm1 = “t1 = v”
+    val tm2 = “t2 = v”
+    val [COND1, COND2] = (CONJUNCTS (SPEC t2 (SPEC t1 COND_CLAUSES)))
+    and [OR1,OR2,OR3,OR4,_] = map GEN_ALL (CONJUNCTS (SPEC_ALL OR_CLAUSES))
+    and [AND1,AND2,AND3,AND4,_] = map GEN_ALL (CONJUNCTS(SPEC_ALL AND_CLAUSES))
+    val thmT1 = AP_THM (AP_TERM eq COND1) v
+    val thmF1 = AP_THM (AP_TERM eq COND2) v
+    val [TF,FT] = map EQF_INTRO (CONJUNCTS BOOL_EQ_DISTINCT)
+    val [TT,FF] = map (EQT_INTRO o REFL) [“T”,“F”]
+    val thmT2 =
+      let
+          val thml1 = AP_THM (AP_TERM conj TT) tm1
+          val thml2 = SPEC tm1 AND1
+          val thml = TRANS thml1 thml2
+          val thmr1 = AP_THM (AP_TERM conj TF) tm2
+          val thmr2 = SPEC tm2 AND3
+          val thmr = TRANS thmr1 thmr2
+          val thm1 = MK_COMB (AP_TERM disj thml, thmr)
+      in
+          TRANS thm1 (SPEC tm1 OR4)
+      end
+    val thmF2 =
+      let
+          val thmr1 = AP_THM (AP_TERM conj FF) tm2
+          val thmr2 = SPEC tm2 AND1
+          val thmr = TRANS thmr1 thmr2
+          val thml1 = AP_THM (AP_TERM conj FT) tm1
+          val thml2 = SPEC tm1 AND3
+          val thml = TRANS thml1 thml2
+          val thm1 = MK_COMB (AP_TERM disj thml, thmr)
+      in
+          TRANS thm1 (SPEC tm2 OR3)
+      end
+    val thmT3 = TRANS thmT1 (SYM thmT2)
+    val thmF3 = TRANS thmF1 (SYM thmF2)
+    val tm = “(if x then t1 else t2) = v <=>
+              (((x <=> T) /\ t1 = v) \/ ((x <=> F) /\ t2 = v))”
+    val thT4 = SUBST_CONV [x |-> ASSUME “x = T”] tm tm
+    and thF4 = SUBST_CONV [x |-> ASSUME “x = F”] tm tm
+    val thmT = EQ_MP (SYM thT4) thmT3
+    val thmF = EQ_MP (SYM thF4) thmF3
+ in
+    DISJ_CASES (SPEC x BOOL_CASES_AX) thmT thmF
+ end);
+
 (* ------------------------------------------------------------------------- *)
-(*    bool_case_ID = |- !x b. bool_case x x b = x                            *)
+(*    bool_case_ID = |- !x. (x => T | F) = x                                 *)
+(* ------------------------------------------------------------------------- *)
+val bool_case_ID = thm (#(FILE), #(LINE))("bool_case_ID",
+let val x = “x:bool”
+    val (CONDT,CONDF) = INST_TYPE [alpha |-> bool] COND_CLAUSES
+                      |> SPECL [T,F]
+                      |> CONJ_PAIR
+    val tm = “(if x then T else F) = x”
+    val thT1 = SUBST_CONV [x |-> ASSUME “x = T”] tm tm
+    val thF1 = SUBST_CONV [x |-> ASSUME “x = F”] tm tm
+    val thmT = EQ_MP (SYM thT1) CONDT
+    val thmF = EQ_MP (SYM thF1) CONDF
+in
+   GEN x (DISJ_CASES (SPEC x BOOL_CASES_AX) thmT thmF)
+end);
+(* ------------------------------------------------------------------------- *)
+(*    bool_case_CONST = |- !x b. bool_case x x b = x                         *)
 (* ------------------------------------------------------------------------- *)
 
-val bool_case_ID = save_thm("bool_case_ID", COND_ID)
+val bool_case_CONST = thm (#(FILE), #(LINE))("bool_case_CONST", COND_ID)
 
 
 (* ------------------------------------------------------------------------- *)
 (* boolAxiom  |- !e0 e1. ?fn. (fn T = e0) /\ (fn F = e1)                     *)
 (* ------------------------------------------------------------------------- *)
 
-val boolAxiom = save_thm("boolAxiom",
+val boolAxiom = thm (#(FILE), #(LINE))("boolAxiom",
  let
    val ([e0,e1], _) = strip_forall (concl COND_CLAUSES)
    val (th2, th3) = CONJ_PAIR (SPECL [e0, e1] COND_CLAUSES)
@@ -3563,7 +3860,7 @@ val boolAxiom = save_thm("boolAxiom",
 (* bool_INDUCT |- !P. P T /\ P F ==> !b. P b                                 *)
 (* ------------------------------------------------------------------------- *)
 
-val bool_INDUCT = save_thm("bool_INDUCT",
+val bool_INDUCT = thm (#(FILE), #(LINE))("bool_INDUCT",
  let val P = “P:bool -> bool”
      val b = “b:bool”
      val v = “v:bool”
@@ -3587,9 +3884,9 @@ val bool_INDUCT = save_thm("bool_INDUCT",
          ((case P of T -> x || F -> y) = (case Q of T -> x' || F -> y'))
   --------------------------------------------------------------------------- *)
 
-val bool_case_CONG = save_thm("bool_case_CONG", COND_CONG)
+val bool_case_CONG = thm (#(FILE), #(LINE))("bool_case_CONG", COND_CONG)
 
-val FORALL_BOOL = save_thm
+val FORALL_BOOL = thm (#(FILE), #(LINE))
 ("FORALL_BOOL",
  let val tm1 = “!b:bool. P b”
      val tm2 = “P T /\ P F”
@@ -3644,7 +3941,7 @@ in
     val lhs_thm = ASSUME lhs_t
     val lhs_eq = AP_THM EXISTS_UNIQUE_DEF subdisj_t
     val lhs_expanded = CONV_RULE BETA_CONV (EQ_MP lhs_eq lhs_thm)
-    val (expq0, univ) =  CONJ_PAIR lhs_expanded
+    val (expq0, univ) = CONJ_PAIR lhs_expanded
     val expq = EQ_MP (SPEC_ALL EXISTS_OR_THM) expq0
     val univ1 = SPEC_ALL univ
     val univ2 = CONV_RULE (LAND_CONV (LAND_CONV BETA_CONV)) univ1
@@ -3675,8 +3972,10 @@ in
       DISJ2 uexP (EQ_MP uex_expanded (CONJ (ASSUME exQ) rhs))
     end
   in
-    save_thm("UEXISTS_OR_THM",
-             GENL [P, Q] (DISCH_ALL (DISJ_CASES expq P_half Q_half)))
+    thm (#(FILE), #(LINE))(
+      "UEXISTS_OR_THM",
+      GENL [P, Q] (DISCH_ALL (DISJ_CASES expq P_half Q_half))
+    )
   end;
 
   val UEXISTS_SIMP = let
@@ -3719,7 +4018,7 @@ in
       mCONV_RULE (RAND_CONV (K pushx2)) exp6
     val mp' = Thm.INST [p |-> t, q |-> list_mk_forall [x,y] xeqy] pseudo_mp
   in
-    save_thm("UEXISTS_SIMP", mCONV_RULE (K mp') exp7)
+    thm (#(FILE), #(LINE))("UEXISTS_SIMP", mCONV_RULE (K mp') exp7)
   end
 end
 
@@ -3795,10 +4094,11 @@ val (RES_FORALL_THM, RES_EXISTS_THM, RES_EXISTS_UNIQUE_THM, RES_SELECT_THM) =
       fun mk_eq th =
           GENL Pf (List.foldl (RIGHT_BETA o uncurry (C AP_THM)) th Pf)
     in
-      (save_thm("RES_FORALL_THM", mk_eq RES_FORALL_DEF),
-       save_thm("RES_EXISTS_THM", mk_eq RES_EXISTS_DEF),
-       save_thm("RES_EXISTS_UNIQUE_THM", mk_eq RES_EXISTS_UNIQUE_DEF),
-       save_thm("RES_SELECT_THM", mk_eq RES_SELECT_DEF))
+      (thm (#(FILE), #(LINE))("RES_FORALL_THM", mk_eq RES_FORALL_DEF),
+       thm (#(FILE), #(LINE))("RES_EXISTS_THM", mk_eq RES_EXISTS_DEF),
+       thm (#(FILE), #(LINE))("RES_EXISTS_UNIQUE_THM",
+                               mk_eq RES_EXISTS_UNIQUE_DEF),
+       thm (#(FILE), #(LINE))("RES_SELECT_THM", mk_eq RES_SELECT_DEF))
     end
 
 
@@ -3814,7 +4114,7 @@ val RES_FORALL_TRUE = let
   val timpT_th = List.nth(CONJUNCTS (SPEC xINP_t IMP_CLAUSES), 1)
   val th2 = CONV_RULE (RAND_CONV (QUANT_CONV (K timpT_th))) th1
 in
-  save_thm("RES_FORALL_TRUE", TRANS th2 (SPEC T FORALL_SIMP))
+  thm (#(FILE), #(LINE))("RES_FORALL_TRUE", TRANS th2 (SPEC T FORALL_SIMP))
 end
 
 (* (?x::P. F) = F *)
@@ -3829,7 +4129,7 @@ val RES_EXISTS_FALSE = let
   val tandF_th = List.nth(CONJUNCTS (SPEC xINP_t AND_CLAUSES), 3)
   val th2 = CONV_RULE (RAND_CONV (QUANT_CONV (K tandF_th))) th1
 in
-  save_thm("RES_EXISTS_FALSE", TRANS th2 (SPEC F EXISTS_SIMP))
+  thm (#(FILE), #(LINE))("RES_EXISTS_FALSE", TRANS th2 (SPEC F EXISTS_SIMP))
 end
 
 (*---------------------------------------------------------------------------
@@ -3899,7 +4199,7 @@ val BOOL_FUN_CASES_THM =
      val abcd3 = SPEC fF (GEN x abcd2)
      val abcd  = MP abcd3 (REFL fF)
 in
-   save_thm("BOOL_FUN_CASES_THM", GEN f abcd)
+   thm (#(FILE), #(LINE))("BOOL_FUN_CASES_THM", GEN f abcd)
 end;
 
 (*---------------------------------------------------------------------------
@@ -3958,14 +4258,14 @@ val BOOL_FUN_INDUCT =
      val b4 = imp_and (DISCH (mk_comb(P,KF)) b3)
      val b  = imp_and (DISCH (mk_comb(P,KT)) b4)
 in
-   save_thm("BOOL_FUN_INDUCT", GEN P b)
+   thm (#(FILE), #(LINE))("BOOL_FUN_INDUCT", GEN P b)
 end;
 
 (*---------------------------------------------------------------------------
      literal_case_THM = |- !f x. literal_case f x = f x
  ---------------------------------------------------------------------------*)
 
-val literal_case_THM = save_thm("literal_case_THM",
+val literal_case_THM = thm (#(FILE), #(LINE))("literal_case_THM",
  let val f = “f:'a->'b”
      val x = “x:'a”
  in
@@ -3978,14 +4278,15 @@ val literal_case_THM = save_thm("literal_case_THM",
 (*        |- P (literal_case (\x. N x) M) = (literal_case (\x. P (N x)) M)   *)
 (*---------------------------------------------------------------------------*)
 
-val literal_case_RAND = save_thm("literal_case_RAND",
+val literal_case_RAND = thm (#(FILE), #(LINE))("literal_case_RAND",
  let val tm1 = “\x:'a. P (N x:'b):'c”
      val tm2 = “M:'a”
      val tm3 = “\x:'a. N x:'b”
      val P   = “P:'b ->'c”
      val literal_case_THM1 = RIGHT_BETA (SPEC tm2 (SPEC tm1
                     (Thm.INST_TYPE [beta |-> gamma] literal_case_THM)))
-     val literal_case_THM2 = AP_TERM P (RIGHT_BETA (SPEC tm2 (SPEC tm3 literal_case_THM)))
+     val literal_case_THM2 =
+       AP_TERM P (RIGHT_BETA (SPEC tm2 (SPEC tm3 literal_case_THM)))
  in TRANS literal_case_THM2 (SYM literal_case_THM1)
  end);
 
@@ -3994,13 +4295,17 @@ val literal_case_RAND = save_thm("literal_case_RAND",
 (*         |- (literal_case (\x. N x) M) b = (literal_case (\x. N x b) M)    *)
 (*---------------------------------------------------------------------------*)
 
-val literal_case_RATOR = save_thm("literal_case_RATOR",
+val literal_case_RATOR = thm (#(FILE), #(LINE))("literal_case_RATOR",
  let val M = “M:'a”
      val b = “b:'b”
      val tm1 = “\x:'a. N x:'b->'c”
      val tm2 = “\x:'a. N x ^b:'c”
-     val literal_case_THM1 = AP_THM (RIGHT_BETA (SPEC M (SPEC tm1
-                   (Thm.INST_TYPE [beta |-> (beta --> gamma)] literal_case_THM)))) b
+     val literal_case_THM1 =
+       AP_THM
+         (RIGHT_BETA
+          (SPEC M (SPEC tm1
+            (Thm.INST_TYPE [beta |-> (beta --> gamma)] literal_case_THM))))
+         b
      val literal_case_THM2 = RIGHT_BETA (SPEC M (SPEC tm2
                       (Thm.INST_TYPE [beta |-> gamma] literal_case_THM)))
  in TRANS literal_case_THM1 (SYM literal_case_THM2)
@@ -4013,7 +4318,7 @@ val literal_case_RATOR = save_thm("literal_case_RATOR",
                    (literal_case f M = literal_case g N)
  ---------------------------------------------------------------------------*)
 
-val literal_case_CONG = save_thm("literal_case_CONG",
+val literal_case_CONG = thm (#(FILE), #(LINE))("literal_case_CONG",
   let val f = mk_var("f",alpha-->beta)
       val g = mk_var("g",alpha-->beta)
       val M = mk_var("M",alpha)
@@ -4041,7 +4346,7 @@ val literal_case_CONG = save_thm("literal_case_CONG",
 (*  |- literal_case (\x. bool_case t u (x=a)) a = t                          *)
 (*---------------------------------------------------------------------------*)
 
-val literal_case_id = save_thm
+val literal_case_id = thm (#(FILE), #(LINE))
 ("literal_case_id",
  let val a = mk_var("a", alpha)
     val x = mk_var("x", alpha)
@@ -4070,10 +4375,9 @@ val _ = new_constant(GrammarSpecials.case_split_special,
 val _ = new_constant(GrammarSpecials.case_arrow_special,
                      “:'a -> 'b -> 'a -> 'b”);
 
-val _ = let open GrammarSpecials
-        in app (fn s => remove_ovl_mapping s {Name=s,Thy="bool"})
-               [case_split_special, case_arrow_special]
-        end
+val _ = app (fn s => remove_ovl_mapping s {Name=s,Thy="bool"})
+            [GrammarSpecials.case_split_special,
+             GrammarSpecials.case_arrow_special]
 
 val _ = add_rule{pp_elements = [HardSpace 1, TOK "=>", BreakSpace(1,2)],
                  fixity = Infix(NONASSOC, 12),
@@ -4123,7 +4427,7 @@ val _ = add_rule{pp_elements = [PPBlock([TOK "case", BreakSpace(1,2),
                  paren_style = Always,
                  term_name = GrammarSpecials.core_case_special};
 
-val BOUNDED_THM = save_thm("BOUNDED_THM",
+val BOUNDED_THM = thm (#(FILE), #(LINE))("BOUNDED_THM",
     let val v = “v:bool”
     in
       GEN v (RIGHT_BETA(AP_THM BOUNDED_DEF v))
@@ -4138,7 +4442,7 @@ val BOUNDED_THM = save_thm("BOUNDED_THM",
 (*                    (!x y z. f x (f y z) = f y (f x z))                    *)
 (*---------------------------------------------------------------------------*)
 
-val LCOMM_THM = save_thm("LCOMM_THM",
+val LCOMM_THM = thm (#(FILE), #(LINE))("LCOMM_THM",
  let val x = mk_var("x",alpha)
      val y = mk_var("y",alpha)
      val z = mk_var("z",alpha)
@@ -4156,13 +4460,13 @@ val LCOMM_THM = save_thm("LCOMM_THM",
  end);
 
 
-val DATATYPE_TAG_THM = save_thm("DATATYPE_TAG_THM",
+val DATATYPE_TAG_THM = thm (#(FILE), #(LINE))("DATATYPE_TAG_THM",
     let val x = mk_var("x",alpha)
     in GEN x (RIGHT_BETA (AP_THM DATATYPE_TAG_DEF x))
     end);
 
 
-val DATATYPE_BOOL = save_thm("DATATYPE_BOOL",
+val DATATYPE_BOOL = thm (#(FILE), #(LINE))("DATATYPE_BOOL",
  let val thm1 = INST_TYPE [alpha |-> bool] DATATYPE_TAG_THM
      val bvar = mk_var("bool",bool--> bool-->bool)
  in
@@ -4210,7 +4514,7 @@ val ITSELF_UNIQUE = let
       GEN_ALL (MP (SPECL [“i:'a itself”, “bool$the_value”] typedef_11)
                   allreps_repthevalue)
 in
-  save_thm("ITSELF_UNIQUE",
+  thm (#(FILE), #(LINE))("ITSELF_UNIQUE",
            CHOOSE (“rep:'a itself -> 'a”, ITSELF_TYPE_DEF) all_eq_thevalue)
 end
 
@@ -4228,7 +4532,10 @@ val ITSELF_EQN_RWT = let
   val l2r = SPEC x ITSELF_UNIQUE |> AP_TERM f |> C TRANS (ASSUME l) |> GEN x
                  |> DISCH l
 in
-  save_thm("ITSELF_EQN_RWT", GENL [f,e] $ IMP_ANTISYM_RULE l2r r2l)
+  thm (#(FILE), #(LINE))(
+    "ITSELF_EQN_RWT",
+    GENL [f,e] $ IMP_ANTISYM_RULE l2r r2l
+  )
 end
 
 (* prove a datatype axiom for the type, allowing definitions of the form
@@ -4240,7 +4547,7 @@ val itself_Axiom = let
   val fn_exists = EXISTS (“?f:'a itself -> 'b. f (:'a) = e”, witness)
                   fn_behaves
 in
-  save_thm("itself_Axiom", GEN_ALL fn_exists)
+  thm (#(FILE), #(LINE))("itself_Axiom", GEN_ALL fn_exists)
 end
 
 (* prove induction *)
@@ -4250,7 +4557,7 @@ val itself_induction = let
       EQ_MP (SYM (AP_TERM “P:'a itself -> bool” (SPEC_ALL ITSELF_UNIQUE)))
             pval
 in
-  save_thm("itself_induction", GEN_ALL (DISCH_ALL (GEN_ALL pi)))
+  thm (#(FILE), #(LINE))("itself_induction", GEN_ALL (DISCH_ALL (GEN_ALL pi)))
 end
 
 (* define case operator *)
@@ -4259,13 +4566,15 @@ val itself_case_thm = let
   val witness_applied1 = BETA_CONV (mk_comb(witness, “(:'a)”))
   val witness_applied2 = RIGHT_BETA (AP_THM witness_applied1 “b:'b”)
 in
-  new_specification("itself_case_thm",
-                    ["itself_case"],
-                    EXISTS (“?f:'a itself -> 'b -> 'b. !b. f (:'a) b = b”,
-                            witness)
-                           (GEN_ALL witness_applied2))
+  located_new_specification{
+    name = "itself_case_thm",
+    constnames = ["itself_case"],
+    witness = EXISTS (“?f:'a itself -> 'b -> 'b. !b. f (:'a) b = b”, witness)
+                     (GEN_ALL witness_applied2),
+    loc = mkloc(#(FILE), #(LINE)-5)
+  }
 end
-val _ = overload_on("case", “itself_case”)
+Overload case = “itself_case”
 
 (* FORALL_itself : |- (!x:'a itself. P x) <=> P (:'a)
    EXISTS_itself : |- (?x:'a itself. P x) <=> P (:'a)
@@ -4287,8 +4596,9 @@ local
                     (EQ_MP (SYM unique) (ASSUME Px)) |> DISCH_ALL
   val imp2 = EXISTS(mk_exists(x,Px),itself) (ASSUME Pitself) |> DISCH_ALL
 in
-  val FORALL_itself = save_thm("FORALL_itself", fa)
-  val EXISTS_itself = save_thm("EXISTS_itself", IMP_ANTISYM_RULE imp1 imp2)
+  val FORALL_itself = thm (#(FILE), #(LINE))("FORALL_itself", fa)
+  val EXISTS_itself = thm (#(FILE), #(LINE))
+                          ("EXISTS_itself", IMP_ANTISYM_RULE imp1 imp2)
 end;
 
 
@@ -4305,9 +4615,9 @@ local
   val PULL_FORALL2 = LEFT_AND_FORALL_THM |> SPEC_ALL
   val PULL_FORALL3 = RIGHT_AND_FORALL_THM |> SPEC_ALL |> flip
 in
-  val PULL_EXISTS = save_thm("PULL_EXISTS",
+  val PULL_EXISTS = thm (#(FILE), #(LINE))("PULL_EXISTS",
     LIST_CONJ [PULL_EXISTS1, PULL_EXISTS2, PULL_EXISTS3] |> GENL [Pab, Qb])
-  val PULL_FORALL = save_thm("PULL_FORALL",
+  val PULL_FORALL = thm (#(FILE), #(LINE))("PULL_FORALL",
     LIST_CONJ [PULL_FORALL1, PULL_FORALL2, PULL_FORALL3] |> GENL [Pab, Qb])
 end
 
@@ -4315,7 +4625,7 @@ end
 (* PEIRCE  =  |- ((P ==> Q) ==> P) ==> P                                     *)
 (*---------------------------------------------------------------------------*)
 
-val PEIRCE = save_thm
+val PEIRCE = thm (#(FILE), #(LINE))
 ("PEIRCE",
  let val th1 = ASSUME “(P ==> Q) ==> P”
      val th2 = ASSUME “P:bool”
@@ -4349,12 +4659,13 @@ val JRH_INDUCT_UTIL = let
   val P_eta = SPEC P (INST_TYPE [beta |-> bool] ETA_AX)
   val ExP_eta = AP_TERM “(?) : ('a -> bool) -> bool” P_eta
 in
-  save_thm("JRH_INDUCT_UTIL", GENL [P, t] (DISCH asm_t (EQ_MP ExP_eta ExPx)))
+  thm (#(FILE), #(LINE))("JRH_INDUCT_UTIL",
+                          GENL [P, t] (DISCH asm_t (EQ_MP ExP_eta ExPx)))
 end
 
 (* Parsing additions *)
 (* not an element of *)
-val _ = overload_on ("NOTIN", “\x:'a y:('a -> bool). ~(x IN y)”)
+Overload NOTIN = “\x:'a y:('a -> bool). ~(x IN y)”
 val _ = set_fixity "NOTIN" (Infix(NONASSOC, 425))
 val _ = unicode_version {u = UChar.not_elementof, tmnm = "NOTIN"}
 val _ = TeX_notation {hol="NOTIN", TeX = ("\\HOLTokenNotIn{}",1)}
@@ -4362,21 +4673,20 @@ val _ = TeX_notation {hol=UChar.not_elementof,
                       TeX = ("\\HOLTokenNotIn{}",1)}
 
 (* not iff *)
-val _ = overload_on ("<=/=>", “$<> : bool -> bool -> bool”)
+Overload "<=/=>" = “$<> : bool -> bool -> bool”
 val _ = set_fixity "<=/=>" (Infix(NONASSOC, 100))
 val _ = unicode_version {u = UChar.not_iff, tmnm = "<=/=>"}
 val _ = TeX_notation {hol="<=/=>", TeX = ("\\HOLTokenNotEquiv{}",3)}
 val _ = TeX_notation {hol=UChar.not_iff,
                       TeX = ("\\HOLTokenNotEquiv{}",3)}
 
-local open boolpp in end
 val _ = add_ML_dependency "boolpp"
 val _ = add_user_printer ("bool.COND", “COND gd tr fl”)
 val _ = add_user_printer ("bool.LET", “LET f x”)
 val _ = add_absyn_postprocessor "bool.LET"
 
 (* |- |- !A B. A \/ B <=> ~A ==> B *)
-val DISJ_EQ_IMP = save_thm("DISJ_EQ_IMP",
+val DISJ_EQ_IMP = thm (#(FILE), #(LINE))("DISJ_EQ_IMP",
   let
     val lemma = NOT_CLAUSES |> CONJUNCT1 |> SPEC ``A:bool``
   in
@@ -4394,9 +4704,7 @@ val DISJ_EQ_IMP = save_thm("DISJ_EQ_IMP",
 (* (HOL-Light compatible)                                                    *)
 (* ------------------------------------------------------------------------- *)
 
-val CONTRAPOS_THM = save_thm ("CONTRAPOS_THM",
+val CONTRAPOS_THM = thm (#(FILE), #(LINE)) ("CONTRAPOS_THM",
     MONO_NOT_EQ |> SYM
                 |> INST [“x:bool” |-> “t1:bool”, “y:bool” |-> “t2:bool”]
                 |> GENL [“t1:bool”, “t2:bool”]);
-
-val _ = export_theory();

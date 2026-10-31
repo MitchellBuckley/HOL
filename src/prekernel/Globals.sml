@@ -50,18 +50,6 @@ val show_axioms = ref true
 val show_scrub = ref true
 
 (*---------------------------------------------------------------------------*
- * Assignable function for printing errors.                                  *
- *---------------------------------------------------------------------------*)
-
-fun outHOL_ERR_default {message,origin_function,origin_structure} =
-   (TextIO.output (TextIO.stdOut,
-                   "\nException raised at " ^ origin_structure ^ "." ^
-                   origin_function ^ ":\n" ^ message ^ "\n")
-    ; TextIO.flushOut TextIO.stdOut)
-
-val output_HOL_ERR = ref outHOL_ERR_default
-
-(*---------------------------------------------------------------------------*
  * Prettyprinting flags                                                      *
  *---------------------------------------------------------------------------*)
 
@@ -85,6 +73,12 @@ val linewidth = CoreReplVARS.linewidth
 val max_print_depth = ref ~1
 
 val pp_flags = {show_types = ref false, show_numeral_types = ref false}
+
+(*---------------------------------------------------------------------------*
+ * Controls how many elements to print for list forms. Mirrors print depth.  *
+ *---------------------------------------------------------------------------*)
+
+val max_print_length = ref ~1
 
 (*---------------------------------------------------------------------------*
  * For prettyprinting type information in a term.                            *
@@ -134,29 +128,35 @@ val checking_const_names = ref true
 
 (* ----------------------------------------------------------------------
     The syntax used to highlight out-of-date constants in the
-    prettyprinters for types and terms - must generate unique names
-    because this determines the name of out-of-date constants, which
-    might otherwise overlap, and be identified.
+    prettyprinters for types and terms
    ---------------------------------------------------------------------- *)
 
-val old =
-   let
-      val c = ref 0
-   in
-      fn s => String.concat ["old", Int.toString (!c), "->", s, "<-old"] before
-              c := !c + 1
-   end
+fun  oldify n s = String.concat ["old", Int.toString n, "->", s, "<-old"]
 
 val print_thy_loads = ref false
 
 (* ----------------------------------------------------------------------
     Flag telling us whether or not we're interactive.
-    If this is set, this allows for certain pieces of code to be a bit more
-    verbose.  It's set by std.prelude, so theory scripts and the like that
+
+    If this is set, this allows for certain pieces of code to be a bit
+    more verbose. It's set by tools/std.prelude (or
+    tools-poly/prelude.ML), so theory scripts and the like that
     Holmake runs won't cause the printing of messages.
    ---------------------------------------------------------------------- *)
 
 val interactive = ref false
+
+(* ----------------------------------------------------------------------
+    When a tactic fails during a non-interactive Holmake build, dump a
+    Poly/ML heap (via PolyML.SaveState.saveChild on the Poly side; a
+    no-op under Moscow ML) so the user can resume with
+       bin/hol --holstate=<file>
+    and explore the failing proof.  Flipped on by
+    holmake_not_interactive; default false so the interactive REPL is
+    unaffected.
+   ---------------------------------------------------------------------- *)
+
+val dumpheap_on_failure = ref false
 
 val hol_clock = Timer.startCPUTimer ()
 

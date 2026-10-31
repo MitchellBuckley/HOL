@@ -1,11 +1,11 @@
-
-open HolKernel Parse boolLib bossLib term_tactic;
-open arithmeticTheory listTheory pairTheory finite_mapTheory stringTheory;
-open source_valuesTheory source_syntaxTheory source_semanticsTheory mp_then
-     source_propertiesTheory parsingTheory codegenTheory x64asm_syntaxTheory
-     wordsTheory wordsLib automation_lemmasTheory automationLib compilerTheory;
-
-val _ = new_theory "compiler_prog";
+Theory compiler_prog
+Ancestors
+  arithmetic list pair finite_map string
+  source_values source_syntax source_semantics
+  source_properties parsing codegen x64asm_syntax
+  words automation_lemmas printing parsing
+Libs
+  mp_then wordsLib automationLib
 
 val _ = show_assums := true;
 
@@ -23,6 +23,8 @@ val _ = attach_comment ‘
 
 
 # Definition of the codegen function’
+
+val _ = temp_delsimps ["LT1_EQ0"]
 
 (* codegen *)
 
@@ -85,7 +87,7 @@ val res = to_deep codegenTheory.lookup_def
 val res = to_deep make_ret_def
 val res = to_deep c_exp_def
 
-Triviality FST_SND:
+Theorem FST_SND[local]:
   FST = (λ(x,y). x) ∧ SND = (λ(x,y). y)
 Proof
   fs [FUN_EQ_THM,FORALL_PROD]
@@ -161,7 +163,7 @@ Theorem name2str_ind = name2str_temp_ind
 
 val res = to_deep name2str_thm
 
-Triviality name2str_side:
+Theorem name2str_side[local]:
   ∀n acc. name2str_side n acc ⇔ T
 Proof
   completeInduct_on ‘n’ \\ fs []
@@ -391,7 +393,7 @@ val lexer_code_def = define_code ‘
   (defun lexer ()
      (lex '0 (read) '0))’
 
-Triviality LTL_fromList_lemma[simp]:
+Theorem LTL_fromList_lemma[local,simp]:
   (case LTL (fromList t) of NONE => fromList t | SOME t => t) = fromList (TL t)
 Proof
   Cases_on ‘t’ \\ fs []
@@ -675,7 +677,7 @@ Theorem num_ind = num_temp_ind
 
 val res = to_deep num_thm
 
-Triviality num_side:
+Theorem num_side[local]:
   ∀n s. num_side n s ⇔ T
 Proof
   completeInduct_on ‘n’ \\ fs []
@@ -731,7 +733,7 @@ Theorem print_thm:
     lookup_fun (name "print") s.funs = SOME ([name "s"],print_code) ⇒
     app (name "print") [list char str] s
       (Num 0, s with output := s.output ++ str)
-Proof
+Proof[exclude_simps = state_fupdselfid]
   gen_tac \\ completeInduct_on ‘LENGTH str’
   \\ rw [] \\ fs [PULL_FORALL]
   \\ match_mp_tac (trans_app |> SIMP_RULE std_ss [LET_THM] |> MP_CANON |> GEN_ALL)
@@ -767,7 +769,7 @@ Definition compiler_prog_def:
   compiler_prog = ^entire_program :prog
 End
 
-Triviality compiler_prog_thm = compiler_prog_def |> CONV_RULE (RAND_CONV EVAL);
+Theorem compiler_prog_thm[local] = compiler_prog_def |> CONV_RULE (RAND_CONV EVAL);
 
 Definition coms_def:
   coms = ^(get_comments ())
@@ -820,5 +822,3 @@ Proof
   \\ goal_assum (first_x_assum o mp_then Any mp_tac)
   \\ simp [init_state_def]
 QED
-
-val _ = export_theory();

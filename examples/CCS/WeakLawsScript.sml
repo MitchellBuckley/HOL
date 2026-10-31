@@ -2,14 +2,13 @@
  * Copyright 1991-1995  University of Cambridge (Author: Monica Nesi)
  * Copyright 2016-2017  University of Bologna   (Author: Chun Tian)
  *)
+Theory WeakLaws
+Ancestors
+  pred_set prim_rec arithmetic relation CCS StrongEQ StrongLaws
+  WeakEQ
+Libs
+  CCSLib WeakEQLib
 
-open HolKernel Parse boolLib bossLib;
-
-open pred_setTheory prim_recTheory arithmeticTheory relationTheory;
-open CCSLib CCSTheory StrongEQTheory StrongLawsTheory;
-open WeakEQTheory WeakEQLib;
-
-val _ = new_theory "WeakLaws";
 
 (******************************************************************************)
 (*                                                                            *)
@@ -139,7 +138,7 @@ val WEAK_PAR_TAU_TAU = save_thm (
  *)
 val WEAK_PAR_PREF_NO_SYNCR = save_thm (
    "WEAK_PAR_PREF_NO_SYNCR",
-    STRIP_FORALL_RULE ((DISCH ``~((l :'b Label) = COMPL l')``) o
+    STRIP_FORALL_RULE ((DISCH ``~((l :'a Label) = COMPL l')``) o
                        (STRONG_IMP_WEAK_EQUIV_RULE) o
                        UNDISCH)
                       STRONG_PAR_PREF_NO_SYNCR);
@@ -156,7 +155,7 @@ val WEAK_PAR_PREF_NO_SYNCR = save_thm (
  *)
 val WEAK_PAR_PREF_SYNCR = save_thm (
    "WEAK_PAR_PREF_SYNCR",
-    STRIP_FORALL_RULE ((DISCH ``((l :'b Label) = COMPL l')``) o
+    STRIP_FORALL_RULE ((DISCH ``((l :'a Label) = COMPL l')``) o
                        (STRONG_IMP_WEAK_EQUIV_RULE) o
                        UNDISCH)
                       STRONG_PAR_PREF_SYNCR);
@@ -211,15 +210,15 @@ val WEAK_RESTR_PREFIX_TAU = save_thm (
 val WEAK_RESTR_PR_LAB_NIL = save_thm (
    "WEAK_RESTR_PR_LAB_NIL",
     GEN_ALL
-       (DISCH ``(l :'b Label) IN L \/ (COMPL l) IN L``
+       (DISCH ``(l :'a Label) IN L \/ (COMPL l) IN L``
         (Q.GEN `E`
          (UNDISCH
           (IMP_TRANS
-           (DISCH ``(l :'b Label) IN L \/ (COMPL l) IN L``
+           (DISCH ``(l :'a Label) IN L \/ (COMPL l) IN L``
             (Q.SPEC `E`
              (UNDISCH
               (Q.SPECL [`l`, `L`] STRONG_RESTR_PR_LAB_NIL))))
-           (SPECL [``restr (L :'b Label set) (prefix (label l) E)``, ``nil``]
+           (SPECL [``restr (L :'a Label set) (prefix (label l) E)``, ``nil``]
                     STRONG_IMP_WEAK_EQUIV))))));
 
 (* Prove WEAK_RESTR_PREFIX_LABEL:
@@ -230,16 +229,16 @@ val WEAK_RESTR_PR_LAB_NIL = save_thm (
 val WEAK_RESTR_PREFIX_LABEL = save_thm (
    "WEAK_RESTR_PREFIX_LABEL",
     GEN_ALL
-       (DISCH ``~((l :'b Label) IN L) /\ ~((COMPL l) IN L)``
+       (DISCH ``~((l :'a Label) IN L) /\ ~((COMPL l) IN L)``
         (Q.GEN `E`
          (UNDISCH
           (IMP_TRANS
-           (DISCH ``~((l :'b Label) IN L) /\ ~((COMPL l) IN L)``
+           (DISCH ``~((l :'a Label) IN L) /\ ~((COMPL l) IN L)``
             (Q.SPEC `E`
              (UNDISCH
               (Q.SPECL [`l`, `L`] STRONG_RESTR_PREFIX_LABEL))))
-           (SPECL [``restr (L :'b Label set) (prefix (label l) E)``,
-                   ``prefix (label (l :'b Label)) (restr L E)``]
+           (SPECL [``restr (L :'a Label set) (prefix (label l) E)``,
+                   ``prefix (label (l :'a Label)) (restr L E)``]
                   STRONG_IMP_WEAK_EQUIV))))));
 
 (******************************************************************************)
@@ -301,8 +300,9 @@ val WEAK_PREF_REC_EQUIV = save_thm (
 (******************************************************************************)
 
 (* Prove TAU_WEAK:  |- !E. WEAK_EQUIV (prefix tau E) E *)
-val TAU_WEAK = store_thm ("TAU_WEAK",
-  ``!E. WEAK_EQUIV (prefix tau E) E``,
+Theorem TAU_WEAK:
+    !E. WEAK_EQUIV (prefix tau E) E
+Proof
     GEN_TAC
  >> PURE_ONCE_REWRITE_TAC [WEAK_PROPERTY_STAR]
  >> REPEAT STRIP_TAC (* 4 sub-goals here *)
@@ -327,9 +327,9 @@ val TAU_WEAK = store_thm ("TAU_WEAK",
       Q.EXISTS_TAC `E` \\
       IMP_RES_TAC ONE_TAU >> ASM_REWRITE_TAC [] \\
       MATCH_MP_TAC ONE_TAU \\
-      REWRITE_TAC [PREFIX] ]);
+      REWRITE_TAC [PREFIX] ]
+QED
 
-val _ = export_theory ();
 val _ = html_theory "WeakLaws";
 
 (* last updated: Jun 20, 2017 *)

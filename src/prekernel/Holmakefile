@@ -1,4 +1,7 @@
-CLINE_OPTIONS=--no_overlay
+CLINE_OPTIONS = --no_overlay
+ifdef POLY
+CLINE_OPTIONS += --poly_not_hol
+endif
 
 PORTABLED = $(dprot $(SIGOBJ)/Portable.ui)
 
@@ -20,6 +23,9 @@ FinalThm-sig.uo: FinalThm-sig.sml Nonce.ui Lib.uo $(PORTABLED)
 	$(HOLMOSMLC) -c -toplevel $<
 
 FinalNet-sig.uo: FinalNet-sig.sml
+	$(HOLMOSMLC) -c -toplevel $<
+
+FinalContext-sig.uo: FinalContext-sig.sml
 	$(HOLMOSMLC) -c -toplevel $<
 
 KNametab.uo: KNametab.sml $(dprot $(SIGOBJ)/Table.ui)

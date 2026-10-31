@@ -8,6 +8,14 @@
 \NeedsTeXFormat{LaTeX2e}
 \usepackage{amssymb, underscore, fancyvrb, amsmath}
 
+% Borrow only the tortoise-shell brackets (U+2772/2773) from the STIX Type1
+% extension font, without letting stix.sty take over the math fonts.
+\DeclareFontEncoding{LS2}{}{}
+\DeclareFontSubstitution{LS2}{stixex}{m}{n}
+\DeclareSymbolFont{stixdelim}{LS2}{stixex}{m}{n}
+\DeclareMathDelimiter{\lbrbrak}{\mathopen} {stixdelim}{"EE}{stixdelim}{"14}
+\DeclareMathDelimiter{\rbrbrak}{\mathclose}{stixdelim}{"EF}{stixdelim}{"15}
+
 \fvset{commandchars=\\\{\},xleftmargin=1mm,framesep=1.2mm,fontsize=\small}
 
 \newcommand{\HOLpagestyle}{}
@@ -22,21 +30,23 @@
   \index{#1 Theory@\textbf{#1 Theory}!Theorems!#2}}
 
 \newcommand{\HOLinline}[1]{\mbox{\textup{\texttt{#1}}}}
-\newenvironment{HOLblock}{\begin{alltt}}{\end{alltt}}
+\newenvironment{HOLblock}{%
+\begin{alltt}}{%
+\end{alltt}}
 \newenvironment{HOLmath}{\begin{displaymath}\begin{array}{l}}{\end{array}\end{displaymath}\ignorespacesafterend}
 \newenvironment{HOLarray}{\begin{array}[t]{l}}{\end{array}}
 
 \newcommand{\HOLKeyword}[1]{{\bfseries{\textsf{#1}}}}
 \newcommand{\HOLBoundVar}[1]{\ensuremath{\mathit{#1}}}
 \newcommand{\HOLFreeVar}[1]{\ensuremath{\mathit{#1}}}
-\newcommand{\HOLConst}[1]{\texttt{#1}}
+\newcommand{\HOLConst}[1]{\textsf{#1}}
 \newcommand{\HOLSymConst}[1]{#1}
-\newcommand{\HOLTyOp}[1]{\texttt{#1}}
-\newcommand{\HOLStringLit}[1]{\textrm{``#1''}}
-\newcommand{\HOLStringLitDG}[1]{\textrm{\guillemotleft#1\guillemotright}}
-\newcommand{\HOLStringLitSG}[1]{\textrm{\guilsinglleft#1\guilsinglright}}
+\newcommand{\HOLTyOp}[1]{\textsf{#1}}
+\newcommand{\HOLStringLit}[1]{\texttt{``#1''}}
+\newcommand{\HOLStringLitDG}[1]{\texttt{\guillemotleft#1\guillemotright}}
+\newcommand{\HOLStringLitSG}[1]{\texttt{\guilsinglleft#1\guilsinglright}}
 \newcommand{\HOLNumLit}[1]{\ensuremath{#1}}
-\newcommand{\HOLCharLit}[1]{\textrm{\#``#1''}}
+\newcommand{\HOLCharLit}[1]{\texttt{\#``#1''}}
 \newcommand{\HOLFieldName}[1]{\textsf{#1}}
 \newcommand{\HOLBeginSup}{\begin{math}{}\sp\bgroup\tt}
 \newcommand{\HOLBeginSub}{\begin{math}{}\sb\bgroup\tt}
@@ -49,6 +59,7 @@
 \newcommand{\HOLTokenTilde}{\texttt{\char'176}}
 \newcommand{\HOLTokenDoubleQuote}{\texttt{\char'42}}
 \newcommand{\HOLTokenDoublePlus}{\ensuremath{\mathbin{+\mkern-10mu+}}}
+\newcommand{\HOLTokenDoublePlusL}{\ensuremath{\mathbin{+\mkern-10mu+}_{l}}}
 \newcommand{\HOLTokenUnderscore}{\texttt{\_}}
 \newcommand{\HOLTokenIn}{\ensuremath{\in}}
 \newcommand{\HOLTokenNotIn}{\ensuremath{\notin}}
@@ -59,7 +70,11 @@
 \newcommand{\HOLTokenBigInter}{\ensuremath{\bigcap}}
 \newcommand{\HOLTokenRInter}{\ensuremath{\cap_r}}
 \newcommand{\HOLTokenLeftbrace}{\ensuremath{\left\{\right.}}
+\newcommand{\HOLTokenLeftELbracket}{\ensuremath{\lbrbrak}}
+\newcommand{\HOLTokenLLens}{\ensuremath{\llparenthesis}}
+\newcommand{\HOLTokenRightELbracket}{\ensuremath{\rbrbrak}}
 \newcommand{\HOLTokenRightbrace}{\ensuremath{\left.\right\}}}
+\newcommand{\HOLTokenRLens}{\ensuremath{\rrparenthesis}}
 \newcommand{\HOLTokenTurnstile}{\ensuremath{\:\:\vdash}}
 \newcommand{\HOLTokenLambda}{\ensuremath{\lambda\,}}
 \newcommand{\HOLTokenForall}{\ensuremath{\forall\,}}
@@ -102,6 +117,7 @@
 \newcommand{\HOLTokenLsl}{\ensuremath{\ll}} % {\texttt{<<}}
 \newcommand{\HOLTokenSupStar}{\ensuremath{{}^*}}
 \newcommand{\HOLTokenSupPlus}{\ensuremath{{}^+}}
+\newcommand{\HOLTokenSupMinus}{\ensuremath{{}^-}}
 \newcommand{\HOLTokenSupTwo}{\ensuremath{{}^2}}
 \newcommand{\HOLTokenSupThree}{\ensuremath{{}^3}}
 \newcommand{\HOLTokenSupFour}{\ensuremath{{}^4}}
@@ -130,3 +146,7 @@
 \newcommand{\HOLTokenOne}{\ensuremath{\mathbbm{1}}}
 \newcommand{\HOLTokenIntegral}{\ensuremath{\int}}
 \newcommand{\HOLTokenIntegralPlus}{\ensuremath{\int^{+}}}
+\newcommand{\HOLTokenFUNION}{\ensuremath{\uplus}} % not ideal; the real symbol is available in unicode-math if you use xelatex...
+\newcommand{\HOLTokenLameq}{\ensuremath{\!=_\beta\!\!}}
+\newcommand{\HOLTokenLameta}{\ensuremath{\!=_{\beta\eta}\!\!}}
+\newcommand{\HOLTokenBottom}{\ensuremath{\bot}}

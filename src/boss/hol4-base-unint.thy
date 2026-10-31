@@ -15,6 +15,7 @@ main {
   import: pair
   import: prim-rec
   import: arithmetic
+  import: reduce
   import: sum
   import: poset
   import: numeral
@@ -23,17 +24,26 @@ main {
   import: while
   import: divides
   import: numpair
-  import: ind-type
   import: gcd
   import: pred-set
   import: list
   import: rich-list
   import: logroot
   import: set-relation
+  import: permutes
+  import: wellorder
+  import: cardinality-core
+  import: cardinal
+  import: ordinal-basic
+  import: bnf-prelims
+  import: bnf-initial
+  import: bnf-fix-bnf
+  import: bnf-mutual
   import: indexed-lists
   import: bit
   import: numeral-bit
   import: numposrep
+  import: quotient
 }
 bool {
   article: "bool_defs.ot.art"
@@ -56,6 +66,15 @@ combin {
   import: marker
   article: "../combin/combin.ot.art"
 }
+sat {
+  import: bool
+  article: "../HolSat/sat.ot.art"
+}
+quotient {
+  import: bool
+  import: combin
+  article: "../quotient/src/quotient.ot.art"
+}
 relation {
   import: bool
   import: combin
@@ -70,6 +89,7 @@ pair {
   import: bool
   import: combin
   import: relation
+  import: quotient
   article: "../coretypes/pair.ot.art"
 }
 poset {
@@ -80,6 +100,7 @@ poset {
 sum {
   import: bool
   import: combin
+  import: quotient
   article: "../coretypes/sum.ot.art"
 }
 option {
@@ -106,11 +127,17 @@ arithmetic {
   import: relation
   article: "../num/theories/arithmetic.ot.art"
 }
+reduce {
+  import: bool
+  import: arithmetic
+  article: "../num/reduce/src/reduce.ot.art"
+}
 numeral {
   import: bool
   import: arithmetic
   import: marker
   import: relation
+  import: pair
   article: "../num/theories/numeral.ot.art"
 }
 basic-size {
@@ -123,8 +150,10 @@ basic-size {
 while {
   import: bool
   import: combin
+  import: relation
   import: arithmetic
-  article: "../num/theories/while.ot.art"
+  import: sum
+  article: "../num/theories/While.ot.art"
 }
 numpair {
   import: bool
@@ -139,6 +168,7 @@ divides {
   import: bool
   import: num
   import: arithmetic
+  import: reduce
   import: numeral
   import: while
   article: "../num/extra_theories/divides.ot.art"
@@ -148,6 +178,7 @@ logroot {
   import: combin
   import: num
   import: arithmetic
+  import: reduce
   import: numeral
   import: while
   import: pair
@@ -171,6 +202,7 @@ bit {
   import: num
   import: combin
   import: arithmetic
+  import: reduce
   import: numeral
   import: while
   import: logroot
@@ -181,6 +213,7 @@ numeral-bit {
   import: num
   import: combin
   import: arithmetic
+  import: reduce
   import: numeral
   import: while
   import: pair
@@ -214,10 +247,109 @@ set-relation {
   import: relation
   article: "../pred_set/src/set_relation.ot.art"
 }
-ind-type {
+permutes {
   import: bool
+  import: marker
+  import: pair
+  import: prim-rec
   import: arithmetic
-  article: "../datatype/ind_type.ot.art"
+  import: numeral
+  import: pred-set
+  article: "../pred_set/src/permutes.ot.art"
+}
+wellorder {
+  import: bool
+  import: marker
+  import: relation
+  import: pair
+  import: option
+  import: prim-rec
+  import: arithmetic
+  import: numeral
+  import: while
+  import: pred-set
+  import: set-relation
+  article: "../pred_set/src/wellorder.ot.art"
+}
+cardinality-core {
+  import: bool
+  import: marker
+  import: combin
+  import: relation
+  import: pair
+  import: sum
+  import: option
+  import: prim-rec
+  import: arithmetic
+  import: numeral
+  import: numpair
+  import: pred-set
+  import: set-relation
+  import: permutes
+  import: wellorder
+  article: "../pred_set/src/cardinalityCore.ot.art"
+}
+cardinal {
+  import: bool
+  import: combin
+  import: relation
+  import: pair
+  import: arithmetic
+  import: pred-set
+  import: permutes
+  import: wellorder
+  import: cardinality-core
+  article: "../pred_set/src/cardinal.ot.art"
+}
+ordinal-basic {
+  import: bool
+  import: marker
+  import: quotient
+  import: relation
+  import: pair
+  import: option
+  import: prim-rec
+  import: arithmetic
+  import: numeral
+  import: pred-set
+  import: set-relation
+  import: wellorder
+  import: cardinality-core
+  article: "../pred_set/src/ordinalBasic.ot.art"
+}
+bnf-prelims {
+  import: bool
+  import: combin
+  import: pair
+  import: sum
+  import: basic-size
+  import: pred-set
+  import: cardinality-core
+  article: "../datatype/bnfPrelims.ot.art"
+}
+bnf-initial {
+  import: bool
+  import: normal-forms
+  import: marker
+  import: pair
+  import: option
+  import: pred-set
+  import: cardinality-core
+  import: ordinal-basic
+  article: "../datatype/bnfInitial.ot.art"
+}
+bnf-fix-bnf {
+  import: bool
+  import: pred-set
+  import: cardinality-core
+  import: bnf-initial
+  article: "../datatype/bnfFixBNF.ot.art"
+}
+bnf-mutual {
+  import: bool
+  import: pred-set
+  import: bnf-fix-bnf
+  article: "../datatype/bnfMutual.ot.art"
 }
 list {
   import: bool
@@ -230,26 +362,40 @@ list {
   import: marker
   import: pred-set
   import: combin
+  import: quotient
+  import: basic-size
+  import: sum
+  import: prim-rec
+  import: cardinality-core
+  import: ordinal-basic
+  import: bnf-initial
+  import: bnf-fix-bnf
   article: "../list/src/list.ot.art"
 }
 rich-list {
   import: bool
   import: marker
   import: combin
+  import: pair
   import: list
   import: arithmetic
+  import: numeral
   import: pred-set
+  import: relation
+  import: divides
   article: "../list/src/rich_list.ot.art"
 }
 indexed-lists {
   import: bool
   import: list
   import: relation
+  import: pair
   import: pred-set
   article: "../list/src/indexedLists.ot.art"
 }
 numposrep {
   import: bool
+  import: pair
   import: num
   import: arithmetic
   import: list
@@ -259,8 +405,4 @@ numposrep {
   import: relation
   import: basic-size
   article: "../list/src/numposrep.ot.art"
-}
-sat {
-  import: bool
-  article: "../HolSat/sat.ot.art"
 }

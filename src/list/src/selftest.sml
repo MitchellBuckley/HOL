@@ -1,4 +1,6 @@
 open HolKernel Parse boolLib
+
+val _ = new_theory "scratch"
 open ListConv1
 
 open testutils
@@ -20,9 +22,6 @@ val _ = List.app parsetest [
       ("[1;2;3]", [1,2,3]), ("[1; 2; 3;]", [1,2,3]), ("[1; 2 ; 3 ; ]", [1,2,3]),
       ("[ 1 ;   2 ; 3 ; 4 ; ]", [1,2,3,4])
     ]
-
-datatype 'a exnsum = Some of 'a | Exn of exn
-fun total f x = Some (f x) handle Interrupt => raise Interrupt | e => Exn e
 
 fun test0 nm cmp pr f (x, expected_opt) =
     case expected_opt of
@@ -64,9 +63,36 @@ val _ = app(test "LASTN_CONV" Term.compare term_to_string LASTN_CONV)
             (``LASTN 0 [1;2]``, ``[]: num list``),
             (``LASTN 3 [1;2;3]``, ``[1;2;3]``),
             (``LASTN 0 [] : num list``, ``[] : num list``)]
+
 val _ = app(test "LIST_EQ_SIMP_CONV" Term.compare term_to_string
                  listSimps.LIST_EQ_SIMP_CONV)
-           [(``(l1:'a list ++ [])::t = p ++ q``, ``(l1:'a list)::t = p ++ q``)]
+           [(“(l1:'a list ++ [])::t = p ++ q”, “(l1:'a list)::t = p ++ q”),
+            (“[a; b] = [a; b]”, “T”),
+            (* old examples from listSimps.sml *)
+            (“[x1;x2] ++ l1 ++ l2 ++ [x3] ++ l3 = x1::x2'::l1' ++ l3 :'a list”,
+             “(x2 = x2' :'a) /\ (l1 ++ l2 ++ [x3] = l1' :'a list)”),
+            (“[x1;x2] ++ l1 ++ l2 ++ [x3] ++ [x4;x5;x6] = x1'::l1' ++ [x5;x6]:'a list”,
+             “(x1 = x1' :'a) /\ (x2::(l1 ++ l2 ++ [x3; x4]) = l1' :'a list)”),
+            (“l1 ++ l2 ++ [x3] ++ l3 = l1 ++ l2' ++ x3'::l3”,
+             “(l2 = l2' :'a list) /\ (x3 = x3' :'a)”),
+            (“[x1;x2;x3] ++ l2 ++ [x3] ++ l3 = [x1;x2] ++ l1 ++ l2' ++ l3 :'a list”,
+             “(x3::(l2 ++ [x3]) = l1 ++ l2' :'a list)”),
+            (“(x::l) = (l ++ l :'a list)”, “[x] = l :'a list”),
+            (* new test cases for the SNOC support *)
+            (“[a;b;c;d] = SNOC d l”, “[a; b; c] = l”),
+            (“[a;b;c;d] = SNOC d (SNOC c l)”, “[a; b] = l”),
+            (“SNOC x l = l' ++ [y]”, “l = (l' :'a list) /\ x = (y :'a)”),
+            (“SNOC x l = l ++ [c]”, “x = c :'a”),
+            (“SNOC x l = l ++ [x]”, “T”),
+            (“SNOC a b = SNOC c d”, “b = (d :'a list) /\ a = (c :'a)”),
+            (“l ++ [x] = SNOC y l'”, “l = (l' :'a list) /\ x = (y :'a)”)
+            ]
+
+val _ = app(test "APPEND_CONV" Term.compare term_to_string
+                 ListConv1.APPEND_CONV)
+           [(“[1;2;3] ++ [4;5;6]”, “[1;2;3;4;5;6]”),
+            (“[] ++ [1]”, “[1]”), (“[1;2] ++ []”, “[1;2]”),
+            (“[x;y] ++ [y;x]:'a list”, “[x;y;y;x]:'a list”)]
 
 val _ = Lib.appi (fn i => fn t =>
                      test0 ("EL_CONV "^Int.toString (i+1))
@@ -106,10 +132,17 @@ val _ = Lib.appi (fn i => fn t =>
                   (``FOLDR (-) 0 [3;2;1]``, SOME ``2``),
                   (``FOLDR $* 1 []``, SOME ``1``)]
 
-val cs = listSimps.list_compset()
-val _ = indexedListsSimps.add_indexedLists_compset cs
-fun ct(s,inp,out) =
-  testutils.convtest ("list_compset - " ^ s, computeLib.CBV_CONV cs, inp, out)
+local
+  val cs = listSimps.list_compset
+           |> indexedListsSimps.add_indexedLists_compset
+           |> numposrepLib.add_numposrep_compset
+           |> bitLib.add_bit_compset
+in
+  fun ct(s,inp,out) =
+    testutils.convtest
+      ("list_compset++ - " ^ s, computeLib.CBV_CONV cs, inp, out)
+end
+
 val _ = List.app ct [
   ("oHD-NONE", “oHD ([]:'a list)”, “NONE : 'a option”),
   ("oHD-SOME", “oHD ([3;4]:num list)”, “SOME 3n”),
@@ -122,6 +155,11 @@ val _ = List.app ct [
   ("MAP2i-NIL1", “MAP2i (\i x y. x + i * y) [] []”, “[] : num list”),
   ("MAP2i-CONS", “MAP2i (\i x y. x + i * y) [1;2;3] [4;5;6]”,
                  “[1;7;15] : num list”),
+  ("ALL_DISTINCT-singleton", “ALL_DISTINCT [NONE : num option]”, “T”),
+  ("nub-closed-repeated",
+   “nub [0;1;2;3;4;0;1;2;3;4;0;1;2;3;4;0;1;2;3;4;
+         0;1;2;3;4;0;1;2;3;4;0;1;2;3;4;0;1;2;3;4]”,
+   “[0;1;2;3;4]”),
   ("FOLDL1", “FOLDL $+ 0 [1;2;3;4]”, “10n”),
   ("FOLDR1", “FOLDR (\n a. (n * 2) :: a) [] [1;2;3;4]”, “[2;4;6;8]”),
   ("GENLIST", “GENLIST (\n. 2 * n + 4) 6”, “[4; 6; 8; 10; 12; 14]”),
@@ -131,8 +169,42 @@ val _ = List.app ct [
   ("SHORTLEX(1)", “SHORTLEX (<) [1;1] [1;2;3]”, “T”),
   ("SHORTLEX(2)", “SHORTLEX (<) [1;1;4] [1;1;3]”, “F”),
   ("SHORTLEX(3)", “SHORTLEX (<) [1;1;4] [1;1]”, “F”),
-  ("LLEX(1)", “LLEX (<) [1;1;1] [1;2]”, “T”)
+  ("LLEX(1)", “LLEX (<) [1;1;1] [1;2]”, “T”),
+  ("l2n_empty",      ``l2n v []``, ``0n``),
+  ("l2n_base_v",     ``l2n v [1]``, ``l2n v [1]``),
+  ("l2n_base_3",     ``l2n 3 [1]``, ``l2n 3 [1]``),
+  ("l2n_base_2_v",   ``l2n 2 v``, ``l2n 2 v``),
+  ("l2n_base_8_v",   ``l2n 8 v``, ``l2n 8 v``),
+  ("l2n_base_10_v",  ``l2n 10 v``, ``l2n 10 v``),
+  ("l2n_base_16_v",  ``l2n 16 v``, ``l2n 16 v``),
+  ("l2n_base_256_v", ``l2n 256 v``, ``l2n 256 v``),
+  ("l2n_base_2",     ``l2n 2 [1; 0; 1; 1; 1]``, ``0b11101n``),
+  ("l2n_base_8",     ``l2n 8 [1; 2; 3; 4; 5]``, ``22737n``),
+  ("l2n_base_10",    ``l2n 10 [1; 2; 3; 4; 5]``, ``54321n``),
+  ("l2n_base_16",    ``l2n 16 [1; 2; 3; 4; 5]``, ``344865n``),
+  ("l2n_base_256",   ``l2n 256 [1; 2; 3; 4; 5]``, ``21542142465n``),
+  ("n2l_base_v",     ``n2l v 12345``, ``n2l v 12345``),
+  ("n2l_base_3",     ``n2l 3 12345``, ``n2l 3 12345``),
+  ("n2l_base_2_v",   ``n2l 2 v``, ``n2l 2 v``),
+  ("n2l_base_8_v",   ``n2l 8 v``, ``n2l 8 v``),
+  ("n2l_base_10_v",  ``n2l 10 v``, ``n2l 10 v``),
+  ("n2l_base_16_v",  ``n2l 16 v``, ``n2l 16 v``),
+  ("n2l_base_256_v", ``n2l 256 v``, ``n2l 256 v``),
+  ("n2l_base_2",     ``n2l 2 0b11101``, ``[1; 0; 1; 1; 1n]``),
+  ("n2l_base_8",     ``n2l 8 22737``, ``[1; 2; 3; 4; 5n]``),
+  ("n2l_base_10",    ``n2l 10 54321``, ``[1; 2; 3; 4; 5n]``),
+  ("n2l_base_16",    ``n2l 16 344865``, ``[1; 2; 3; 4; 5n]``),
+  ("n2l_base_256",   ``n2l 256 21542142465``, ``[1; 2; 3; 4; 5n]``)
 ]
+
+val _ =
+  let
+    val cs = computeLib.copy listSimps.list_compset
+             |> computeLib.add_thms [listTheory.LIST_TO_SET_THM]
+  in
+    convtest ("explicit LIST_TO_SET computation", computeLib.CBV_CONV cs,
+              “set [1;2n]”, “{1;2n}”)
+  end
 
 val _ = let
   open BasicProvers listTheory
@@ -160,7 +232,7 @@ val _ = let
   val bitind_goal = “0 < n”
   val bitind_expected = [([], “0 < ZERO”), ([“0 < n”], “0 < BIT1 n”),
                          ([“0 < n”], “0 < BIT2 n”)]
-  fun TAC t g = fst (VALID t g)
+  fun TAC t g = fst (runtac (VALID t) g)
 in
   tprint "Cases_on ‘m’ using bit_cases";
   require_msg (check_result (
@@ -216,4 +288,45 @@ val _ = let
 in
   convtest("simplify with MAP_CONG; get eta-redex?",
            SIMP_CONV (quietly srw_ss()) [Cong MAP_CONG'], t, expected)
+end
+
+fun subst_parse_test (s, t) =
+    (tprint ("Parse \"" ^ s ^ "\"");
+     require_msg (check_result (aconv t))
+                 term_to_string
+                 Parse.Term
+                 [QUOTE s])
+
+val _ = List.app subst_parse_test [
+      ("EL i (l:'a list)", “list$EL i (l:'a list)”),
+      ("EL i (l:bool list)", “list$EL i (l:bool list)”),
+      ("(l:'a list)❲i❳", “list$EL i (l:'a list)”),
+      ("l❲2 ↦ T; 3 ↦ F❳", “list$LUPDATE T 2 (list$LUPDATE F 3 l)”),
+      ("l❲2 ↦ T; 3 ↦ F❳❲i❳",
+       “list$EL i (list$LUPDATE T 2 (list$LUPDATE F 3 l))”)
+    ]
+
+val _ = set_trace "PP.avoid_unicode" 0
+val _ = List.app tpp [
+      "l❲i❳", "l❲2 ↦ T; 3 ↦ F❳",
+      "l❲2 ↦ T; 3 ↦ F❳❲i❳"
+    ]
+
+val _ = app(test "ALL_EL_CONV" Term.compare term_to_string
+                 (ALL_EL_CONV BETA_CONV))
+           [(``EVERY (\x:bool. x) ([]:bool list)``, ``T``),
+            (``EVERY (\x:bool. x) [T; T; T]``, ``T``),
+            (``EVERY (\x:bool. x) [F; T; T]``, ``F``),
+            (``EVERY (\x:bool. x) [T; F; T]``, ``F``),
+            (``EVERY (\x:bool. x) [T; T; F]``, ``F``)]
+
+val _ = let
+  val tm = ``EVERY (\x:bool. x) [F; T; T]``
+  val calls = ref 0
+  fun strict_beta t = (calls := !calls + 1; BETA_CONV t)
+  val _ = ALL_EL_CONV strict_beta tm
+in
+  tprint "ALL_EL_CONV short-circuits on first F";
+  if !calls = 1 then OK()
+  else die ("FAILED (calls=" ^ Int.toString (!calls) ^ ")")
 end

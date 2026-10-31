@@ -14,9 +14,10 @@ open HolKernel Parse Drule Conv Tactic Tactical Thm_cont
 
 infix THENR ORELSER ++ ||;
 
+
 local  (* Fix the grammar used by this file *)
   val ambient_grammars = Parse.current_grammars();
-  val _ = Parse.temp_set_grammars boolTheory.bool_grammars
+  val _ = Parse.temp_set_grammars $ valOf $ grammarDB {thyname = "bool"}
 in
 
 val bool_ss = boolSimps.bool_ss;
@@ -361,8 +362,8 @@ fun RESQ_IMP_RES_THEN ttac resth =
     let val th = check_res resth
     in IMP_RES_THEN ttac th
     end
-    handle HOL_ERR{message = s,...} =>
-        raise ERR "RESQ_IMP_RES_THEN" s
+    handle HOL_ERR herr =>
+        raise ERR "RESQ_IMP_RES_THEN" (message_of herr)
 
 (* --------------------------------------------------------------------- *)
 (* RESQ_RES_THEN : Resolve all restricted universally quantified         *)
@@ -381,13 +382,14 @@ and RESQ_RES_THEN (ttac:thm_tactic) (asl,g) =
     end
 end;
 
-fun RESQ_IMP_RES_TAC th g =
-    RESQ_IMP_RES_THEN (REPEAT_GTCL RESQ_IMP_RES_THEN STRIP_ASSUME_TAC) th g
-    handle _ => ALL_TAC g;
+fun RESQ_IMP_RES_TAC th g ctxt =
+    RESQ_IMP_RES_THEN (REPEAT_GTCL RESQ_IMP_RES_THEN STRIP_ASSUME_TAC)
+                      th g ctxt
+    handle _ => ALL_TAC g ctxt;
 
-fun RESQ_RES_TAC g =
-    RESQ_RES_THEN (REPEAT_GTCL RESQ_IMP_RES_THEN STRIP_ASSUME_TAC) g
-    handle _ => ALL_TAC g;
+fun RESQ_RES_TAC g ctxt =
+    RESQ_RES_THEN (REPEAT_GTCL RESQ_IMP_RES_THEN STRIP_ASSUME_TAC) g ctxt
+    handle _ => ALL_TAC g ctxt;
 
 (* --------------------------------------------------------------------- *)
 (* RESQ_REWRITE1_TAC : thm_tactic                                        *)
@@ -497,7 +499,7 @@ fun check_lhs tm =
  then raise ERR "check_lhs" ("attempt to redefine the constant " ^
                              fst (dest_const tm))
  else if not(is_comb tm)
- then raise ERR "check_lhs" "lhs not of form (--`x = ...`--) or (--`f x = ... `--)"
+ then raise ERR "check_lhs" "lhs not of form `x = ...` or `f x = ... `"
  else
   let val (t1,t2) = dest_comb tm
       val l1 = check_lhs t1
@@ -528,7 +530,8 @@ fun get_type left rightty =
 fun RESQ_DEF_EXISTS_RULE tm =
     let val (gvars,tm') = strip_forall tm
     val (ress,(lh,rh)) = ((I ## dest_eq) o strip_res_forall) tm'
-        handle _ => raise ERR "RESQ_DEF_EXISTS_RULE" "definition not an equation"
+        handle _ =>
+        raise ERR "RESQ_DEF_EXISTS_RULE" "definition not an equation"
     val leftvars = check_lhs lh val leftvars_s = listset leftvars
     val cty = get_type lh (type_of rh)
     val rightvars = free_vars rh val rightvars_s = listset rightvars
@@ -539,7 +542,8 @@ fun RESQ_DEF_EXISTS_RULE tm =
     val cname = fst(dest_var pConst)
     in
     if not(Lexis.allowed_term_constant cname) then
-        raise ERR "RESQ_DEF_EXISTS_RULE" (cname^" is not allowed as a constant name")
+        raise ERR "RESQ_DEF_EXISTS_RULE"
+              (cname^" is not allowed as a constant name")
     else if tmem pConst resvars then
         raise ERR "RESQ_DEF_EXISTS_RULE" (cname^" is restrict bound")
     else if not(all (fn x => tmem x leftvars) resvars) then
@@ -572,8 +576,8 @@ fun RESQ_DEF_EXISTS_RULE tm =
        else defthm
       end
     end
-     handle HOL_ERR {message = s,...} =>
-        raise ERR "RESQ_DEF_EXISTS_RULE" s;
+     handle HOL_ERR herr =>
+        raise ERR "RESQ_DEF_EXISTS_RULE" (message_of herr);
 
 (* --------------------------------------------------------------------- *)
 (* new_gen_resq_definition flag (name, (--`!x1::P1. ... !xn::Pn.         *)
@@ -596,14 +600,14 @@ in
                      sat_thm = def_thm}
 end;
 
-val new_resq_definition =  new_gen_resq_definition NONE;
+val new_resq_definition = new_gen_resq_definition NONE;
 
 fun new_infixl_resq_definition (name,tm,fix) =
     new_gen_resq_definition (SOME (Infixl fix)) (name,tm);
 fun new_infixr_resq_definition (name,tm,fix) =
     new_gen_resq_definition (SOME (Infixr fix)) (name,tm);
 
-val new_binder_resq_definition =  new_gen_resq_definition (SOME Binder);
+val new_binder_resq_definition = new_gen_resq_definition (SOME Binder);
 
 (* --------------------------------------------------------------------- *)
 (* Some restricted quantifier functions using term quotations            *)

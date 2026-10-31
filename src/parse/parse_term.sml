@@ -84,25 +84,31 @@ exception PrecConflict of stack_terminal * stack_terminal
 
 val complained_already = ref false;
 
-structure Polyhash =
-struct
-   open Uref
-   fun peek (dict) k = Binarymap.peek(!dict,k)
-   fun peekInsert r (k,v) =
-       let val dict = !r in
-         case Binarymap.peek(dict,k) of
-           NONE => (r := Binarymap.insert(dict,k,v); NONE)
-         | x => x
-       end
-   fun insert r (k,v) =
-       r := Binarymap.insert(!r,k,v)
-   fun listItems dict = Binarymap.listItems (!dict)
-   fun mkDict cmp = let
-     val newref = Uref.new (Binarymap.mkDict cmp)
-   in
-     newref
-   end
-end
+structure STBSTab = Table(struct
+  type key = (stack_terminal * bool) * stack_terminal
+  val ord = pair_compare(pair_compare(ST_compare, bool_compare), ST_compare)
+  fun pp _ = HOLPP.add_string "<stbs-key>"
+end)
+
+structure RElist_Tab = Table(struct
+  type key = rule_element list
+  val ord = Lib.list_compare RE_compare
+  fun pp _ = HOLPP.add_string "<rel-list>"
+end)
+
+(* Tiny ref wrappers — preserve the original Polyhash idiom (a refcell
+   containing a dict updated in place by the building code). *)
+fun stbs_peekInsert (r : 'a STBSTab.table Uref.t) (k, v) =
+    case STBSTab.lookup (Uref.!r) k of
+        NONE => (Uref.:= (r, STBSTab.update (k, v) (Uref.!r)); NONE)
+      | x => x
+fun stbs_insert r (k, v) = Uref.:= (r, STBSTab.update (k, v) (Uref.!r))
+fun stbs_listItems r = STBSTab.dest (Uref.!r)
+fun stbs_mkRef () = Uref.new STBSTab.empty
+
+fun rel_peek (r : 'a RElist_Tab.table Uref.t) k = RElist_Tab.lookup (Uref.!r) k
+fun rel_insert r (k, v) = Uref.:= (r, RElist_Tab.update (k, v) (Uref.!r))
+fun rel_mkRef () = Uref.new RElist_Tab.empty
 
 local
   val rule_elements = term_grammar.rule_elements o #elements
@@ -190,19 +196,15 @@ fun STtoString (G:grammar) x =
   | EndBinding => #endbinding (specials G) ^ " (end binding)"
   | ResquanOpTok => #res_quanop (specials G)^" (res quan operator)"
 
-fun mk_prec_matrix G = let
-  exception NotFound = Binarymap.NotFound
+fun mk_prec_matrix0 G = let
   exception BadTokList
-  type dict = ((stack_terminal * bool) * stack_terminal,
-               mx_order) Binarymap.dict Uref.t
+  type dict = mx_order STBSTab.table Uref.t
   val {lambda, endbinding, type_intro, restr_binders, ...} = specials G
   val specs = grammar_tokens G
   val Grules = term_grammar.grammar_rules G
   val alltoks =
     ResquanOpTok :: VS_cons :: STD_HOL_TOK fnapp_special :: all_tokens specs
-  val matrix: dict =
-      Polyhash.mkDict (pair_compare(pair_compare(ST_compare,bool_compare),
-                                    ST_compare))
+  val matrix: dict = stbs_mkRef ()
       (* the bool is true if there is a non-terminal between the two
          terminal tokens.  E.g.,
            x + -y
@@ -212,30 +214,18 @@ fun mk_prec_matrix G = let
       *)
 
   val rule_elements = term_grammar.rule_elements o #elements
-  val complained_this_iteration = Uref.new false
+  val ambiguity = Uref.new NONE
   fun insert_bail k =
-      (Polyhash.insert matrix (k, PM_LESS MS_Multi);
-       let open Uref in complained_this_iteration := true end;
-       if not (!complained_already) andalso
-          (!Globals.interactive orelse !ambigrm = 2)
-       then let
-           val msg = "Grammar ambiguous on token pair "^
-                     STtoString G (#1 (#1 k)) ^ " and " ^
-                     STtoString G (#2 k) ^ ", and "^
-                     "probably others too"
-         in
-           case !ambigrm of
-             0 => ()
-           | 1 => (Feedback.HOL_WARNING "Parse" "Term" msg;
-                   complained_already := true)
-           | 2 => raise Feedback.mk_HOL_ERR "parse_term" "mk_prec_matrix" msg
-           | _ => raise Fail "parse_term: matrix construction invariant fail!"
-         end
-       else
-         ())
+      (stbs_insert matrix (k, PM_LESS MS_Multi);
+       if isSome (Uref.!ambiguity) then ()
+       else Uref.:= (ambiguity,
+                     SOME ("Grammar ambiguous on token pair "^
+                           STtoString G (#1 (#1 k)) ^ " and " ^
+                           STtoString G (#2 k) ^ ", and "^
+                           "probably others too")))
   fun insert k v = let
-    val insert_result = Polyhash.peekInsert matrix (k, v)
-    val raw_insert = Polyhash.insert matrix
+    val insert_result = stbs_peekInsert matrix (k, v)
+    val raw_insert = stbs_insert matrix
   in
     case (insert_result, v) of
       (SOME PM_EQUAL, _) => ()  (* ignore this *)
@@ -343,7 +333,7 @@ fun mk_prec_matrix G = let
   fun calc_eqpairs() =
     List.mapPartial
         (fn (((t1,_),t2), v) => if v = PM_EQUAL then SOME (t1,t2) else NONE)
-        (Polyhash.listItems matrix)
+        (stbs_listItems matrix)
   fun terms_between_equals (k1, k2) = let
   in
     app (fn lhs => bi_insert (k1, lhs) (PM_LESS MS_Other)) all_lhs;
@@ -507,10 +497,34 @@ in
   insert_rhs_relns () ;
   insert_lhs_relns () ;
   apply_them_all process_rule Grules;
-  if (not (Uref.!complained_this_iteration)) then complained_already := false
-  else ();
-  matrix
+  {lookup = STBSTab.lookup (Uref.!matrix), ambiguity = Uref.!ambiguity}
 end
+
+fun report_ambiguity ({ambiguity, ...} : prec_matrix) =
+    case ambiguity of
+      NONE => complained_already := false
+    | SOME msg =>
+        if not (!complained_already) andalso
+           (!Globals.interactive orelse !ambigrm = 2)
+        then
+          case !ambigrm of
+            0 => ()
+          | 1 => (Feedback.HOL_WARNING "Parse" "Term" msg;
+                  complained_already := true)
+          | 2 => raise Feedback.mk_HOL_ERR "parse_term" "mk_prec_matrix" msg
+          | _ => raise Fail "parse_term: matrix construction invariant fail!"
+        else ()
+
+fun mk_prec_matrix G =
+    let
+      val cache = term_grammar.prec_matrix G
+      val m = case !cache of
+                SOME m => m
+              | NONE => let val m = mk_prec_matrix0 G in cache := SOME m; m end
+    in
+      report_ambiguity m;
+      m
+    end
 
 (* string is name of term; list of pairs, is list of token-pairs between
    which a list style reduction is required *)
@@ -557,15 +571,14 @@ fun suffix_rule (rels,nm) =
 
 fun mk_ruledb (G:grammar) = let
   val Grules = term_grammar.grammar_rules G
-  val table:(rule_element list, rule_summary)Binarymap.dict Uref.t =
-       Polyhash.mkDict (Lib.list_compare RE_compare)
+  val table : rule_summary RElist_Tab.table Uref.t = rel_mkRef ()
   fun insert_rule mkfix (rr:rule_record) =
     let
       val rels = term_grammar.rule_elements (#elements rr)
       val nm = #term_name rr
     in
-      (Polyhash.insert table (mkfix (rels,nm));
-       List.app (Polyhash.insert table) (listTM_delimiters rels))
+      (rel_insert table (mkfix (rels,nm));
+       List.app (rel_insert table) (listTM_delimiters rels))
     end
   fun addrule rule =
     case rule of
@@ -574,8 +587,8 @@ fun mk_ruledb (G:grammar) = let
     | INFIX VSCONS => ()
     | INFIX (FNAPP rules) => let
       in
-        Polyhash.insert table (mkrels_infix [TOK fnapp_special],
-                               RealRule(rsInfix, fnapp_special));
+        rel_insert table (mkrels_infix [TOK fnapp_special],
+                          RealRule(rsInfix, fnapp_special));
         app (insert_rule infix_rule) rules
       end
     | PREFIX (STD_prefix rules) =>
@@ -685,17 +698,17 @@ fun get_case_info (G : grammar) = let
   fun extract_toks ppels = List.rev (List.foldl extract_tok [] ppels)
   fun rr_foldthis ({term_name,elements,...}, acc) =
     if GrammarSpecials.is_case_special term_name then
-      case Binarymap.peek(acc, term_name) of
-          NONE => Binarymap.insert(acc, term_name, [extract_toks elements])
+      case Symtab.lookup acc term_name of
+          NONE => Symtab.update (term_name, [extract_toks elements]) acc
         | SOME els =>
-            Binarymap.insert(acc, term_name, extract_toks elements :: els)
+            Symtab.update (term_name, extract_toks elements :: els) acc
     else acc
   fun foldthis (gr, acc) =
       case gr of
         PREFIX (STD_prefix rrs) => List.foldl rr_foldthis acc rrs
       | _ => acc
   val candidates =
-      List.foldl foldthis (Binarymap.mkDict String.compare) (grammar_rules G)
+      List.foldl foldthis Symtab.empty (grammar_rules G)
   val error_case = {casebar = NONE, casecase = NONE, caseof = NONE}
   fun mapthis (cspecial, candidates) =
     case Listsort.sort (flip_cmp (measure_cmp length)) candidates of
@@ -708,20 +721,20 @@ fun get_case_info (G : grammar) = let
           else {casebar = SOME (last toks), casecase = SOME (hd toks),
                 caseof = SOME (hd (tl toks))}
         end
-  val specials_to_toks = Binarymap.map mapthis candidates
+  val specials_to_toks = Symtab.map (fn k => fn v => mapthis (k, v)) candidates
   val toks_to_specials = let
-    fun foldthis (k,r,acc) =
+    fun foldthis (k,r) acc =
       case #casecase r of
           NONE => acc
         | SOME tok =>
-          (case Binarymap.peek(acc,tok) of
-               NONE => Binarymap.insert(acc,tok,k)
+          (case Symtab.lookup acc tok of
+               NONE => Symtab.update (tok, k) acc
              | SOME k' => raise Fail ("Tok \"" ^ tok ^
                                       "\" maps to case specials " ^
                                       valOf (dest_case_special k) ^ " and " ^
                                       valOf (dest_case_special k')))
   in
-    Binarymap.foldl foldthis (Binarymap.mkDict String.compare) specials_to_toks
+    Symtab.fold foldthis specials_to_toks Symtab.empty
   end
 in
   (specials_to_toks, toks_to_specials)
@@ -740,7 +753,7 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
       isSome (findpos (fn (SUFFIX TYPE_annotation) => true | _ => false)
                       Grules)
       orelse raise Fail "Grammar must allow type annotation"
-  val prec_matrix = mk_prec_matrix G
+  val prec_lookup = #lookup (mk_prec_matrix G)
   val rule_db = mk_ruledb G
   val is_binder = is_binder G
   val binder_table = let
@@ -751,15 +764,15 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
                 case b of
                   LAMBDA => acc
                 | BinderString {term_name, tok, ...} =>
-                    Binarymap.insert(acc,tok,term_name)
+                    Symtab.update (tok, term_name) acc
           in
             List.foldl irec acc blist
           end
         | _ => acc
   in
-    List.foldl recurse (Binarymap.mkDict String.compare) Grules
+    List.foldl recurse Symtab.empty Grules
   end
-  fun term_name_for_binder s = Binarymap.find(binder_table,s)
+  fun term_name_for_binder s = valOf (Symtab.lookup binder_table s)
   val grammar_tokens = term_grammar.grammar_tokens G
   val lex  = let
     val specials = endbinding::grammar_tokens @ term_grammar.known_constants G
@@ -828,7 +841,7 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
         case rest of
           [] => FAILloc x1locn "find_reduction : impossible"
         | (((Terminal x2,x2locn), _)::_) => let
-            val res = valOf (Polyhash.peek prec_matrix ((x2,false),x1))
+            val res = valOf (prec_lookup ((x2,false),x1))
               handle Option =>
                 FAILloc (locn.between x2locn x1locn)
                         ("No relation between "^STtoString G x2^" and "^
@@ -848,7 +861,7 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
             case rest2 of
               [] => FAILloc t2locn "find_reduction : nonterminal at stack base!"
             | (((Terminal x2,x2locn), _)::_) => let
-                val res = valOf (Polyhash.peek prec_matrix ((x2,true), x1))
+                val res = valOf (prec_lookup ((x2,true), x1))
                   handle Option =>
                     FAILloc (locn.between x2locn t2locn)
                             ("No relation between "^STtoString G x2^" and "^
@@ -889,11 +902,11 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
       fun tokstring x = case x of TOK s => SOME s | _ => NONE
       val poss_left = case hd pattern of TOK x => x | _ => fail()
     in
-      case Binarymap.peek(casetok_to_spec, poss_left) of
+      case Symtab.lookup casetok_to_spec poss_left of
           SOME cspec =>
           let
             val {casecase,casebar,caseof} =
-                Binarymap.find(casespec_to_tok,cspec)
+                valOf (Symtab.lookup casespec_to_tok cspec)
             fun bars_ok l =
               case l of
                   [TM] => true
@@ -948,20 +961,20 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
         val lrlocn = locn.between llocn rlocn
         val top_was_tm = hd translated_rhs = TM
         fun lrcheck (s1,s2) =
-          case Polyhash.peek rule_db [TOK s1, TOK s2] of
+          case rel_peek rule_db [TOK s1, TOK s2] of
               SOME (ListOnly lsp) => SOME lsp
             | _ => NONE
         val listredns = check_for_listreductions lrcheck translated_rhs
         val (listfixed_rhs, lspinfo) =
             remove_listrels listredns translated_rhs
         val rule =
-            case Polyhash.peek rule_db listfixed_rhs of
+            case rel_peek rule_db listfixed_rhs of
                 NONE =>
                   if top_was_tm then
                     let
                       val drop1 = tl listfixed_rhs
                     in
-                      case Polyhash.peek rule_db drop1 of
+                      case rel_peek rule_db drop1 of
                           NONE => handle_case_reduction lrlocn drop1
                         | SOME r => checkcase r
                     end
@@ -993,7 +1006,25 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
             | ([], NONE) => List.rev als
             | ([], SOME al) => List.rev (al::als)
         val args_w_seglocs0 = seglocs rhs' [] NONE
-        fun CCOMB((x,locn),y) = (COMB(y,x),locn.between (#2 y) locn)
+        (* Locn of the FIRST STD_HOL_TOK in the reduction, if any —
+           the position of the operator token in the source (e.g.,
+           the actual `∧` symbol, not the LHS's start).  Used as the
+           Locn of the synthesised operator VAR below; without this,
+           `VAR s` inherits `llocn'` (start of LHS) and downstream
+           type-error messages / hover point at the LHS instead of
+           the operator.  Falls back to `llocn'` for rules that don't
+           have a leading token (e.g., FN_APP juxtaposition). *)
+        fun findOpLocn [] = llocn'
+          | findOpLocn (((Terminal (STD_HOL_TOK _), l), _) :: _) = l
+          | findOpLocn (_ :: rest) = findOpLocn rest
+        val op_locn = findOpLocn rhs'
+        (* Use `lrlocn'` (the whole reduction span) as the Locn of
+           every intermediate COMB.  With the between-cascade of the
+           old CCOMB, moving `VAR`'s locn to the operator token could
+           produce reversed spans (e.g. `Loc(∧.start, p.end)` when
+           `p` sits before ∧ in the source), which then propagate as
+           bad ranges into error messages. *)
+        fun CCOMB((x,_),y) = (COMB(y,x), lrlocn')
         fun process_lspinfos A i lspis args =
             (* let
                 fun pr (VAR s, _) = s
@@ -1044,7 +1075,7 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
                       raise Fail
                             "seglocs extraction: rule with more than one TM"
                     else #1 (hd (args_w_seglocs))
-                  else List.foldl CCOMB (VAR s,llocn') args_w_seglocs
+                  else List.foldl CCOMB (VAR s, op_locn) args_w_seglocs
             | CaseRule cs => let
                 fun mkcase1 ((t,loc),_) = (COMB((VAR cs, loc), (t,loc)), loc)
                 fun mkbar(((t,loc),_),acc) =
@@ -1357,10 +1388,7 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
         end
   end handle Failloc (loc,s) =>
              (if !syntax_error_trace then
-                (print (locn.toString loc);
-                 print ":\n";
-                 print s;
-                 print "\n")
+                Feedback.HOL_INFO (locn.toString loc ^ ":\n" ^ s ^ "\n")
               else ();
               error (WARNloc_string loc s))
 
@@ -1489,14 +1517,14 @@ fun parse_term (G : grammar) (typeparser : term qbuf -> Pretype.pretype) = let
           | ((Terminal _,_), _) :: _ => return (false,stk)
           | _ => return (true,stk)
       fun check_order (topntp,stk) =
-          case Polyhash.peek prec_matrix ((top,topntp), input_term) of
+          case prec_lookup ((top,topntp), input_term) of
             NONE => let
               val msg = "Don't expect to find a "^STtoString G input_term^
                         " in this position after a "^STtoString G top^"\n"^
                         locn.toString itlocn^" and " ^
                         locn.toString toplocn^".\n"
             in
-              if !syntax_error_trace then print msg
+              if !syntax_error_trace then Feedback.HOL_INFO msg
               else ();
               error (msg, toplocn)
             end

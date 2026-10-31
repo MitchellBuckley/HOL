@@ -9,18 +9,13 @@
 (*                                                                      *)
 (* Derive results of executing microinstructions sequences implementing *)
 (* machine instructions.                                                *)
+Theory tamarackProof2
+Ancestors
+  arithmetic string pair prim_rec tamarack[qualified]
+  tamarackProof1[qualified]
+Libs
+  proofManagerLib
 
-open HolKernel boolLib bossLib Parse
-open proofManagerLib
-
-val _ = new_theory "tamarackProof2";
-
-open arithmeticTheory stringTheory pairTheory prim_recTheory
-
-local
-  open tamarackTheory tamarackProof1Theory
-in
-end
 
 fun definition x y = SPEC_ALL (DB.fetch x y);
 fun theorem x y = DB.fetch x y;
@@ -65,7 +60,8 @@ fun FILTER_IMP_RES_THEN f ttac =
           (fn thm => if f (concl thm) then (ttac thm) else ALL_TAC);
 fun FILTER_IMP_RES_TAC f = FILTER_IMP_RES_THEN f ASSUME_TAC;
 
-val MATCH_GOAL_TAC : thm_tactic = fn impthm => fn (asl,tm):goal =>
+val MATCH_GOAL_TAC : thm_tactic =
+    fn impthm => fn (asl,tm):goal => fn _ (* ctxt *) =>
         let
         val match = ((PART_MATCH (snd o dest_imp)) impthm) tm
         in

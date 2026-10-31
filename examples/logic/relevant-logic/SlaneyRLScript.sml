@@ -1,7 +1,6 @@
-open HolKernel Parse boolLib bossLib stringTheory;
-
-val _ = new_theory "SlaneyRL";
-
+Theory SlaneyRL
+Ancestors
+  string
 
 Datatype: s_prop = s_VAR string
           | s_IMP s_prop s_prop
@@ -38,24 +37,35 @@ val _ = set_fixity "ioₛ" (Infixl 600);
 val _ = overload_on ("ioₛ", “s_ICONJ”);
 
 Inductive slaney_provable:
-[s_identity:] (∀A. slaney_provable (A -->ₛ A)) ∧
-[s_permutation:] (∀A B C. slaney_provable ((A -->ₛ (B -->ₛ C)) -->ₛ (B -->ₛ (A -->ₛ C)))) ∧
-[s_transitivity:] (∀A B C. slaney_provable ((A -->ₛ B) -->ₛ ((B -->ₛ C) -->ₛ (A -->ₛ C)))) ∧
-[s_contraction:] (∀A B. slaney_provable ((A -->ₛ (A -->ₛ B)) -->ₛ (A -->ₛ B))) ∧
-[s_conjunction_l:] (∀A B. slaney_provable ((A &ₛ B) -->ₛ A)) ∧
-[s_conjunction_r:] (∀A B. slaney_provable ((A &ₛ B) -->ₛ B)) ∧
-[s_conj_introduction:] (∀A B C. slaney_provable (((A -->ₛ B) &ₛ (A -->ₛ C)) -->ₛ (A -->ₛ (B &ₛ C)))) ∧
-[s_disjunction_l:] (∀A B. slaney_provable (A -->ₛ (A Vₛ B))) ∧
-[s_disjunction_r:] (∀A B. slaney_provable (B -->ₛ (A Vₛ B))) ∧
-[s_disjunction_elim:] (∀A B C. slaney_provable (((A -->ₛ C) &ₛ (B -->ₛ C)) -->ₛ ((A Vₛ B) -->ₛ C))) ∧
-[s_distribution:] (∀A B C. slaney_provable ((A &ₛ (B Vₛ C)) -->ₛ ((A &ₛ B) Vₛ (A &ₛ C)))) ∧
-[s_contrapositive:] (∀A B. slaney_provable ((A -->ₛ (~ₛB)) -->ₛ (B -->ₛ (~ₛA)))) ∧
-[s_double_negation:] (∀A. slaney_provable ((~ₛ(~ₛA)) -->ₛ A )) ∧
-[s_adjunction_rule:] (∀A B. slaney_provable A ∧ slaney_provable B ⇒ slaney_provable (A &ₛ B)) ∧
-[s_modus_ponens:] (∀A B. slaney_provable A ∧ slaney_provable (A -->ₛ B) ⇒ slaney_provable B) ∧
-[s_intensional_conj_lr:] (∀A B C. slaney_provable ((A ioₛ B) -->ₛ C) ⇒ slaney_provable (A -->ₛ (B -->ₛ C))) ∧
-[s_intensional_conj_rl:] (∀A B C. slaney_provable (A -->ₛ (B -->ₛ C)) ⇒ slaney_provable ((A ioₛ B) -->ₛ C)) ∧
-[s_tt_rl:] (∀A. slaney_provable A ⇒ slaney_provable (τₛ -->ₛ A)) ∧
+[s_identity:]
+  ∀A. slaney_provable (A -->ₛ A)
+[s_permutation:]
+  ∀A B C. slaney_provable ((A -->ₛ (B -->ₛ C)) -->ₛ (B -->ₛ (A -->ₛ C)))
+[s_transitivity:]
+  ∀A B C. slaney_provable ((A -->ₛ B) -->ₛ ((B -->ₛ C) -->ₛ (A -->ₛ C)))
+[s_contraction:] (∀A B. slaney_provable ((A -->ₛ (A -->ₛ B)) -->ₛ (A -->ₛ B)))
+[s_conjunction_l:] (∀A B. slaney_provable ((A &ₛ B) -->ₛ A))
+[s_conjunction_r:] (∀A B. slaney_provable ((A &ₛ B) -->ₛ B))
+[s_conj_introduction:]
+  ∀A B C. slaney_provable (((A -->ₛ B) &ₛ (A -->ₛ C)) -->ₛ (A -->ₛ (B &ₛ C)))
+[s_disjunction_l:] (∀A B. slaney_provable (A -->ₛ (A Vₛ B)))
+[s_disjunction_r:] (∀A B. slaney_provable (B -->ₛ (A Vₛ B)))
+[s_disjunction_elim:]
+  ∀A B C. slaney_provable (((A -->ₛ C) &ₛ (B -->ₛ C)) -->ₛ ((A Vₛ B) -->ₛ C))
+[s_distribution:]
+  ∀A B C. slaney_provable ((A &ₛ (B Vₛ C)) -->ₛ ((A &ₛ B) Vₛ (A &ₛ C)))
+[s_contrapositive:] ∀A B. slaney_provable ((A -->ₛ (~ₛB)) -->ₛ (B -->ₛ (~ₛA)))
+[s_double_negation:] (∀A. slaney_provable ((~ₛ(~ₛA)) -->ₛ A ))
+[s_adjunction_rule:]
+  (∀A B. slaney_provable A ∧ slaney_provable B ⇒ slaney_provable (A &ₛ B))
+[s_modus_ponens:]
+  (∀A B. slaney_provable A ∧ slaney_provable (A -->ₛ B) ⇒ slaney_provable B)
+[s_intensional_conj_lr:]
+  (∀A B C. slaney_provable ((A ioₛ B) -->ₛ C) ⇒ slaney_provable (A -->ₛ (B -->ₛ C)))
+[s_intensional_conj_rl:]
+  ∀A B C. slaney_provable (A -->ₛ (B -->ₛ C)) ⇒
+          slaney_provable ((A ioₛ B) -->ₛ C)
+[s_tt_rl:] (∀A. slaney_provable A ⇒ slaney_provable (τₛ -->ₛ A))
 [s_tt_lr:] (∀A. slaney_provable (τₛ -->ₛ A) ⇒ slaney_provable A)
 End
 
@@ -96,7 +106,10 @@ Theorem s_conj_intro_rule:
           slaney_provable (A -->ₛ C) ⇒
           slaney_provable (A -->ₛ (B &ₛ C))
 Proof
-  metis_tac[slaney_provable_rules]
+  rpt strip_tac >>
+  ‘slaney_provable ((A -->ₛ B) &ₛ (A -->ₛ C))’
+    by metis_tac[s_adjunction_rule] >>
+  metis_tac[s_conj_introduction, s_modus_ponens]
 QED
 
 Theorem s_equiv_replacement:
@@ -206,7 +219,13 @@ Proof
       last_x_assum $ qspecl_then [‘~ₛ (A Vₛ B)’, ‘~ₛ A’, ‘~ₛ B’] strip_assume_tac >>
       ‘slaney_provable (((~ₛ (A Vₛ B) -->ₛ ~ₛ A) &ₛ (~ₛ (A Vₛ B) -->ₛ ~ₛ B)))’ suffices_by
         metis_tac[s_modus_ponens] >>
-      metis_tac[slaney_provable_rules, s_double_negative_equiv, s_equiv_replacement])
+      ‘slaney_provable (~ₛ (A Vₛ B) -->ₛ ~ₛ A)’
+        by metis_tac[s_disjunction_l, s_contrapositive_2,
+                     s_equiv_replacement] >>
+      ‘slaney_provable (~ₛ (A Vₛ B) -->ₛ ~ₛ B)’
+        by metis_tac[s_disjunction_r, s_contrapositive_2,
+                     s_equiv_replacement] >>
+      metis_tac[s_adjunction_rule])
 QED
 
 Theorem s_IO_definable:
@@ -241,4 +260,3 @@ Proof
      )
 QED
 
-val _ = export_theory();

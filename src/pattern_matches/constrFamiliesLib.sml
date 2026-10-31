@@ -7,8 +7,9 @@ open boolLib simpLib patternMatchesSyntax numLib
 structure Parse =
 struct
   open Parse
+  val SOME patternMatches_grammars = grammarDB {thyname="patternMatches"}
   val (Type,Term) =
-      parse_from_grammars patternMatchesTheory.patternMatches_grammars
+      parse_from_grammars patternMatches_grammars
 end
 open Parse
 
@@ -61,8 +62,8 @@ fun normalise_ty ty = let
       | ty :: rest => let
         in
           if is_vartype ty then
-            case Binarymap.peek(dict,ty) of
-                NONE => recurse (Binarymap.insert(dict,ty,usethis),
+            case Typetab.lookup dict ty of
+                NONE => recurse (Typetab.update (ty, usethis) dict,
                                  next_ty usethis)
                                 rest
               | SOME _ => recurse acc rest
@@ -72,10 +73,10 @@ fun normalise_ty ty = let
               recurse acc (Args @ rest)
             end
         end
-  val (inst0, _) = recurse (Binarymap.mkDict Type.compare, Type.alpha) [ty]
-  val inst = Binarymap.foldl (fn (tyk,tyv,acc) => (tyk |-> tyv)::acc)
-                             []
-                             inst0
+  val (inst0, _) = recurse (Typetab.empty, Type.alpha) [ty]
+  val inst = Typetab.fold (fn (tyk,tyv) => fn acc => (tyk |-> tyv)::acc)
+                          inst0
+                          []
 in
   Type.type_subst inst ty
 end
@@ -383,7 +384,7 @@ fun mk_case_const_cong_thm_term case_const (constrL : constructorList) = let
           List.rev (t_full :: acc)
         end
       | ((CONSTR (c, vns))::crs', al::als', ar::ars') => let
-          val arg_ts =  mk_arg_vars [] [al, ar] (type_of al, vns)
+          val arg_ts = mk_arg_vars [] [al, ar] (type_of al, vns)
           val eq_t = mk_eq (list_mk_comb (al, arg_ts),
                             list_mk_comb (ar, arg_ts))
 
@@ -566,15 +567,17 @@ val thePmatchCompileDB = ref empty
 fun lookup_typeBase_constructorFamily ty = let
   val b_ty = base_ty ty
 in
-  SOME (b_ty, TypeNet.find (!typeConstrFamsDB, b_ty)) handle
-     NotFound => let
-       val cf = constructorFamily_of_typebase b_ty
-       val net = !typeConstrFamsDB
-       val net'= TypeNet.insert (net, b_ty, cf)
-       val _ = typeConstrFamsDB := net'
-     in
-       SOME (b_ty, cf)
-     end
+  case TypeNet.peek (!typeConstrFamsDB, b_ty) of
+      SOME cf => SOME (b_ty, cf)
+    | NONE =>
+      let
+        val cf = constructorFamily_of_typebase b_ty
+        val net = !typeConstrFamsDB
+        val net'= TypeNet.insert (net, b_ty, cf)
+        val _ = typeConstrFamsDB := net'
+      in
+        SOME (b_ty, cf)
+      end
 end handle HOL_ERR _ => NONE
 
 
@@ -626,11 +629,7 @@ fun lookup_constructorFamilies_for_type (db : pmatch_compile_db) ty = let
 
   fun is_old_fam (ty, cf) = let
      val (_, cl) = constructorFamily_get_constructors cf
-     fun is_old_const c = let
-       val (cn, _)  = dest_const c
-     in
-       String.isSuffix "<-old" cn
-     end handle HOL_ERR _ => false
+     fun is_old_const c = not (Term.uptodate_term c)
   in
      (List.exists (fn (c, _) => is_old_const c) cl) orelse
      (is_old_const (#case_const cf))
@@ -783,7 +782,7 @@ fun pmatch_compile_db_add_constrFam (db : pmatch_compile_db) cf = {
     val cl = (#constructors cf)
     val ty = normalise_ty (#cl_type cl)
     val net = #pcdb_constrFams db
-    val cfs = TypeNet.find (net, ty) handle NotFound => []
+    val cfs = case TypeNet.peek (net, ty) of SOME l => l | NONE => []
     val net' = TypeNet.insert (net, ty, cf::cfs)
   in
     net'
@@ -816,9 +815,7 @@ fun pmatch_compile_db_clear_type ty =
 (* complilation funs                               *)
 (***************************************************)
 
-val COND_CONG_APPLY = prove (``(if (x:'a) = c then (ff x):'b else ff x) =
-  (if x = c then ff c else ff x)``,
-ASM_CASES_TAC ``x:'a = c`` THEN ASM_REWRITE_TAC[])
+val COND_CONG_APPLY = patternMatchesTheory.COND_CONG_APPLY
 
 
 fun literals_compile_fun (col:(term list * term) list) = let

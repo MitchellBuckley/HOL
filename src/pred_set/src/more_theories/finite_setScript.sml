@@ -1,12 +1,18 @@
-open HolKernel Parse boolLib bossLib;
-open quotient
+Theory finite_set
+Ancestors
+  arithmetic list lifting transfer cardinalityCore
+Libs
+  quotient transferLib bnfBase
 
-open arithmeticTheory
-open listTheory liftingTheory transferTheory transferLib
+(* the bound is a cardinality, and cardinalityCoreTheory makes no
+   grammar of its own; this is kept to itself so that a theory
+   declaring a datatype does not inherit the notation *)
+Overload "<<="[local] = “cardleq”
 
-val _ = new_theory "finite_set";
 
 Theorem psEXTENSION[local] = pred_setTheory.EXTENSION
+
+Overload FUN_REL[local] = “$===>”
 
 Theorem RSUBSET_I:
   R1 RSUBSET R2 ==> R1 x y ==> R2 x y
@@ -64,7 +70,7 @@ val _ = define_quotient_types
            types = [{equiv = fsequiv_equiv, name = "fset"}]}
 
 (* map from list to set is fset_ABS, in other direction it's fset_REP *)
-Theorem fset_ABS_REP_CLASS = theorem "fset_ABS_REP_CLASS"
+val fset_ABS_REP_CLASS = theorem "fset_ABS_REP_CLASS"
 Theorem bijection2 = fset_ABS_REP_CLASS
                        |> CONJUNCT2 |> SPEC_ALL |> EQ_IMP_RULE |> #1
                        |> GEN_ALL
@@ -222,7 +228,7 @@ QED
 Theorem EXTENSION:
   !s1 s2. (s1 = s2) <=> !e. fIN e s1 <=> fIN e s2
 Proof
-  xfer_back_tac >> simp[fsequiv_def, psEXTENSION]
+  xfer_back_tac [] >> simp[fsequiv_def, psEXTENSION]
 QED
 
 Definition fUNION_def:
@@ -240,7 +246,7 @@ QED
 Theorem IN_UNION[simp]:
   !e s1 s2. fIN e (fUNION s1 s2) <=> fIN e s1 \/ fIN e s2
 Proof
-  xfer_back_tac >> simp[]
+  xfer_back_tac [] >> simp[]
 QED
 
 Definition fEMPTY_def:
@@ -257,7 +263,7 @@ QED
 Theorem NOT_IN_EMPTY[simp]:
   !e. ~fIN e fEMPTY
 Proof
-  xfer_back_tac >> simp[]
+  xfer_back_tac [] >> simp[]
 QED
 
 Definition fINSERT_def:
@@ -274,7 +280,7 @@ QED
 Theorem IN_INSERT[simp]:
   !e1 e2 s. fIN e1 (fINSERT e2 s) <=> e1 = e2 \/ fIN e1 s
 Proof
-  xfer_back_tac >> simp[]
+  xfer_back_tac [] >> simp[]
 QED
 
 Theorem IN_KT[local,simp]: !x. x IN K T
@@ -284,13 +290,13 @@ QED
 Theorem fABSORPTION:
   !a A. fIN a A <=> fINSERT a A = A
 Proof
-  xfer_back_tac >> simp[fsequiv_def, pred_setTheory.ABSORPTION]
+  xfer_back_tac [] >> simp[fsequiv_def, pred_setTheory.ABSORPTION]
 QED
 
 Theorem fset_cases:
   !s:'a fset. s = fEMPTY \/ ?e s0. s = fINSERT e s0 /\ ~fIN e s0
 Proof
-  xfer_back_tac >> simp[fsequiv_def, pred_setTheory.SUBSET_DEF] >> Cases >>
+  xfer_back_tac [] >> simp[fsequiv_def, pred_setTheory.SUBSET_DEF] >> Cases >>
   simp[] >>
   rename [‘e INSERT set L = _ INSERT set _’] >> qexists_tac ‘e’ >>
   qexists_tac ‘FILTER ($~ o (=) e) L’ >>
@@ -302,19 +308,19 @@ QED
 Theorem fINSERT_duplicates[simp]:
   !e s. fINSERT e (fINSERT e s) = fINSERT e s
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem fINSERT_commutes:
   !e1 e2 s. fINSERT e1 (fINSERT e2 s) = fINSERT e2 (fINSERT e1 s)
 Proof
-  xfer_back_tac >> simp[fsequiv_def, psEXTENSION] >> metis_tac[]
+  xfer_back_tac [] >> simp[fsequiv_def, psEXTENSION] >> metis_tac[]
 QED
 
 Theorem fset_induction:
   !P. P fEMPTY /\ (!e s. P s /\ ~fIN e s ==> P (fINSERT e s)) ==> !s. P s
 Proof
-  xfer_back_tac >> qx_gen_tac ‘P’ >> ntac 2 strip_tac >> Induct >> simp[] >>
+  xfer_back_tac [] >> qx_gen_tac ‘P’ >> ntac 2 strip_tac >> Induct >> simp[] >>
   qx_gen_tac ‘h’ >> rename [‘P []’, ‘P (h::t)’] >>
   reverse (Cases_on ‘MEM h t’) >- simp[] >>
   ‘fsequiv t (h::t)’ suffices_by metis_tac[] >>
@@ -324,37 +330,37 @@ QED
 Theorem NOT_EMPTY_INSERT[simp]:
   !h t. fEMPTY <> fINSERT h t
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem fUNION_COMM:
   !s1 s2. fUNION s1 s2 = fUNION s2 s1
 Proof
-  xfer_back_tac >> simp[fsequiv_def, pred_setTheory.UNION_COMM]
+  xfer_back_tac [] >> simp[fsequiv_def, pred_setTheory.UNION_COMM]
 QED
 
 Theorem fUNION_ASSOC:
   !s1 s2 s3. fUNION s1 (fUNION s2 s3) = fUNION (fUNION s1 s2) s3
 Proof
-  xfer_back_tac >> simp[fsequiv_def, pred_setTheory.UNION_ASSOC]
+  xfer_back_tac [] >> simp[fsequiv_def, pred_setTheory.UNION_ASSOC]
 QED
 
 Theorem fUNION_EMPTY[simp]:
   !s. fUNION fEMPTY s = s /\ fUNION s fEMPTY = s
 Proof
-  xfer_back_tac >> simp[]
+  xfer_back_tac [] >> simp[]
 QED
 
 Theorem fUNION_EQ_EMPTY[simp]:
   !s1 s2. fUNION s1 s2 = fEMPTY <=> s1 = fEMPTY /\ s2 = fEMPTY
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem fUNION_IDEMPOT[simp]:
   !s. fUNION s s = s
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem fUNION_INSERT:
@@ -378,14 +384,14 @@ QED
 Theorem fDELETE_nonelement[simp]:
   !e s. ~fIN e s ==> fDELETE e s = s
 Proof
-  xfer_back_tac >> simp[fsequiv_def, psEXTENSION, MEM_FILTER] >>
+  xfer_back_tac [] >> simp[fsequiv_def, psEXTENSION, MEM_FILTER] >>
   metis_tac[]
 QED
 
 Theorem IN_DELETE[simp]:
   !a b s. fIN a (fDELETE b s) <=> a <> b /\ fIN a s
 Proof
-  xfer_back_tac >> simp[MEM_FILTER] >> metis_tac[]
+  xfer_back_tac [] >> simp[MEM_FILTER] >> metis_tac[]
 QED
 
 Theorem INSERT_DELETE[simp]:
@@ -441,7 +447,7 @@ Theorem fCARD_THM[simp]:
   fCARD fEMPTY = 0 /\
   !e s. fCARD (fINSERT e s) = 1 + fCARD (fDELETE e s)
 Proof
-  xfer_back_tac >> simp[nub_def] >> rpt strip_tac >>
+  xfer_back_tac [] >> simp[nub_def] >> rpt strip_tac >>
   rename [‘MEM h t’] >> rw[]
   >- (fs[Once MEM_SPLIT_APPEND_first] >>
       csimp[length_nub_append, nub_def, FILTER_APPEND_DISTRIB,
@@ -457,7 +463,7 @@ QED
 Theorem fCARD_EQ0[simp]:
   !s. fCARD s = 0 <=> s = fEMPTY
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Definition fIMAGE_def:
@@ -493,7 +499,7 @@ Theorem fIMAGE_thm[simp]:
   (!f. fIMAGE (f:'a -> 'b) fEMPTY = fEMPTY) /\
   (!(f:'a -> 'b) e s. fIMAGE f (fINSERT e s) = fINSERT (f e) (fIMAGE f s))
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem surjfns[transfer_safe]:
@@ -507,7 +513,7 @@ QED
 Theorem IN_IMAGE[simp]:
   !f x s. fIN x (fIMAGE f s) <=> ?y. fIN y s /\ x = f y
 Proof
-  xfer_back_tac >> simp[MEM_MAP] >> metis_tac[]
+  xfer_back_tac [] >> simp[MEM_MAP] >> metis_tac[]
 QED
 
 Theorem fIMAGE_11:
@@ -521,6 +527,14 @@ Theorem fIMAGE_COMPOSE:
   fIMAGE (f o g) s = fIMAGE f (fIMAGE g s)
 Proof
   simp[EXTENSION] >> metis_tac[]
+QED
+
+Theorem fIMAGE_fUNION:
+  fIMAGE f (fUNION s1 s2) =
+  fUNION (fIMAGE f s1) (fIMAGE f s2)
+Proof
+  rw[EXTENSION, EQ_IMP_THM]
+  \\ metis_tac[]
 QED
 
 Theorem fIMAGE_ID[simp]:
@@ -544,7 +558,7 @@ QED
 Theorem IN_INTER[simp]:
   !e s1 s2. fIN e (fINTER s1 s2) <=> fIN e s1 /\ fIN e s2
 Proof
-  xfer_back_tac >> simp[MEM_FILTER, CONJ_COMM]
+  xfer_back_tac [] >> simp[MEM_FILTER, CONJ_COMM]
 QED
 
 Theorem flip_IN_EMPTY[local]:
@@ -556,13 +570,13 @@ QED
 Theorem fINTER_EMPTY[simp]:
   !x. fINTER x fEMPTY = fEMPTY /\ fINTER fEMPTY x = fEMPTY
 Proof
-  xfer_back_tac >> simp[fsequiv_def, flip_IN_EMPTY]
+  xfer_back_tac [] >> simp[fsequiv_def, flip_IN_EMPTY]
 QED
 
 Theorem fINTER_IDEMPOT[simp]:
   !x. fINTER x x = x
 Proof
-  xfer_back_tac >> simp[fsequiv_def, psEXTENSION, MEM_FILTER]
+  xfer_back_tac [] >> simp[fsequiv_def, psEXTENSION, MEM_FILTER]
 QED
 
 Theorem fINTER_COMM:
@@ -596,7 +610,7 @@ QED
 Theorem IN_DIFF[simp]:
   !e s1 s2. fIN e (fDIFF s1 s2) <=> fIN e s1 /\ ~fIN e s2
 Proof
-  xfer_back_tac >> simp[MEM_FILTER, CONJ_COMM]
+  xfer_back_tac [] >> simp[MEM_FILTER, CONJ_COMM]
 QED
 
 
@@ -607,6 +621,25 @@ End
 Definition toSet_def:
   toSet fs = { x | fIN x fs }
 End
+
+Theorem toSet_fEMPTY[simp]:
+  toSet fEMPTY = {}
+Proof
+  rw[toSet_def]
+QED
+
+Theorem toSet_fINSERT:
+  toSet (fINSERT x s) = x INSERT (toSet s)
+Proof
+  rw[toSet_def, pred_setTheory.EXTENSION]
+QED
+
+Theorem toSet_fIMAGE:
+  toSet (fIMAGE f s) = IMAGE f (toSet s)
+Proof
+  rw[toSet_def, pred_setTheory.EXTENSION, EQ_IMP_THM]
+  \\ metis_tac[]
+QED
 
 Definition rel_set_def:
   rel_set AB A B <=>
@@ -786,13 +819,13 @@ QED
 Theorem set_BIGUNION:
   !fss. toSet (fBIGUNION fss) = BIGUNION (toSet (fIMAGE toSet fss))
 Proof
-  xfer_back_tac >> simp[LIST_TO_SET_FLAT]
+  xfer_back_tac [] >> simp[LIST_TO_SET_FLAT]
 QED
 
 Theorem toSet_11:
   !fs1 fs2. (toSet fs1 = toSet fs2) <=> fs1 = fs2
 Proof
-  xfer_back_tac >> simp[fsequiv_def]
+  xfer_back_tac [] >> simp[fsequiv_def]
 QED
 
 Theorem equalityp_relset[transfer_safe]:
@@ -804,13 +837,13 @@ QED
 Theorem fIN_IN:
   !e fs. fIN e fs <=> e IN toSet fs
 Proof
-  xfer_back_tac
+  xfer_back_tac []
 QED
 
 Theorem set_IMAGE:
   !f fs. toSet (fIMAGE f fs) = IMAGE f (toSet fs)
 Proof
-  xfer_back_tac >> simp[LIST_TO_SET_MAP, psEXTENSION]
+  xfer_back_tac [] >> simp[LIST_TO_SET_MAP, psEXTENSION]
 QED
 
 Theorem IN_BIGUNION:
@@ -833,6 +866,18 @@ val _ = TypeBase.export [
           size = NONE,
           encode=NONE})
     ]
+
+Theorem CARD_toSet:
+  CARD (toSet s) = fCARD s
+Proof
+  Induct_on`s` \\ gs[toSet_fINSERT, fIN_IN]
+QED
+
+Theorem IN_toSet_fINSERT:
+  x ∈ toSet (fINSERT a s) ⇔ x = a ∨ x ∈ toSet s
+Proof
+  rw[GSYM fIN_IN]
+QED
 
 Theorem fITSETr_total:
   !s f a0. ?a. fITSETr f s a0 a
@@ -1070,7 +1115,7 @@ Theorem IN_BIGUNION:
   !x fss. fIN x (fBIGUNION fss) = ?fs. fIN fs fss /\ fIN x fs
 Proof
 
-  xfer_back_tac
+  xfer_back_tac []
 *)
 
 Definition fromSet_def:
@@ -1107,6 +1152,34 @@ Theorem toSet_fromSet:
   FINITE s ==> toSet (fromSet s) = s
 Proof
   simp[pred_setTheory.EXTENSION, GSYM fIN_IN, IN_fromSet]
+QED
+
+val fset_QUOTIENT = theorem"fset_QUOTIENT";
+
+Theorem fromSet_set:
+  !l. fromSet (set l) = fset_ABS l
+Proof
+  Induct \\ gvs[GSYM fEMPTY_def, fromSet_INSERT]
+  \\ rw[Once fINSERT_def, fsequiv_def]
+  \\ AP_TERM_TAC
+  \\ mp_tac fset_QUOTIENT
+  \\ rewrite_tac[quotientTheory.QUOTIENT_def] \\ strip_tac
+  \\ metis_tac[fsequiv_def]
+QED
+
+Theorem toSet_fset_ABS:
+  !l. toSet (fset_ABS l) = set l
+Proof
+  gen_tac \\
+  qspec_then`l`(SUBST1_TAC o SYM o Q.AP_TERM`toSet`)fromSet_set
+  \\ irule toSet_fromSet
+  \\ rw[]
+QED
+
+Theorem toSet_fUNION[simp]:
+  toSet (fUNION s1 s2) = (toSet s1) UNION (toSet s2)
+Proof
+  rw[pred_setTheory.EXTENSION, GSYM fIN_IN]
 QED
 
 Theorem toSet_Qt:
@@ -1147,5 +1220,141 @@ Proof
   simp[FUN_REL_def, sfSETREL_def] >> metis_tac[]
 QED
 
+Theorem MEM_fset_REP:
+  MEM x (fset_REP fs) <=> fIN x fs
+Proof
+  rw[fIN_def]
+QED
 
-val _ = export_theory();
+Theorem fset_ABS_MAP:
+  fset_ABS (MAP f l) = fIMAGE f (fset_ABS l)
+Proof
+  rw[EXTENSION, fIN_IN, toSet_fset_ABS, MEM_MAP]
+  \\ metis_tac[]
+QED
+
+Theorem fset_REP_fEMPTY[simp]:
+  fset_REP fEMPTY = []
+Proof
+  rw[rich_listTheory.NIL_NO_MEM, MEM_fset_REP]
+QED
+
+Theorem fIN_fset_ABS:
+  fIN x (fset_ABS l) <=> MEM x l
+Proof
+  rw[fIN_def]
+  \\ mp_tac fset_QUOTIENT
+  \\ rewrite_tac[quotientTheory.QUOTIENT_def,fsequiv_def]
+  \\ rpt strip_tac
+  \\ `set (fset_REP (fset_ABS l)) = set l`
+  suffices_by (
+    rewrite_tac[pred_setTheory.EXTENSION]
+    \\ metis_tac[] )
+  \\ asm_simp_tac std_ss []
+QED
+
+Theorem fBIGUNION_fset_ABS_FOLDL_aux[local]:
+  !l s. FOLDL fUNION s l = fUNION s (fBIGUNION (fset_ABS l))
+Proof
+  Induct \\ rw[fBIGUNION_def, GSYM fEMPTY_def]
+  \\ rw[GSYM fUNION_ASSOC] \\ AP_TERM_TAC
+  \\ rw[EXTENSION]
+  \\ qmatch_goalsub_abbrev_tac`_ \/ fIN e s <=> fIN e hs`
+  \\ `hs = fUNION h s`
+  by (
+    rw[Once (GSYM toSet_11)]
+    \\ rw[Abbr`hs`, Abbr`s`, toSet_fset_ABS]
+    \\ rw[pred_setTheory.EXTENSION, MEM_FLAT, PULL_EXISTS, MEM_MAP]
+    \\ rw[MEM_fset_REP, fIN_fset_ABS, GSYM fIN_IN]
+    \\ metis_tac[] )
+  \\ rw[]
+QED
+
+Theorem fBIGUNION_fset_ABS_FOLDL:
+  fBIGUNION (fset_ABS l) = FOLDL fUNION fEMPTY l
+Proof
+  rw[fBIGUNION_fset_ABS_FOLDL_aux]
+QED
+
+
+(* ----------------------------------------------------------------------
+    Finite sets as a bounded natural functor, so that a datatype
+    specification can recurse through one: fIMAGE is the map, toSet the
+    set function, rel_set on the elements the relator, and a finite set
+    holds no more atoms than there are numbers.
+   ---------------------------------------------------------------------- *)
+
+fun bnm s : KernelSig.kernelname = {Thy = "finite_set", Name = s}
+
+Definition fsetREL_def:
+  fsetREL AB fs1 fs2 <=> rel_set AB (toSet fs1) (toSet fs2)
+End
+
+Theorem fsetMap_ID:
+  fIMAGE (I:'a1 -> 'a1) = (I : 'a1 fset -> 'a1 fset)
+Proof
+  simp[FUN_EQ_THM]
+QED
+
+Theorem fsetMap_O:
+  fIMAGE (f1:'c1 -> 'd1) o fIMAGE (g1:'a1 -> 'c1) = fIMAGE (f1 o g1)
+Proof
+  simp[FUN_EQ_THM, fIMAGE_COMPOSE]
+QED
+
+Theorem fsetMapIMAGE1:
+  !(f1:'a1 -> 'c1) s. toSet (fIMAGE f1 s) = IMAGE f1 (toSet s)
+Proof
+  simp[toSet_fIMAGE]
+QED
+
+Theorem fsetMapCONG:
+  (!a1. a1 IN toSet (s:'a1 fset) ==> (f1:'a1 -> 'c1) a1 = g1 a1) ==>
+  fIMAGE f1 s = fIMAGE g1 s
+Proof
+  strip_tac >> simp[GSYM toSet_11, toSet_fIMAGE] >>
+  irule pred_setTheory.IMAGE_CONG >> simp[]
+QED
+
+Theorem fset_bnd1:
+  !s : 'a1 fset. toSet s <<= univ(:num)
+Proof
+  gen_tac >> ONCE_REWRITE_TAC[cardinalityCoreTheory.cardleq_lteq] >>
+  disj1_tac >> simp[GSYM cardinalityCoreTheory.FINITE_CARD_LT]
+QED
+
+Theorem fset_wit1:
+  !a1:'a1. toSet (K fEMPTY a1 : 'a1 fset) SUBSET {}
+Proof
+  simp[]
+QED
+
+Theorem fset_inh1:
+  !v:'a1. v IN toSet (combin$C fINSERT fEMPTY v)
+Proof
+  simp[toSet_fINSERT]
+QED
+
+val _ = bnfBase.updateDB (
+  {Thy = "finite_set", Name = "fset"},
+  bnfBase.bI {
+    canontype = “:'a1 fset”,
+
+    map = “finite_set$fIMAGE : ('a1 -> 'c1) -> 'a1 fset -> 'c1 fset”,
+    set = [“finite_set$toSet : 'a1 fset -> 'a1 set”],
+    eqns = [bnm "fIMAGE_thm", bnm "toSet_fEMPTY", bnm "toSet_fINSERT"],
+    mapID = bnm "fsetMap_ID",
+    mapO = bnm "fsetMap_O",
+    mapIMAGE = [bnm "fsetMapIMAGE1"],
+    mapCONG = bnm "fsetMapCONG",
+
+    relator = “finite_set$fsetREL : ('a1 -> 'c1 -> bool) ->
+                                    'a1 fset -> 'c1 fset -> bool”,
+    bnd = “univ(:num)”,
+    bndthms = [bnm "fset_bnd1"],
+
+    wits = [(“K fEMPTY : 'a1 -> 'a1 fset”, bnm "fset_wit1")],
+    inhabits = [(“combin$C fINSERT fEMPTY : 'a1 -> 'a1 fset”,
+                 bnm "fset_inh1")]
+  }
+)

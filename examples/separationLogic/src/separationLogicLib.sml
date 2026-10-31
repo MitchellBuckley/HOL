@@ -310,9 +310,8 @@ val penv = ``penv :'c |-> ('d -> ('d, 'b, 'c, 'a) asl_program)``
 val p = ``(asl_prog_block (p1::(asl_prog_block L)::p3::L')):('d, 'b, 'c, 'a) asl_program``
 *)
 
-val append_thm_comment_nil1 = prove (``
-   (asl_comment_location c []) ++ h::hs =
-   (asl_comment_location c (h:'a))::hs``, REWRITE_TAC[asl_comment_location_def, APPEND])
+val append_thm_comment_nil1 =
+    separationLogicTheory.asl_comment_location_APPEND_NIL_CONS
 fun is_comment_nil t =
    listSyntax.is_nil (#3 (dest_asl_comment t)) handle HOL_ERR _ => false
 
@@ -551,19 +550,23 @@ fun ASL_PROGRAM_IS_ABSTRACTION___ABSTRACTION___CONSEQ_CONV fL abstL t =
  ****************************************************************)
 
 
-val names_all_distinct_cs = computeLib.bool_compset ();
-val _ = computeLib.add_thms [listTheory.MAP, pairTheory.FST, pairTheory.SND,
+val names_all_distinct_cs =
+  let val cs = computeLib.bool_compset
+      val cs = computeLib.add_thms [listTheory.MAP, pairTheory.FST, pairTheory.SND,
                              listTheory.ALL_DISTINCT,
-                             listTheory.MEM] names_all_distinct_cs;
-val _ = computeLib.add_conv (``($=):'a -> 'a -> bool``, 2, stringLib.string_EQ_CONV) names_all_distinct_cs;
+                             listTheory.MEM] cs
+  in computeLib.add_conv (``($=):'a -> 'a -> bool``, 2, stringLib.string_EQ_CONV) cs
+  end;
 
 
 
-val proc_free_specs_cs = computeLib.bool_compset ();
-val _ = computeLib.add_thms [listTheory.EVERY_DEF, pairTheory.SND, pairTheory.FST,
+val proc_free_specs_cs =
+  let val cs = computeLib.bool_compset
+      val cs = computeLib.add_thms [listTheory.EVERY_DEF, pairTheory.SND, pairTheory.FST,
     REWRITE_RULE [asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___ALTERNATIVE_DEF] asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___prim_command,
-    REWRITE_RULE [asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___ALTERNATIVE_DEF] asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___SIMPLE_REWRITES] proc_free_specs_cs;
-val _ = computeLib.add_conv (pairSyntax.uncurry_tm, 2, pairLib.GEN_BETA_CONV) proc_free_specs_cs;
+    REWRITE_RULE [asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___ALTERNATIVE_DEF] asl_prog_IS_RESOURCE_AND_PROCCALL_FREE___SIMPLE_REWRITES] cs
+  in computeLib.add_conv (pairSyntax.uncurry_tm, 2, pairLib.GEN_BETA_CONV) cs
+  end;
 
 
 
@@ -598,11 +601,13 @@ in
 end;
 
 
-val precond1_cs = computeLib.bool_compset ();
-val _ = computeLib.add_thms [listTheory.EVERY_DEF,
-    pairTheory.FST, pairTheory.SND] precond1_cs;
-val _ = computeLib.add_conv (pairSyntax.uncurry_tm, 2, pairLib.GEN_BETA_CONV) precond1_cs;
-val _ = computeLib.add_conv (asl_comment_location_string_term, 2, asl_comment_location_string_ELIM_CONV) precond1_cs;
+val precond1_cs =
+  let val cs = computeLib.bool_compset
+      val cs = computeLib.add_thms [listTheory.EVERY_DEF,
+          pairTheory.FST, pairTheory.SND] cs
+      val cs = computeLib.add_conv (pairSyntax.uncurry_tm, 2, pairLib.GEN_BETA_CONV) cs
+  in computeLib.add_conv (asl_comment_location_string_term, 2, asl_comment_location_string_ELIM_CONV) cs
+  end;
 
 
 val precond1_conv =

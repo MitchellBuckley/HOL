@@ -3,6 +3,8 @@ sig
 
  eqtype hol_type
 
+ val type_epoch    : unit -> int
+ val display_name_of_id : KernelSig.kernelid -> string
  val mk_vartype    : string -> hol_type
  val gen_tyvar     : unit -> hol_type
  val dest_vartype  : hol_type -> string
@@ -14,12 +16,17 @@ sig
  val is_type       : hol_type -> bool
  val mk_thy_type   : {Thy:string, Tyop:string, Args:hol_type list} -> hol_type
  val dest_thy_type : hol_type -> {Thy:string, Tyop:string, Args:hol_type list}
+ val dest_thy_typeid
+                   : hol_type -> {Thy:string, Tyop:KernelSig.kernelid,
+                                  Args:hol_type list}
 
  val decls         : string -> {Thy:string, Tyop:string} list
  val op_arity      : {Thy:string, Tyop:string} -> int option
 
- val type_vars     : hol_type -> hol_type list
- val type_varsl    : hol_type list -> hol_type list
+ val type_vars_acc  : hol_type -> hol_type list -> hol_type list
+ val type_vars      : hol_type -> hol_type list
+ val type_varsl     : hol_type list -> hol_type list
+
  val type_var_in   : hol_type -> hol_type -> bool
  val exists_tyvar  : (hol_type -> bool) -> hol_type -> bool
  val polymorphic   : hol_type -> bool
@@ -58,6 +65,10 @@ sig
 
  (* accessing and manipulating theory information for types *)
  val prim_new_type : {Thy:string, Tyop:string} -> int -> unit
+ (* declare and return the mint, rather than declaring and then
+    fetching it back by name; see Type.prim_mk_new_type *)
+ val prim_mk_new_type : {Thy:string, Tyop:string} -> hol_type list ->
+                        hol_type
  val prim_delete_type : {Thy:string, Tyop:string} -> unit
  val thy_types : string -> (string * int) list
  val del_segment : string -> unit

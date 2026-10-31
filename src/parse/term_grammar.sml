@@ -2,7 +2,6 @@ structure term_grammar :> term_grammar =
 struct
 
 open HOLgrammars GrammarSpecials Lib Feedback term_grammar_dtype
-
 val ERROR = mk_HOL_ERR "term_grammar"
 
 type term = Term.term
@@ -102,7 +101,7 @@ type overload_info = Overload.overload_info
 
 type ('a,'b) printer_info =
   (term * string * ('a,'b) term_pp_types.userprinter) FCNet.t *
-  string Binaryset.set
+  string HOLset.set
 type special_info = {type_intro : string,
                      lambda : string list,
                      endbinding : string,
@@ -115,6 +114,12 @@ fun fupd_lambda f {type_intro,lambda,endbinding,restr_binders,res_quanop} =
 
 type prmP0 = Absyn.absyn -> Parse_supportENV.preterm_in_env
 
+structure SI_Tab = Table(struct
+  type key = string * int
+  val ord = pair_compare(String.compare, Int.compare)
+  fun pp (s,i) = HOLPP.add_string (s ^ "/" ^ Int.toString i)
+end)
+
 datatype grammar = GCONS of
   {rules : (int option * grammar_rule) list,
    specials : special_info,
@@ -123,7 +128,9 @@ datatype grammar = GCONS of
    overload_info : overload_info,
    user_printers : (type_grammar.grammar * grammar, grammar) printer_info,
    absyn_postprocessors : (string * postprocessor) list,
-   preterm_processors : (string*int,ptmprocessor) Binarymap.dict,
+   preterm_processors : ptmprocessor SI_Tab.table,
+   user_state : UniversalType.t Symtab.table,
+   prec_matrix : parse_term_dtype.prec_matrix option ref,
    next_timestamp : int
    }
 and postprocessor = AbPP of grammar -> Absyn.absyn -> Absyn.absyn
@@ -154,42 +161,133 @@ fun absyn_postprocessors g = map (apsnd destAbPP) (absyn_postprocessors0 g)
 fun gnext_timestamp (GCONS g) = #next_timestamp g
 
 fun preterm_processor (GCONS g) k =
-  Option.map destPtmP (Binarymap.peek(#preterm_processors g, k))
+  Option.map destPtmP (SI_Tab.lookup (#preterm_processors g) k)
 
 
 (* fupdates *)
 open FunctionalRecordUpdate
-fun gcons_mkUp z = makeUpdate9 z
+fun gcons_mkUp z = makeUpdate11 z
 fun update_G z = let
   fun from rules specials numeral_info overload_info user_printers
-           absyn_postprocessors preterm_processors next_timestamp
-           strlit_map =
+           absyn_postprocessors preterm_processors user_state next_timestamp
+           strlit_map prec_matrix =
     {rules = rules, specials = specials, numeral_info = numeral_info,
      overload_info = overload_info, user_printers = user_printers,
      absyn_postprocessors = absyn_postprocessors, strlit_map = strlit_map,
-     preterm_processors = preterm_processors, next_timestamp = next_timestamp}
+     preterm_processors = preterm_processors, user_state = user_state,
+     prec_matrix = prec_matrix, next_timestamp = next_timestamp}
   (* fields in reverse order to above *)
-  fun from' strlit_map next_timestamp preterm_processors absyn_postprocessors
-            user_printers
+  fun from' prec_matrix strlit_map next_timestamp user_state preterm_processors
+            absyn_postprocessors user_printers
             overload_info numeral_info specials rules =
     {rules = rules, specials = specials, numeral_info = numeral_info,
      overload_info = overload_info, user_printers = user_printers,
      absyn_postprocessors = absyn_postprocessors, strlit_map = strlit_map,
-     preterm_processors = preterm_processors, next_timestamp = next_timestamp }
+     preterm_processors = preterm_processors, user_state = user_state,
+     prec_matrix = prec_matrix, next_timestamp = next_timestamp }
   (* first order *)
   fun to f {rules, specials, numeral_info,
             overload_info, user_printers, absyn_postprocessors,
-            preterm_processors, next_timestamp, strlit_map} =
+            preterm_processors, user_state, next_timestamp, strlit_map,
+            prec_matrix} =
     f rules specials numeral_info overload_info user_printers
-      absyn_postprocessors preterm_processors next_timestamp strlit_map
+      absyn_postprocessors preterm_processors user_state next_timestamp
+      strlit_map prec_matrix
 in
   gcons_mkUp (from, from', to)
 end z
 
+fun fupdate_user_state f (GCONS g) =
+    GCONS (update_G g (U #user_state (f (#user_state g))) $$)
+
+(* ----------------------------------------------------------------------
+    State belonging to a user-registered parser or printer function
+
+    A function registered through `userSyntaxFns' is handed the grammar it
+    is working with --- an absyn postprocessor takes it directly, a user
+    printer takes it as the second half of its (tyg,tmg) pair --- but its
+    type mentions nothing else, so a registrant needing auxiliary state of
+    its own had no home for it and had to reach for a process-global.
+    That is wrong twice over: such state belongs with the grammar it
+    extends the behaviour of, and reading it ambiently during a proof is
+    exactly what the context-passing migration is removing.
+
+    So the grammar carries a slot per registrant, and the registrant reads
+    it out of the grammar it was already given.  Registration is
+    unchanged, and a function with no state of its own is unaffected.
+
+    Updating a slot is an ordinary grammar transformation, which is the
+    point: it travels the same path as adding a rule or an overload, so
+    `Parse.upd_term_grammar' rederives the parser and nothing can go
+    stale.
+
+    Persistence goes the same way registration does.  A grammar is not
+    stored whole: it is rebuilt on load by replaying its recorded deltas
+    over its merged parents, which is why ADD_ABSYN_POSTP names the code
+    to reinstall rather than storing it.  A value installed only into the
+    ambient grammar would therefore not survive a theory load, so the
+    registrant's own encoded delta rides that same stream as
+    ADD_USER_STATE, and `add_delta' applies it through the registry.
+    Ancestors that both hold a value meet in `merge_grammars', using the
+    merge the key was made with.
+   ---------------------------------------------------------------------- *)
+type 'a state_key = {name : string, init : 'a,
+                     inj : 'a -> UniversalType.t,
+                     prj : UniversalType.t -> 'a option}
+
+(* merge_grammars sees only the slot's name, so each key leaves behind a
+   merge that has already forgotten the type it was made for *)
+val state_mergers :
+    (UniversalType.t * UniversalType.t -> UniversalType.t) Symtab.table ref =
+    ref Symtab.empty
+
+fun merge_user_state (t1, t2) =
+    Symtab.join
+      (fn k => fn (u1, u2) =>
+          case Symtab.lookup (!state_mergers) k of
+              SOME m => m (u1, u2)
+            | NONE => u1)
+      (t1, t2)
+
+(* Two registrants under one name would each read the other's value,
+   see it fail to project, and silently fall back to `init' -- that is,
+   quietly lose their state.  Refuse the clash instead. *)
+fun new_state_key {name, init, merge} =
+    let
+      val _ = if Symtab.defined (!state_mergers) name then
+                raise ERROR "new_state_key"
+                      ("Grammar state slot " ^ Lib.mlquote name ^
+                       " is already registered")
+              else ()
+      val (inj, prj) = UniversalType.embed ()
+      fun umerge (u1, u2) =
+          case (prj u1, prj u2) of
+              (SOME v1, SOME v2) => inj (merge (v1, v2))
+            | (NONE, _) => u2
+            | _ => u1
+      val _ = state_mergers := Symtab.update (name, umerge) (!state_mergers)
+    in {name = name, init = init, inj = inj, prj = prj} end
+
+(* `init' answers for a grammar built before the registrant existed, and
+   for one whose slot holds another registrant's value under the same
+   name --- neither should be an error at parse time. *)
+fun get_user_state ({name, init, prj, ...} : 'a state_key) (GCONS g) =
+    case Symtab.lookup (#user_state g) name of
+        NONE => init
+      | SOME u => (case prj u of SOME v => v | NONE => init)
+
+fun upd_user_state (key as {name, inj, ...} : 'a state_key) f G =
+    fupdate_user_state
+      (Symtab.update (name, inj (f (get_user_state key G)))) G
+
+fun prec_matrix (GCONS g) = #prec_matrix g
+
 fun fupdate_rules f (GCONS g) =
-    GCONS (update_G g (U #rules (f (#rules g))) $$)
+    GCONS (update_G g (U #rules (f (#rules g)))
+                      (U #prec_matrix (ref NONE)) $$)
 fun fupdate_specials f (GCONS g) =
-  GCONS (update_G g (U #specials (f (#specials g))) $$)
+  GCONS (update_G g (U #specials (f (#specials g)))
+                    (U #prec_matrix (ref NONE)) $$)
 fun fupdate_numinfo f (GCONS g) =
   GCONS (update_G g (U #numeral_info (f (#numeral_info g))) $$)
 fun fupdate_strlit_map f (GCONS g) =
@@ -235,15 +333,22 @@ fun fupdate_user_printers f g =
 
 fun user_printers (GCONS g) = #1 (#user_printers g)
 
-fun remove_user_printer k (GCONS g) = let
+fun samepat t1 t2 =
+    can (Term.match_term t1) t2 andalso can (Term.match_term t2) t1
+
+fun remove_user_printer (nm,pat) (GCONS g) = let
   val (net, keyset) = #user_printers g
 in
-  if Binaryset.member(keyset,k) then let
-      fun foldthis (t,nm,f) (olddata,newnet) =
-          if nm = k then (SOME (t,f), newnet)
-          else (olddata, FCNet.insert(t,(t,nm,f)) newnet)
-      val (data, newnet) = FCNet.itnet foldthis net (NONE, FCNet.empty)
-      val newkeys = Binaryset.delete(keyset, k)
+  if HOLset.member(keyset,nm) then let
+      fun foldthis (t,nm',f) (olddata,newnet,newkeyset) =
+          if nm = nm' andalso samepat pat t then (SOME (t,f), newnet, newkeyset)
+          else
+            (olddata,
+             FCNet.insert(t,(t,nm',f)) newnet,
+             HOLset.add(newkeyset,nm'))
+      val (data, newnet, newkeys) =
+          FCNet.itnet foldthis net
+                      (NONE, FCNet.empty, HOLset.empty String.compare)
     in
       (GCONS (update_G g (U #user_printers (newnet,newkeys)) $$),
        data)
@@ -252,9 +357,9 @@ in
 end
 
 fun add_user_printer (k,pat,v) g = let
-  val (g', _) = remove_user_printer k g
+  val (g', _) = remove_user_printer (k,pat) g
   fun upd (net,keys) =
-    (FCNet.insert(pat, (pat,k,v)) net, Binaryset.add(keys, k))
+    (FCNet.insert(pat, (pat,k,v)) net, HOLset.add(keys, k))
 in
   fupdate_user_printers upd g'
 end
@@ -283,15 +388,16 @@ fun new_preterm_processor k f (GCONS g) = let
   val old = #preterm_processors g
 in
   GCONS (update_G g
-                  (U #preterm_processors (Binarymap.insert(old,k,PtmP f))) $$)
+                  (U #preterm_processors (SI_Tab.update (k, PtmP f) old)) $$)
 end
 
 fun remove_preterm_processor k (G as GCONS g) = let
   val old = #preterm_processors g
 in
-  case Lib.total Binarymap.remove (old,k) of
-      SOME(new, v) => (GCONS (update_G g (U #preterm_processors new) $$),
-                       SOME (destPtmP v))
+  case SI_Tab.lookup old k of
+      SOME v => (GCONS (update_G g
+                          (U #preterm_processors (SI_Tab.delete k old)) $$),
+                 SOME (destPtmP v))
     | NONE => (G, NONE)
 end
 
@@ -483,10 +589,11 @@ val stdhol : grammar =
    numeral_info = [],
    strlit_map = Symtab.empty,
    overload_info = Overload.null_oinfo,
-   user_printers = (FCNet.empty, Binaryset.empty String.compare),
+   user_printers = (FCNet.empty, HOLset.empty String.compare),
    absyn_postprocessors = [],
-   preterm_processors =
-     Binarymap.mkDict (pair_compare(String.compare, Int.compare)),
+   preterm_processors = SI_Tab.empty,
+   user_state = Symtab.empty,
+   prec_matrix = ref NONE,
    next_timestamp = 1
    }
 
@@ -638,7 +745,7 @@ fun ((g1:grammar) Gmerge (g2:(int option * grammar_rule) list)) = let
   val g0_rules =
     Listsort.sort (fn (e1,e2) => aug_compare(#1 e1, #1 e2))
     (rules g1 @ g2)
-  val g_rules =  resolve_same_precs g0_rules
+  val g_rules = resolve_same_precs g0_rules
 in
   fupdate_rules (fn _ => g_rules) g1
 end
@@ -815,7 +922,7 @@ end
 
 fun add_rule {term_name = s : string, fixity = f, pp_elements,
               paren_style, block_style} G0 = let
-  val _ =  pp_elements_ok pp_elements orelse
+  val _ = pp_elements_ok pp_elements orelse
                  raise GrammarError "token list no good"
   val new_tstamp = gnext_timestamp G0
   val rr = {term_name = s, elements = pp_elements, timestamp = new_tstamp,
@@ -1022,14 +1129,16 @@ structure userSyntaxFns = struct
   type 'a t = 'a getter * 'a setter
   fun mk_table () =
     let
-      val tab = ref (Binarymap.mkDict String.compare)
+      val tab = ref Symtab.empty
     in
-      ((fn s => Binarymap.find(!tab, s)),
-       (fn {name,code} => tab := Binarymap.insert(!tab, name, code)))
+      ((fn s => valOf (Symtab.lookup (!tab) s)),
+       (fn {name,code} => tab := Symtab.update (name, code) (!tab)))
     end
   val (get_userPP, register_userPP) = mk_table() : userprinter t
   val (get_absynPostProcessor, register_absynPostProcessor) =
       mk_table() : absyn_postprocessor t
+  type state_delta = ThyDataSexp.t -> grammar -> grammar
+  val (get_stateDelta, register_stateDelta) = mk_table() : state_delta t
 end
 
 fun add_delta ud G =
@@ -1062,7 +1171,7 @@ fun add_delta ud G =
       else
         let
           val code = userSyntaxFns.get_userPP s
-                     handle Binarymap.NotFound =>
+                     handle Option =>
                             raise ERROR "add_delta"
                                   ("No code named "^s^
                                    " registered for add user-printer")
@@ -1072,15 +1181,27 @@ fun add_delta ud G =
     | ADD_ABSYN_POSTP {codename} =>
       let
         val code = userSyntaxFns.get_absynPostProcessor codename
-          handle Binarymap.NotFound =>
+          handle Option =>
                  raise ERROR "add_delta"
                        ("No code named "^codename^
                         " registered for add absyn-postprocessor")
       in
         new_absyn_postprocessor (codename, code) G
       end
+    | ADD_USER_STATE {codename, delta} =>
+      let
+        val code = userSyntaxFns.get_stateDelta codename
+          handle Option =>
+                 raise ERROR "add_delta"
+                       ("No code named "^codename^
+                        " registered for user grammar state")
+      in
+        code delta G
+      end
     | ADD_STRLIT r => add_strlit_injector r G
     | RM_STRLIT r => remove_strlit_injector r G
+    | RM_UPRINTER {codename,pattern} =>
+      #1 (remove_user_printer (codename,pattern) G)
 
 fun add_deltas uds G = List.foldl (uncurry add_delta) G uds
 
@@ -1114,21 +1235,21 @@ end
 
 fun merge_bmaps typestring keyprinter m1 m2 = let
   (* m1 takes precedence - arbitrarily *)
-  fun foldfn (k,v,newmap) =
-    (if isSome (Binarymap.peek(newmap, k)) then
+  fun foldfn (k,v) newmap =
+    (if isSome (SI_Tab.lookup newmap k) then
        Feedback.HOL_WARNING "term_grammar" "merge_grammars"
        ("Merging "^typestring^" has produced a clash on key "^keyprinter k)
      else
        ();
-     Binarymap.insert(newmap,k,v))
+     SI_Tab.update (k, v) newmap)
 in
-  Binarymap.foldl foldfn m2 m1
+  SI_Tab.fold foldfn m2 m1
 end
 
 fun merge_user_printers (n1,ks1) (n2,_) = let
   fun foldthis (tm,k,f) (n,ks) =
-      if Binaryset.member(ks,k) then (n,ks)
-      else (FCNet.insert(tm,(tm,k,f)) n, Binaryset.add(ks, k))
+      if HOLset.member(ks,k) then (n,ks)
+      else (FCNet.insert(tm,(tm,k,f)) n, HOLset.add(ks, k))
 in
    FCNet.itnet foldthis n2 (n1,ks1)
 end
@@ -1144,7 +1265,7 @@ in
 end
 
 fun bmap_merge m1 m2 =
-  Binarymap.foldl (fn (k,v,acc) => Binarymap.insert(acc,k,v)) m1 m2
+  SI_Tab.fold (fn (k,v) => fn acc => SI_Tab.update (k, v) acc) m1 m2
 
 fun merge_grammars (G1 as GCONS g1, G2 as GCONS g2) :grammar = let
   val g0_rules =
@@ -1167,6 +1288,12 @@ in
                                             (absyn_postprocessors0 G2),
          preterm_processors =
            bmap_merge (#preterm_processors g1) (#preterm_processors g2),
+         (* Two ancestors can each have extended the same registrant --
+            combin, list and finite_map all add to combinpp's bracket
+            dictionary -- so this has to combine the values, not pick
+            one.  How is the registrant's business; see new_state_key. *)
+         user_state = merge_user_state (#user_state g1, #user_state g2),
+         prec_matrix = ref NONE,
          next_timestamp = Int.max(#next_timestamp g1, #next_timestamp g2),
          strlit_map = Symtab.join (fn _ => fn (_,v2) => v2)
                                   (#strlit_map g1, #strlit_map g2)

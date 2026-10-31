@@ -1,29 +1,78 @@
 OPTIONS = NO_OVERLAY
-EXTRA_CLEANS = Doc2Html.exe Doc2Tex.exe Doc2Txt.exe makebase.exe \
-               Lexer.lex.sml Parser.grm-sig.sml Parser.grm.sml
+Docfiles = ../Docfiles
+Gend = ../generated-alias-docs
+EXTRA_CLEANS = Md2TeX.exe AliasGen.exe process_docfiles makebase.exe \
+               Lexer.lex.sml Parser.grm-sig.sml Parser.grm.sml \
+               Parser.grm.sig $(Gend)/
 MLYACCLIB = $(protect $(HOLDIR)/tools/mlyacc/mlyacclib/)
 MLYACCLIB_UIS = $(patsubst %,MLY_%.ui,base-sig join lrtable parser2 stream)
 
-all: makebase.exe Doc2Html.exe Doc2Tex.exe Doc2Txt.exe
+all: makebase.exe AliasGen.exe $(Gend)/.stamp
+
+# Alias entries are build products: AliasGen writes one stub per name
+# listed in a canonical entry's `aliases:` frontmatter.  $(Gend) is
+# gitignored and nothing in it is edited by hand.  The rule lives here,
+# beside the generator, so that bin/build (which runs `Holmake all`
+# here) and Manual/Reference (which has this directory in its INCLUDES)
+# both get the stubs without either one restating the recipe.
+$(Gend)/.stamp: AliasGen.exe $(wildcard $(Docfiles)/*.smd)
+	./AliasGen.exe --regen $(Docfiles) $(Gend)
+	touch $@
+
+ifdef POLY
+all:  process_docfiles
+
+# process_docfiles drives polyscripter (Manual/Tools/polyscripter.sml)
+# over every help/Docfiles/*.smd, then runs pandoc once over the
+# concatenation to produce per-entry .txt (and optionally .html when
+# mdbook isn't available -- see tools/build/buildutils.sml).  It needs
+# the HOL heap to run polyscripter's `>>` ML directives, so it's built
+# via buildheap, like smdpp.
+process_docfiles: $(HOLDIR)/Manual/Tools/polyscripter.sml \
+                  Flash.sig Flash.sml process_docfiles.sml \
+                  $(dprot $(HOLDIR)/bin/hol.state)
+	env HOL_CONFIG='' $(protect $(HOLDIR)/bin/hol) buildheap Arbrat \
+	    $(HOLDIR)/Manual/Tools/polyscripter.sml \
+	    Flash.sig Flash.sml process_docfiles.sml \
+	    -o $@ --exe main
+
+makebase.exe: poly-makebase.ML makebase.sml HOLPage.sml \
+              Database.sig Database.sml Htmlsigs.sig Htmlsigs.sml \
+              ParseDoc.sig ParseDoc.sml Keepers.sml Asynt.sml \
+              Parsspec.sml Printbase.sml \
+              Parser.grm.sml Parser.grm.sig Lexer.lex.sml
+	$(POLYC) -o $@ $<
+
+Md2TeX.exe: poly-Md2TeX.ML Md2TeX.uo
+	$(POLYC) -o $@ $<
+
+AliasGen.exe: poly-AliasGen.ML AliasGen.uo
+	$(POLYC) -o $@ $<
+
+Parser.grm.sig Parser.grm.sml: Parser.grm
+	$(protect $(HOLDIR)/tools/mlyacc/src/mlyacc.exe) $<
+
+else
+makebase.uo: makebase.sml MyDatabase.ui Htmlsigs.ui Parsspec.uo Keepers.uo Printbase.uo HOLPage.uo ParseDoc.uo
+	$(HOLMOSMLC) -I $(protect $(SIGOBJ)) -c MyDatabase.ui $<
 
 makebase.exe : runmakebase.uo MyDatabase.uo Htmlsigs.uo Parser.grm.uo Parsspec.uo Printbase.uo makebase.uo
 	$(HOLMOSMLC) -I $(MLYACCLIB) $(MLYACCLIB_UIS) -o makebase.exe MyDatabase.uo runmakebase.uo
 
-Doc2Html.exe : runDoc2Html.uo Doc2Html.uo ParseDoc.uo Flash.uo
-	$(HOLMOSMLC) -o Doc2Html.exe runDoc2Html.uo
+Md2TeX.exe: runMd2TeX.uo Md2TeX.uo
+	$(HOLMOSMLC) -o $@ $<
 
-Doc2Tex.exe : runDoc2Tex.uo Doc2Tex.uo ParseDoc.uo Flash.uo
-	$(HOLMOSMLC) -o Doc2Tex.exe runDoc2Tex.uo
-
-Doc2Txt.exe: runDoc2Txt.uo Doc2Txt.uo ParseDoc.uo Flash.uo
-	$(HOLMOSMLC) -o Doc2Txt.exe runDoc2Txt.uo
-
-Lexer.lex.sml: Lexer.lex
-	$(protect $(HOLDIR)/tools/mllex/mllex.exe) $<
+AliasGen.exe: runAliasGen.uo AliasGen.uo
+	$(HOLMOSMLC) -o $@ $<
 
 Parser.grm-sig.sml Parser.grm.sml: Parser.grm
 	$(protect $(HOLDIR)/tools/mlyacc/src/mlyacc.exe) $<
 	$(MV) Parser.grm.sig Parser.grm-sig.sml
+
+endif
+
+Lexer.lex.sml: Lexer.lex
+	$(protect $(HOLDIR)/tools/mllex/mllex.exe) $<
 
 MyWord32.uo MyWord32.ui: MyWord32.sml
 	$(MOSMLC) -c -toplevel $<
@@ -57,9 +106,6 @@ Parser.grm.uo: Parser.grm.sml Parser.grm-sig.ui
 
 Lexer.lex.ui Lexer.lex.uo: Lexer.lex.sml Parser.grm-sig.ui
 	$(HOLMOSMLC) -toplevel -c Parser.grm-sig.ui $<
-
-makebase.uo: makebase.sml MyDatabase.ui Htmlsigs.ui Parsspec.uo Keepers.uo Printbase.uo HOLPage.uo
-	$(HOLMOSMLC) -I $(protect $(SIGOBJ)) -c MyDatabase.ui $<
 
 Printbase.ui: Printbase.sig MyDatabase.ui
 	$(MOSMLC) -c MyDatabase.ui $<

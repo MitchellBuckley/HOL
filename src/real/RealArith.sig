@@ -2,7 +2,7 @@ signature RealArith =
 sig
   include Abbrev
 
-  type positivstellensatz
+  datatype positivstellensatz = datatype RealArith0.positivstellensatz
   type rat = Arbrat.rat
   type aint = Arbint.int
 
@@ -27,7 +27,7 @@ sig
   val REAL_INT_ABS_CONV    : conv
 
   val REAL_INT_REDUCE_CONV : conv
-  val real_int_compset     : unit -> computeLib.compset
+  val real_int_compset     : computeLib.compset
 
  (* fn translator (eq,le,lt) -> 'a *)
   val REAL_LINEAR_PROVER   : (thm list * thm list * thm list ->
@@ -35,7 +35,7 @@ sig
                              thm list * thm list * thm list -> 'a
 
  (* for REAL_LINEAR_PROVER, 0: nothing, 1: minimal, 2+: details *)
-  val verbose_level        : int ref (* default: 1 *)
+  val verbose_level        : int ref (* default: 0 *)
 
  (* fn (mkconst,EQ,GE,GT,NORM,NEG,ADD,MUL,PROVER) -> term -> thm *)
   val GEN_REAL_ARITH       :
@@ -48,7 +48,7 @@ sig
   val REAL_ARITH_TAC       : tactic
   val REAL_ASM_ARITH_TAC   : tactic
 
- (* below are Joe Hurd's old port *)
+ (* lower-level compatibility entry points *)
 
  (* PURE_REAL_ARITH_TAC doesn't throw away assumptions, but requires
     them to be pre-normalised in order to work.  There also must not

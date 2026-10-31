@@ -1,14 +1,17 @@
 open HolKernel Portable Parse boolLib;
 
+open jrhCore
 open intLib testutils;
+
+val _ = new_theory "scratch"
 
 fun noamb_parse s = trace ("guess overloads", 0) Parse.Term [QUOTE s]
 fun okparse_exnstruct s = s = "Parse" orelse s = "Preterm"
 
 val _ =
     shouldfail {
-      checkexn = fn HOL_ERR {origin_structure, ...} =>
-                      okparse_exnstruct origin_structure
+      checkexn = fn HOL_ERR herr =>
+                      okparse_exnstruct (top_structure_of herr)
                   | _ => false,
       printarg = (fn s => "Parse should fail: “" ^ s ^ "”"),
       printresult = term_to_string,
@@ -17,8 +20,8 @@ val _ =
 
 val _ =
     shouldfail {
-      checkexn = fn HOL_ERR {origin_structure, ...} =>
-                      okparse_exnstruct origin_structure
+      checkexn = fn HOL_ERR herr =>
+                      okparse_exnstruct (top_structure_of herr)
                   | _ => false,
       printarg = (fn s => "Parse should be ambiguous: “" ^ s ^ "”"),
       printresult = term_to_string,
@@ -33,7 +36,7 @@ val _ =
       noamb_parse
       "-p"
 
-val _ = tpp "¬p ∧ q"                                                   (* UOK *)
+val _ = tpp "¬p ∧ q"
 
 (* check that deprecation really deprecates *)
 val _ = intLib.deprecate_int()
@@ -50,8 +53,7 @@ val _ = List.app (ignore o rma_p) [
       (“3n ** 2n”, "3 ** 2"),
       (“((x:num) ** (y:num)):num”, "x ** y"),
       (“x:int / (y + 1)”, "x / (y + 1)")
-    ]
-
+    ];
 
 (* check prefer/deprecate rat *)
 val grammars = (type_grammar(),term_grammar());
@@ -76,4 +78,55 @@ val _ = require_msg (check_result (aconv expected2)) term_to_string
 
 val _ = temp_set_grammars grammars;
 
-val _ = Process.exit Process.success
+(* Tests for INTEGER_RULE *)
+fun rule_test prover (r as (n,tm)) =
+    let
+      fun check res = aconv tm (concl res);
+    in
+      tprint (n ^ ": " ^ term_to_string tm);
+      require_msg (check_result check) (term_to_string o concl) prover tm
+    end;
+
+val _ = List.app (rule_test INTEGER_RULE) [
+      ("INTEGER_RULE_00",
+       “w * y + x * z - (w * z + x * y) = (w - x) * (y - z:int)”),
+      ("INTEGER_RULE_01",
+       “a int_divides &n <=> a int_divides -&n”),
+      ("INTEGER_RULE_02",
+       “d int_divides m ==> d int_divides (m * n:int) /\ d int_divides -(m * n)”),
+      ("INTEGER_RULE_03",
+       “d int_divides m ==> d int_divides (m * n:int)”)
+      ];
+
+(* #1747: when overload-resolution fails for a numeric literal, the error
+   should name the literal itself (and read as English about a numeric
+   literal), not show the internal `_ inject_number` placeholder.
+   This requires multiple `_ inject_number` overloads to be active so
+   that resolution actually filters them all out — which is why this
+   test lives in src/integer rather than src/num/theories. *)
+local
+  fun parse_msg q =
+      (Parse.Term q; "<unexpected success>")
+      handle Feedback.HOL_ERR err => Feedback.message_of err
+  fun contains needle hay = String.isSubstring needle hay
+in
+val _ = tprint "#1747 numeric-literal error names the literal (0)"
+val _ = require_msg
+          (check_result
+             (fn m => contains "numeric literal" m
+                      andalso contains "`0`" m
+                      andalso not (contains "_ inject_number" m)))
+          (fn m => "got: " ^ m)
+          parse_msg `0 = T`
+
+val _ = tprint "#1747 numeric-literal error names the literal (42)"
+val _ = require_msg
+          (check_result
+             (fn m => contains "numeric literal" m
+                      andalso contains "`42`" m
+                      andalso not (contains "_ inject_number" m)))
+          (fn m => "got: " ^ m)
+          parse_msg `42 = T`
+end
+
+val _ = Process.exit Process.success;

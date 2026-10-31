@@ -1,8 +1,6 @@
-
-open HolKernel Parse boolLib bossLib term_tactic;
-open arithmeticTheory listTheory stringTheory;
-
-val _ = new_theory "source_values";
+Theory source_values
+Ancestors
+  arithmetic list string
 
 (* Values in the source semantics are binary trees where the
    leaves are natural numbers (num) *)
@@ -112,7 +110,7 @@ Proof
   Cases_on ‘b’ \\ EVAL_TAC
 QED
 
-Theorem v_size_def[simp] = fetch "-" "v_size_def";
+Theorem v_size_def[simp,allow_rebind] = fetch "-" "v_size_def";
 
 Theorem all_macro_defs = LIST_CONJ [list_def, cons_def, bool_def,
    map_def, pair_def, option_def];
@@ -129,5 +127,3 @@ End
 Definition otherwise_def[simp]:
   otherwise x = x
 End
-
-val _ = export_theory();

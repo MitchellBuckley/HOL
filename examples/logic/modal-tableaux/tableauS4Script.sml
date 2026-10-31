@@ -5,14 +5,11 @@
    for inspiration
 
 *)
+Theory tableauS4
+Ancestors
+  pair pred_set list relation modalBasics tableauBasics
+  arithmetic
 
-open HolKernel Parse boolLib bossLib;
-
-open pairTheory pred_setTheory listTheory relationTheory;
-open modalBasicsTheory tableauBasicsTheory
-open arithmeticTheory;
-
-val _ = new_theory "tableauS4";
 
 Datatype:
   premodel = Nd α (premodel list)
@@ -75,8 +72,6 @@ Definition closure_list_conc_def[simp]:
   closure_list_conc (Dia f::rest) =
     Dia f :: closure_list_conc [f] ++ (closure_list_conc rest) ∧
   closure_list_conc (f::rest) = f :: (closure_list_conc rest)
-Termination
-  WF_REL_TAC `measure gsize` >> rw[]
 End
 
 Theorem mem_lst_closure:
@@ -614,8 +609,7 @@ Theorem MEM_disjsplit1:
      MEM f1 Γ ∨ (∃f2. MEM f2 Γ2 ∧ MEM (Disj f1 f2) Γ)
 Proof
   ho_match_mp_tac disjsplit_s4_ind >> rw[]
-  >- (fs[] >> rw[] >> metis_tac[])
-  >> Cases_on `z` >> fs[] >> Cases_on `r` >> fs[] >> metis_tac[]
+  >> fs[] >> METIS_TAC[]
 QED
 
 Theorem MEM_disjsplit2:
@@ -624,8 +618,7 @@ Theorem MEM_disjsplit2:
      MEM f2 Γ ∨ (∃f1. MEM f1 Γ1 ∧ MEM (Disj f1 f2) Γ)
 Proof
   ho_match_mp_tac disjsplit_s4_ind >> rw[]
-  >- (fs[] >> rw[] >> metis_tac[])
-  >> Cases_on `z` >> fs[] >> Cases_on `r` >> fs[] >> metis_tac[]
+  >> fs[] >> METIS_TAC[]
 QED
 
 Theorem wfm_S4_Disj:
@@ -654,7 +647,7 @@ Proof
   [‘Conj f1 f2’]
   >- (rpt strip_tac >> rw[] >> fs[conjsplit_s4_def] >>
       Cases_on `MEM ϕ Γ₀` >> gvs[] >> simp[EXISTS_OR_THM]) >>
-  rw[] >> Cases_on `z` >> gvs[] >> metis_tac[]
+  rw[] >> gvs[] >> metis_tac[]
 QED
 
 Theorem wfm_S4_Conj:
@@ -921,27 +914,25 @@ Proof
 QED
 
 Theorem disj_s4_g2_in_g0:
-  ∀s pf s1 s2. disjsplit_s4 s = SOME (pf, s1, s2) ⇒
-               set s2 ⊆ set (closure_list_conc s)
+  ∀s pf s1 s2.
+  disjsplit_s4 s = SOME (pf, s1, s2) ⇒
+  set s2 ⊆ set (closure_list_conc s)
 Proof
-  ho_match_mp_tac disjsplit_s4_ind >> rw[SUBSET_DEF]
-  >-(Cases_on `x = f2` >> fs[] >> rw[]
-     >- metis_tac[mem_closure_self]
-     >> metis_tac[mem_lst_closure])
-  >-(PairCases_on `z` >> fs[] >> rw[] >> Cases_on `x = Var v2` >> fs[])
-  >> PairCases_on `z` >> fs[] >> rw[] >> Cases_on `x = NVar v2` >> fs[]
+  ho_match_mp_tac disjsplit_s4_ind >>
+  rw[SUBSET_DEF] >> gvs[MEM]
+  >- simp[mem_closure_self]
+  >- simp[mem_lst_closure]
 QED
 
 Theorem disj_s4_g1_in_g0:
   ∀s pf s1 s2.
-    disjsplit_s4 s = SOME (pf, s1, s2) ⇒ set s1 ⊆ set (closure_list_conc s)
+  disjsplit_s4 s = SOME (pf, s1, s2) ⇒
+  set s1 ⊆ set (closure_list_conc s)
 Proof
-  ho_match_mp_tac disjsplit_s4_ind >> rw[SUBSET_DEF]
-  >-(Cases_on `x = f1` >> fs[] >> rw[]
-     >- metis_tac[mem_closure_self]
-     >> metis_tac[mem_lst_closure])
-  >-(PairCases_on `z` >> fs[] >> rw[] >> Cases_on `x = Var v2` >> fs[])
-  >> PairCases_on `z` >> fs[] >> rw[] >> Cases_on `x = NVar v2` >> fs[]
+  ho_match_mp_tac disjsplit_s4_ind >>
+  rw[SUBSET_DEF] >> gvs[MEM]
+  >- simp[mem_closure_self]
+  >- simp[mem_lst_closure]
 QED
 
 Theorem pre_hintikka_disj_right_cons:
@@ -971,15 +962,7 @@ Definition thm_3_17_prop:
   thm_3_17_prop (Nd (id, h, r) cs) ⇔ pre_hintikka h ∧
                                      set id.Gm ⊆ set h ∧
                                      ∀s. MEM s cs ⇒ thm_3_17_prop s
-Termination
-  WF_REL_TAC `measure (premodel_size (K 1))`
 End
- (* >> Induct_on `cs` >> fs[] >> rw[]
-  >- rw[] >> first_x_assum (drule_then strip_assume_tac) >> simp[]
-End *)
-(* TODO: Not sure why this part of the termination proof
-         is no longer needed *)
-
 
 Theorem thm_3_17_prop_RTC:
   ∀m w. thm_3_17_prop m ⇒ RTC pt_rel m w ⇒ thm_3_17_prop w
@@ -1088,8 +1071,6 @@ Definition thm_3_19_prop[simp]:
             (∀g d p. MEM (g,d) r ∧ MEM (Box p) (h ⧺ id.Sg) ⇒ MEM (Box p) d) ∧
             set r ⊆ set id.As ∧
             (∀s. MEM s l ⇒ thm_3_19_prop s)
-Termination
-  WF_REL_TAC `measure (premodel_size (K 1))`
 End
 
 Definition thm_3_19_prop':
@@ -1124,7 +1105,7 @@ Proof
   fs[thm_3_19_prop] >> fs[pt_rel_def]
 QED
 
-Theorem S4_sequent_component_equality =
+Theorem S4_sequent_component_equality[allow_rebind] =
   DB.fetch "-" "S4_sequent_component_equality"
 (*
 h: htk
@@ -1671,31 +1652,31 @@ Theorem tableau_S4_sound:
                ∀p. MEM p w.htk ⇒
                    forces (s4_tree_model m) w p
 Proof
-  simp[PULL_FORALL] >> Induct_on `p`
+  simp[PULL_FORALL] >> Induct_on ‘p’
   (* Var *)
   >-(simp[forces_def, s4_tree_model])
   (* NVAr *)
   >-(simp[forces_def, s4_tree_model] >> rpt strip_tac >>
      drule reach_step_from_root >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     `RTC pt_rel m m` by metis_tac[RTC_def] >>
+     ‘RTC pt_rel m m’ by simp[] >>
      first_x_assum (drule_then strip_assume_tac) >>
      fs[final_tableau_S4_def] >> drule thm_3_17 >> strip_tac >>
      drule thm_3_17_prop_RTC >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     Cases_on `w` >> PairCases_on `a` >> fs[thm_3_17_prop] >>
+     Cases_on ‘w’ >> PairCases_on ‘a’ >> fs[thm_3_17_prop] >>
      fs[pre_hintikka_def] >> metis_tac[contradiction_EQ_NONE])
   (* Conj *)
   >-(simp[forces_def, s4_tree_model] >> rpt strip_tac >>
-     `w ∈ (s4_tree_model m).frame.world` by fs[s4_tree_model] >>
+     ‘w ∈ (s4_tree_model m).frame.world’ by fs[s4_tree_model] >>
      drule reach_step_from_root >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     `RTC pt_rel m m` by metis_tac[RTC_def] >>
+     ‘RTC pt_rel m m’ by simp[] >>
      first_x_assum (drule_then strip_assume_tac) >>
      fs[final_tableau_S4_def] >> drule thm_3_17 >> strip_tac >>
      drule thm_3_17_prop_RTC >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     Cases_on `w` >> PairCases_on `a` >> fs[thm_3_17_prop] >>
+     Cases_on ‘w’ >> PairCases_on ‘a’ >> fs[thm_3_17_prop] >>
      fs[pre_hintikka_def] >> first_x_assum (drule_then strip_assume_tac)
      >-(last_x_assum (drule_then strip_assume_tac) >>
         first_x_assum (drule_then strip_assume_tac) >>
@@ -1707,58 +1688,58 @@ Proof
      fs[s4_tree_model])
   (* Disj *)
   >-(simp[forces_def, s4_tree_model] >> rpt strip_tac >>
-     `w ∈ (s4_tree_model m).frame.world` by fs[s4_tree_model] >>
+     ‘w ∈ (s4_tree_model m).frame.world’ by fs[s4_tree_model] >>
      drule reach_step_from_root >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     `RTC pt_rel m m` by metis_tac[RTC_def] >>
+     ‘RTC pt_rel m m’ by simp[] >>
      first_x_assum (drule_then strip_assume_tac) >>
      fs[final_tableau_S4_def] >> drule thm_3_17 >> strip_tac >>
      drule thm_3_17_prop_RTC >> strip_tac >>
      first_x_assum (drule_then strip_assume_tac) >>
-     Cases_on `w` >> PairCases_on `a` >> fs[thm_3_17_prop] >>
+     Cases_on ‘w’ >> PairCases_on ‘a’ >> fs[thm_3_17_prop] >>
      fs[pre_hintikka_def] >> first_x_assum (drule_then strip_assume_tac) >>
      last_x_assum (drule_then strip_assume_tac) >>
      first_x_assum (drule_then strip_assume_tac) >>
      fs[] >> first_x_assum (drule_then strip_assume_tac) >> fs[s4_tree_model])
   (* Box *)
   >-(simp[forces_def, s4_tree_model] >> rpt strip_tac >>
-     `v ∈ (s4_tree_model m).frame.world` by fs[s4_tree_model] >>
+     ‘v ∈ (s4_tree_model m).frame.world’ by fs[s4_tree_model] >>
      first_x_assum (drule_then strip_assume_tac) >>
      first_x_assum (drule_then strip_assume_tac) >>
      fs[s4_tree_model] >> last_x_assum irule >> rw[] >>
      drule reach_step_from_root >> rw[] >>
-     first_assum (qspecl_then [`m`, `v`] (ASSUME_TAC)) >>
-     `RTC pt_rel m m` by metis_tac[RTC_def] >>
+     first_assum (qspecl_then [‘m’, ‘v’] (ASSUME_TAC)) >>
+     ‘RTC pt_rel m m’ by simp[] >>
      first_x_assum (drule_all_then strip_assume_tac) >>
      fs[final_tableau_S4_def] >> drule thm_3_17 >> rw[] >>
      drule thm_3_17_prop_RTC >> rw[] >>
      first_assum (drule_then strip_assume_tac) >>
-     `MEM (Box p) v.htk` suffices_by
-       (Cases_on `v` >> PairCases_on `a` >> fs[thm_3_17_prop] >>
+     ‘MEM (Box p) v.htk’ suffices_by
+       (Cases_on ‘v’ >> PairCases_on ‘a’ >> fs[thm_3_17_prop] >>
         fs[pre_hintikka_def] >> metis_tac[]) >>
      drule thm_3_19 >> rw[] >>
      drule thm_3_19_prop_RTC >> rw[] >>
      first_assum (drule_then strip_assume_tac) >>
-     `w ∈ (s4_tree_model m).frame.world` by fs[s4_tree_model] >>
-     last_assum (qspecl_then [`m`, `w`] (ASSUME_TAC)) >>
-     `RTC pt_rel m m` by metis_tac[RTC_def] >>
+     ‘w ∈ (s4_tree_model m).frame.world’ by fs[s4_tree_model] >>
+     last_assum (qspecl_then [‘m’, ‘w’] (ASSUME_TAC)) >>
+     ‘RTC pt_rel m m’ by simp[] >>
      first_x_assum (drule_all_then strip_assume_tac) >>
      fs[] >> rw[] >> first_assum (drule_then strip_assume_tac) >>
-     `thm_3_17_prop w` by fs[] >>
-     `wfm_S4_sequent f <|As := []; Ss := NONE; Hs := []; Sg := []; Gm := [f]|>`
+     ‘thm_3_17_prop w’ by fs[] >>
+     ‘wfm_S4_sequent f <|As := []; Ss := NONE; Hs := []; Sg := []; Gm := [f]|>’
         by (simp[wfm_S4_sequent] >> rw[PSUBSET_DEF]
-            >- (Cases_on `f` >> fs[])
+            >- (Cases_on ‘f’ >> fs[])
             >> metis_tac[mem_closure_self]) >>
      drule tableau_S4_Ss_eq_Gm >> rw[] >>
      drule tableau_S4_Ss_eq_Gm_prop_RTC >> rw[] >>
      drule wfm_S4_Transitive >> rw[] >>
-     irule RTC_reach_step_reserve_box >> qexistsl_tac [`m`, `w`, `f`] >> rw[])
+     irule RTC_reach_step_reserve_box >> qexistsl_tac [‘m’, ‘w’, ‘f’] >> rw[])
   (* Dia *)
   >> simp[forces_def, s4_tree_model] >> rpt strip_tac >>
-  `w ∈ (s4_tree_model m).frame.world` by fs[s4_tree_model] >>
+  ‘w ∈ (s4_tree_model m).frame.world’ by fs[s4_tree_model] >>
   drule reach_step_from_root >> rw[] >>
-  first_assum (qspecl_then [`m`, `w`] (ASSUME_TAC)) >>
-  `RTC pt_rel m m` by metis_tac[RTC_def] >>
+  first_assum (qspecl_then [‘m’, ‘w’] (ASSUME_TAC)) >>
+  ‘RTC pt_rel m m’ by simp[] >>
   first_x_assum (drule_all_then strip_assume_tac) >>
   fs[final_tableau_S4_def] >> drule thm_3_19 >> rw[] >>
   drule thm_3_19_prop_RTC >> rw[] >>
@@ -1766,7 +1747,7 @@ Proof
   last_x_assum (drule_then strip_assume_tac) >>
   ‘(∀p. MEM (Dia p) w.htk ⇒
         (∃d. MEM (p,d) w.request) ∨ ∃s. MEM s w.l ∧ MEM p s.htk)’
-    by (Cases_on `w` >> PairCases_on `a` >> fs[]) >>
+    by (Cases_on ‘w’ >> PairCases_on ‘a’ >> fs[]) >>
   first_x_assum (drule_then strip_assume_tac)
   (* 3_19: MEM (p,d) w.request *)
   >-(drule s4_fulfillment >> rw[] >>
@@ -1775,16 +1756,16 @@ Proof
      (* 3_20: MEM (p,d) m.id.As *)
      >-(drule tableau_S4_s_eq_id' >> rw[] >> fs[])
      (* 3_20:  pt_rel⃰ m d' /\  SOME (p,d) = d'.id.Ss *)
-     >> qexists_tac `d'` >> rw[]
+     >> qexists_tac ‘d'’ >> rw[]
      >- metis_tac[RTC_pt_rel_imp_RTC_reach_step]
      >- (rw[Once RTC_CASES1] >> fs[] >>
-         DISJ2_TAC >> qexists_tac `d'` >> rw[reach_step] >>
-         DISJ2_TAC >> qexists_tac `(p,d)` >> fs[])
+         DISJ2_TAC >> qexists_tac ‘d'’ >> rw[reach_step] >>
+         DISJ2_TAC >> qexists_tac ‘(p,d)’ >> fs[])
      >> fs[s4_tree_model] >> first_x_assum irule >> rw[]
      >-(drule tableau_S4_Ss_eq_Gm >> rw[] >>
-        `wfm_S4_sequent f <|As := []; Ss := NONE; Hs := [];Sg := [];Gm := [f]|>`
+        ‘wfm_S4_sequent f <|As := []; Ss := NONE; Hs := [];Sg := [];Gm := [f]|>’
             by (simp[wfm_S4_sequent] >> rw[PSUBSET_DEF]
-                >- (Cases_on `f` >> fs[])
+                >- (Cases_on ‘f’ >> fs[])
                 >> metis_tac[mem_closure_self]) >>
         first_x_assum (drule_then strip_assume_tac) >>
         drule tableau_S4_Ss_eq_Gm_prop_RTC >> rw[] >>
@@ -1792,16 +1773,16 @@ Proof
         fs[Once tableau_S4_Ss_eq_Gm_prop] >> fs[] >> rw[]
         >> drule thm_3_17 >> rw[] >> drule thm_3_17_prop_RTC >> rw[] >>
         first_x_assum drule >> rw[] >>
-        Cases_on `d'` >> PairCases_on `a` >> rw[] >>
+        Cases_on ‘d'’ >> PairCases_on ‘a’ >> rw[] >>
         fs[thm_3_17_prop] >> metis_tac[SUBSET_DEF])
      >> drule RTC_pt_rel_imp_RTC_reach_step >> rw[])
   (* 3_19: MEM s w.l ∧ MEM p s.htk *)
-  >> qexists_tac `s` >> rw[]
-  >-(simp[Once RTC_CASES2] >> DISJ2_TAC >> qexists_tac `w` >> rw[reach_step])
-  >-(simp[Once RTC_CASES2] >> DISJ2_TAC >> qexists_tac `w` >> rw[reach_step])
-  >> first_x_assum (qspec_then `s` ASSUME_TAC) >> fs[s4_tree_model] >>
+  >> qexists_tac ‘s’ >> rw[]
+  >-(simp[Once RTC_CASES2] >> DISJ2_TAC >> qexists_tac ‘w’ >> rw[reach_step])
+  >-(simp[Once RTC_CASES2] >> DISJ2_TAC >> qexists_tac ‘w’ >> rw[reach_step])
+  >> first_x_assum (qspec_then ‘s’ ASSUME_TAC) >> fs[s4_tree_model] >>
   first_x_assum irule >> rw[] >> rw[Once RTC_CASES2] >> DISJ2_TAC >>
-  qexists_tac `w` >> rw[reach_step]
+  qexists_tac ‘w’ >> rw[reach_step]
 QED
 
 Theorem tableau_S4_local_sound:
@@ -1815,4 +1796,3 @@ Proof
   >> simp[s4_tree_model]
 QED
 
-val _ = export_theory();

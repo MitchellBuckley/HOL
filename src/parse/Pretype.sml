@@ -9,12 +9,12 @@ val TCERR = mk_HOL_ERR "Pretype";
 
 structure Env =
 struct
-  type t = ((int,pretype) Binarymap.dict * int)
-  fun lookup (d,c) i = Binarymap.peek(d,i)
-  fun update (i,pty) (d,c) = (Binarymap.insert(d,i,pty), c)
-  val empty : t = (Binarymap.mkDict Int.compare, 0)
+  type t = (pretype Inttab.table * int)
+  fun lookup (d,c) i = Inttab.lookup d i
+  fun update (i,pty) (d,c) = (Inttab.update (i,pty) d, c)
+  val empty : t = (Inttab.empty, 0)
   fun new (d,c) = ((d,c+1), c)
-  fun toList (d,c) = List.tabulate(c, fn i => (i, Binarymap.peek(d,i)))
+  fun toList (d,c) = List.tabulate(c, fn i => (i, Inttab.lookup d i))
 end
 
 open typecheck_error
@@ -184,10 +184,15 @@ fun clean ty =
       Type.mk_thy_type{Tyop = s, Thy = Thy, Args = map clean Args}
   | _ => raise Fail "Don't expect to see links remaining at this stage"
 
+val typecheck_listener = ref (fn _:pretype => fn _:Env.t => ());
+
 fun toTypeM ty : Type.hol_type in_env =
   remove_made_links ty >-
   (fn ty => tyvars ty >-
-  (fn vs => lift (clean o #2) (addState vs (replace_null_links ty))))
+  (fn vs => addState vs (replace_null_links ty) >-
+  (fn (_, pty) => fn e => (
+    !typecheck_listener pty e;
+    return (clean pty) e))))
 
 fun toType pty =
   case toTypeM pty Env.empty of

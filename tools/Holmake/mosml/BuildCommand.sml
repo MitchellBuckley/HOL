@@ -44,8 +44,9 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
   val quiet_flag = #quiet (#core optv)
   val interactive_flag = #interactive (#core optv)
   val no_overlay = #no_overlay (#core optv)
+  val strict_outputs = #strict_outputs (#core optv)
   val overlay_stringl = case actual_overlay of NONE => [] | SOME s => [s]
-  val MOSMLDIR =  case #mosmldir optv of NONE => MOSMLDIR0 | SOME s => s
+  val MOSMLDIR = case #mosmldir optv of NONE => MOSMLDIR0 | SOME s => s
   val MOSMLCOMP = fullPath [MOSMLDIR, "mosmlc"]
   fun compile debug args = let
     val _ = if isSome debug then
@@ -158,6 +159,12 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
                            (fn _ => "Created executable "^script')
               val thysmlfile = s^"Theory.sml"
               val thysigfile = s^"Theory.sig"
+              val datFS =
+                  case HFS_NameMunge.HOLtoFS (s ^ "Theory.dat") of
+                      SOME {fullfile, ...} => fullfile
+                    | NONE => s ^ "Theory.dat"
+              val stamp_path = HM_Cachekey.stamp_path_for_datfile datFS
+              val _ = HM_Cachekey.remove_stamp stamp_path
               fun safedelete s = FileSys.remove s handle OS.SysErr _ => ()
               val _ = app safedelete [thysmlfile, thysigfile]
               val res2 = Systeml.systeml [script']
@@ -165,7 +172,11 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
               val () = if not (isSuccess res2) then
                          failed_script_cache :=
                            Binaryset.add(!failed_script_cache, s)
-                       else ()
+                       else
+                         (case #1 (HM_Cachekey.compute_for_deps g deps) of
+                              HM_Cachekey.Key k =>
+                                HM_Cachekey.write_stamp stamp_path k
+                            | HM_Cachekey.Missing _ => ())
             in
               isSuccess res2 andalso
               (exists_readable thysmlfile orelse
@@ -192,6 +203,7 @@ fun make_build_command (buildinfo : HM_Cline.t buildinfo_t) = let
                                    outs = outs,
                                    keep_going = keep_going,
                                    quiet = quiet_flag,
+                                   strict_outputs = strict_outputs,
                                    system = Systeml.system_ps,
                                    hmenv = hmenv}
 in

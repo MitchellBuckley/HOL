@@ -2,12 +2,14 @@ structure DiskThms :> DiskThms =
 struct
 
   open HolKernel SharingTables
-
+  val dflt_info = {loc = Unknown, private = false, class = DB_dtype.Thm}
   fun to_sexp thms =
        let
-         val ed = {named_terms = [], unnamed_terms = [],
-                   named_types = [], unnamed_types = [],
-                   theorems = thms} : extract_data
+         val ed = {
+           named_terms = [], unnamed_terms = [],
+           named_types = [], unnamed_types = [],
+           theorems = map (fn (n,th) => (n,th,dflt_info)) thms
+         } : extract_data
          val sdo = build_sharing_data ed
        in
          enc_sdata sdo
@@ -30,11 +32,21 @@ struct
                 handle Interrupt => raise Interrupt
                      | _ => raise Fail "Couldn't parse sexp from file"
       in
-        case dec_sdata {with_strings = fn _ => (), with_stridty = fn _ => ()} t
-         of
+        case TheoryReader.core_decode t of
             NONE => raise Fail "Couldn't decode sexp"
-          | SOME sdi =>
-            #theorems (export_from_sharing_data sdi)
+          | SOME {tables,exports} =>
+            let
+              val sdo = SharingTables.dec_sdata {
+                    tables = tables,
+                    exports = exports,
+                    before_types = fn () => (),
+                    before_terms = fn _ => ()
+                  }
+            in
+              map
+                (fn (n,th,i) => (n,th))
+                (#theorems (export_from_sharing_data sdo))
+            end
       end
 
   fun read_file fname =

@@ -34,17 +34,67 @@ fun all_terms d =
         R :: concl ind :: map concl eqs @ SV @ all_terms aux
     | TAILREC {eqs,ind,R,SV,...} => R :: concl ind :: map concl eqs @ SV
 
+val tupled_suffix = "_tupled"
+
+(*---------------------------------------------------------------------------*)
+(* Partition the constants used in building a top-level defn into the        *)
+(* introduced constants and the constants used only to aid the construction. *)
+(* The latter are delete-able.                                               *)
+(*---------------------------------------------------------------------------*)
+
+fun consts_of eqs =
+  let val thms = List.concat $ map CONJUNCTS eqs
+      fun eqn_const th =
+          fst $ strip_comb $ lhs $ snd $ strip_forall $ concl th
+  in op_mk_set aconv $ map eqn_const thms end
+
+fun defn_consts defn =
+ case defn
+  of ABBREV {eqn,...} => {introduced = consts_of [eqn],support = []}
+   | PRIMREC{eqs,...} => {introduced = consts_of [eqs], support = []}
+   | NONREC {eqs,...} => {introduced = consts_of [eqs], support = []}
+   | STDREC {eqs,...} => {introduced = consts_of eqs, support = []}
+   | TAILREC {eqs,...} => {introduced = consts_of eqs, support = []}
+   | MUTREC {eqs,union,...} =>
+       let val {introduced,support} = defn_consts union
+       in {introduced = consts_of eqs,
+           support = introduced @ support} end
+   | NESTREC {eqs,aux,...} =>
+       let val {introduced,support} = defn_consts aux
+       in {introduced = consts_of eqs,
+           support = introduced @ support} end
+
+(*---------------------------------------------------------------------------*)
+(* In fact, defn_consts can miss some definitions used in support of the     *)
+(* construction of the introduced constants. There is an internal tupling    *)
+(* step that can be used by TFL to get uniform input for the wfrec thm. Then *)
+(* untupling is used to get the original argument format back. However the   *)
+(* defn datastructure doesn't hold these definitions, so we resort to diffs  *)
+(* on the theory constants before and after a definition is made.            *)
+(*---------------------------------------------------------------------------*)
+
+val delete_support =
+ let val set_of = HOLset.fromList Term.compare
+     val subtract = HOLset.difference
+     fun zap c = delete_const (fst (dest_const c)) handle HOL_ERR _ => ()
+ in fn defn => fn snap2 => fn snap1 =>
+    let val new_consts = subtract(set_of snap2,set_of snap1)
+        val {introduced,...} = defn_consts defn
+        val deleteable = subtract(new_consts,set_of introduced)
+    in HOLset.app zap deleteable end
+ end
+
 local open Portable
-      fun kind (ABBREV _)  = "abbreviation"
-        | kind (NONREC  _) = "non-recursive"
-        | kind (STDREC  _) = "recursive"
-        | kind (PRIMREC _) = "primitive recursion"
-        | kind (MUTREC  _) = "mutual recursion"
-        | kind (NESTREC _) = "nested recursion"
-        | kind (TAILREC _) = "nonterminating tail recursion"
-      fun hyps thl = HOLset.listItems
-                       (foldl (fn (th,s) => HOLset.union(hypset th, s))
-                              empty_tmset thl)
+  fun kind (ABBREV _)  = "abbreviation"
+    | kind (NONREC  _) = "non-recursive"
+    | kind (STDREC  _) = "recursive"
+    | kind (PRIMREC _) = "primitive recursion"
+    | kind (MUTREC  _) = "mutual recursion"
+    | kind (NESTREC _) = "nested recursion"
+    | kind (TAILREC _) = "nonterminating tail recursion"
+  fun hyps thl =
+      HOLset.listItems
+         (foldl (fn (th,s) => HOLset.union(hypset th, s)) empty_tmset thl)
 in
 fun pp_defn d =
   let open smpp
@@ -72,8 +122,7 @@ fun pp_defn d =
                              )
                          )
                          add_newline
-                         (Lib.enumerate 0 tcs)
-               ))
+                         (Lib.enumerate 0 tcs)))
           )
         )
    fun pp (ABBREV {eqn, ...}) =
@@ -121,7 +170,6 @@ end;
     which are held in the TypeBase.
  ---------------------------------------------------------------------------*)
 
-
 val init_non_datatype_congs =
   let open boolTheory pairTheory combinTheory
   in [LET_CONG, COND_CONG, IMP_CONG, literal_case_CONG,
@@ -149,14 +197,11 @@ fun drop_cong c =
      val _ = write_congs rst
  in
    cong
- end
- handle e => raise wrap_exn "DefnBase.drop_cong"
-    (case total dest_thy_const c
-      of NONE => "expected a constant"
-       | SOME{Thy,Name,...} =>
-           ("congruence rule for "
-            ^Lib.quote(Thy^"$"^Name)
-            ^" was not found")) e;
+ end handle HOL_ERR _ => raise ERR "drop_cong"
+   (case total dest_thy_const c
+     of NONE => "expected a constant"
+      | SOME{Thy,Name,...} => String.concat
+          ["congruence rule for ", Lib.quote(Thy^"$"^Name), " was not found"])
 
 val {export = export_cong,...} =
     ThmSetData.new_exporter {
@@ -165,6 +210,11 @@ val {export = export_cong,...} =
         add = fn {thy,named_thm} => add_cong (#2 named_thm),
         remove = fn _ => ()
       }
+    }
+
+val _ = ThmAttribute.define_abbreviation{
+      abbrev="cong",
+      expansion=[("defncong", [])]
     }
 
 
@@ -179,6 +229,7 @@ val {export = export_cong,...} =
     reduceLib, stringLib and wordsLib.
 
    ---------------------------------------------------------------------- *)
+
 val const_eq_ref = ref Conv.NO_CONV;
 
 fun elim_triv_literal_CONV tm =
@@ -304,7 +355,8 @@ fun cases_prove case_const_def th k t =
             end
           else if is_exists (concl th) then
             let val (v, bod) = dest_exists (concl th)
-                val v' = variant (free_vars t) v
+                val avoids = op_union aconv (free_vars t) (free_vars (concl th))
+                val v' = variant avoids v
                 val bod' = subst[v |-> v'] bod
                 val t_th = recurse (ASSUME bod')
             in
@@ -396,7 +448,8 @@ fun one_line_ify heuristic def =
       val ((f,args1),rhs1) = hd fs_args
       val _ = List.all (aconv f o #1 o #1) fs_args orelse
               raise ERR "one_line_ify"
-                    "Clauses defining more than one function/same fn at different types"
+                    "Clauses defining more than one function/same fn \
+                    \at different types"
       fun rowfoldthis i arg (A as (patcols,patfvs)) =
           if is_var arg then A
           else (HOLset.add(patcols,i), FVL [arg] patfvs)
@@ -466,6 +519,9 @@ fun one_line_ify heuristic def =
           GENASSUME
       fun multi_constructor ty =
           length (TypeBase.constructors_of ty) > 1
+      (* a vacuous column has its pattern replaced by a variable in every
+         clause below, so one clause that does use its pattern's variables
+         stops the whole column from being vacuous. *)
       fun vfold (cnum,A) =
           if multi_constructor (type_of (List.nth(actual_args, cnum))) then
             HOLset.delete(A, cnum)
@@ -475,12 +531,13 @@ fun one_line_ify heuristic def =
                   let val pat = List.nth(args, cnum)
                       val (_, args_of) = strip_comb pat
                   in
-                    not (is_var pat) andalso
-                    List.all is_var args_of andalso
-                    null (op_intersect aconv (free_vars bod) (free_vars pat))
+                    is_var pat orelse
+                    (List.all is_var args_of andalso
+                     null (op_intersect aconv (free_vars bod)
+                                        (free_vars pat)))
                   end
             in
-              if List.exists test fs_args then A
+              if List.all test fs_args then A
               else HOLset.delete(A, cnum)
             end
       val vacuous_pats = HOLset.foldl vfold patcols patcols
@@ -527,5 +584,44 @@ fun one_line_ify heuristic def =
               attack_top_case stoppers finisher neweqn
           end
     end handle FastExit th => th
+
+fun one_line_ify_mutrec heuristic def = let
+  val usu = UNDISCH_ALL o SPEC_ALL o UNDISCH_ALL
+  val defs = def |> usu |> CONJUNCTS |> map usu
+  fun term_nub [] = []
+    | term_nub (tm::tms) = tm :: term_nub (filter (not o aconv tm) tms)
+  fun get_const def = def |> concl |> dest_eq |> fst |> strip_comb |> fst
+  val defs_consts = defs |> map (fn d => (d, get_const d))
+  val cs = defs_consts |> map snd |> term_nub
+  val groups = map (fn c => filter (aconv c o snd) defs_consts) cs
+  in map (one_line_ify heuristic o LIST_CONJ o map fst) groups end
+
+
+(* ----------------------------------------------------------------------
+    LIST_HALF_MK_ABS : thm -> thm
+
+    Convert a theorem representing a one-line function definition with an
+    all-variable-argument LHS (as returned by one_line_ify above) into a
+    theorem of the form `constant = \x y z. ...`.
+    Based on jrhUtils.HALF_MK_ABS.
+   ---------------------------------------------------------------------- *)
+
+fun LIST_HALF_MK_ABS th =
+  let
+    val err = mk_HOL_ERR "DefnBase" "LIST_HALF_MK_ABS"
+    val spec = SPEC_ALL th
+    val (left, right) = concl spec |> strip_forall |> snd |> dest_eq
+                        handle _ => raise err "expected an equality"
+    val (func, vars) = strip_comb left
+    fun unique [] = true
+      | unique (x::xs) = not (Lib.op_mem aconv x xs) andalso unique xs
+    val _ = if List.all is_var vars andalso unique vars then ()
+            else raise err "expected application to unique variables"
+    val lam = list_mk_abs (vars, right)
+    val app_eq_lam = list_mk_comb (lam, vars) |> LIST_BETA_CONV |> SYM |>
+                     TRANS spec
+  in
+    List.foldr (fn (v,th) => EXT (GEN v th)) app_eq_lam vars
+  end
 
 end

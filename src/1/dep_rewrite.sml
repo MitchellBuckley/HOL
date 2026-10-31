@@ -176,20 +176,19 @@ fun print_all_thm th =
 fun print_theorems []        = ()
    | print_theorems (t :: ts) = (print_theorem t; print_string "\n";
                                  print_theorems ts);
+(* Not using goalStack.print_tac because this is not a tactic and we don't
+   want to include the assumptions in the output *)
 fun print_goal (asl,gl) = (print_term gl; print_newline());
 fun pthm th = (print_all_thm th; th);
 (**)
 
-fun TACTIC_ERR{function,message} =
-    Feedback.HOL_ERR{origin_structure = "Tactic",
-                      origin_function = function,
-                      message = message};
+val ERR = mk_HOL_ERR "Tactic"
 
 fun failwith function =
    ( (**) if debug_fail then
          print_string ("Failure in dep_rewrite: "^function^"\n")
      else (); (**)
-    raise TACTIC_ERR{function = function,message = "Failure in dep_rewrite"});
+    raise ERR function "Failure in dep_rewrite");
 
 
 
@@ -271,30 +270,44 @@ fun DEP_FIND_matches th =
             HO_PART_MATCH (dest_neg o snd o strip_imp_only) sth
             handle _ =>
             HO_PART_MATCH (snd o strip_imp_only) sth)
+       (* Reject matches whose instantiated antecedents would mention a
+          variable bound by the surrounding goal context: those
+          antecedents become top-level side conditions, so capturing a
+          bound variable turns the goal unprovable. See GitHub #1819. *)
+       fun check_no_capture bvs m =
+           let val (_, body) = strip_forall (concl m)
+               val (ants', _) = strip_imp_only body
+               val antvars = free_varsl ants'
+           in
+              if List.exists (fn v => op_mem aconv v bvs) antvars
+              then failwith "DEP_FIND_matches: \
+                            \bound variable captured in side condition"
+              else m
+           end
    in
-      match_fn
+      fn bvs => fn tm => check_no_capture bvs (match_fn tm)
    end
    handle _ => failwith "DEP_FIND_matches: bad theorem";
 
-fun SUB_matches (f:term->'a) tm =
+fun SUB_matches (f:term list -> term -> 'a) bvs tm =
    ( (* if debug_matches then (print_string "SUB_matches: ";
                     print_term tm; print_newline()) else (); *)
     if is_comb tm then
        (let val {Rator,Rand} = Rsyntax.dest_comb tm in
-        (f Rator handle _ => f Rand)
+        (f bvs Rator handle _ => f bvs Rand)
         end)
     else
     if is_abs tm then
        let val {Bvar,Body} = Rsyntax.dest_abs tm in
-           f Body
+           f (Bvar::bvs) Body
        end
     else failwith "SUB_matches");
 
-fun ONCE_DEPTH_matches (f:term->'a) tm =
+fun ONCE_DEPTH_matches (f:term list -> term -> 'a) bvs tm =
      ( (* if debug_matches then
         (print_string "ONCE_DEPTH_matches: "; print_term tm; print_newline())
       else (); *)
-       (f tm handle _ => (SUB_matches (ONCE_DEPTH_matches f) tm)));
+       (f bvs tm handle _ => (SUB_matches (ONCE_DEPTH_matches f) bvs tm)));
 
 
 
@@ -331,14 +344,14 @@ fun repeat_apply (f:'a->'b) step stop x =
 
 in
 
-fun APPLY_IMP_THEN ttac th (asl,gl) =
+fun APPLY_IMP_THEN ttac th (asl,gl) ctxt =
     let val _ = if !show_rewrites then
                    (print_string "Trying ";
                     print_theorem th)
                    else (); (**)
         val matched =
                repeat_apply
-                  (fn th => ONCE_DEPTH_matches (DEP_FIND_matches th) gl)
+                  (fn th => ONCE_DEPTH_matches (DEP_FIND_matches th) [] gl)
                   assemble_ants
                   (fn th1 => fn th2 => concl th1 ~~ concl th2)
                   th;
@@ -368,8 +381,8 @@ ONCE_DEPTH_matches (DEP_FIND_matches th) gl
                         print_string "\n")
                    else (); (**)
         val (gl1,p1) = ( (*REPEAT GEN_TAC THEN*)
-                          MATCH_MP_TAC matched) (asl,subgoal)
-        val (gl2,p2) = ttac (Thm.ASSUME subgoal) (asl,gl);
+                          MATCH_MP_TAC matched) (asl,subgoal) ctxt
+        val (gl2,p2) = ttac (Thm.ASSUME subgoal) (asl,gl) ctxt;
     in
      case gl1
        of [(asl1,g1)] =>
@@ -394,8 +407,8 @@ end;
 
 (* TAC_DEP turns a tactic into a dependent rewriting function. *)
 
-fun TAC_DEP tac = fn (asl,gl) =>
-    let val (gl0,p0) = tac (asl,gl)
+fun TAC_DEP tac = fn (asl,gl) => fn ctxt =>
+    let val (gl0,p0) = tac (asl,gl) ctxt
     in (asl,[],[],gl0,p0)
     end
     handle _ => failwith "TAC_DEP";
@@ -404,9 +417,9 @@ fun TAC_DEP tac = fn (asl,gl) =>
 
 (* DEP_TAC turns a dependent rewriting function into a tactic. *)
 
-fun DEP_TAC dep :tactic = fn g0 =>
+fun DEP_TAC dep :tactic = fn g0 => fn ctxt =>
     let val (asl1,gls,(pls:validation list),(gl2:goal list),(p2:validation))
-            = dep g0 in
+            = dep g0 ctxt in
     ( (* if debug then
         (print_string "DEP_TAC:\nburdens = [";
          map (fn tm => (print_newline(); print_term tm; print_string ",")) gls;
@@ -429,7 +442,7 @@ fun DEP_TAC dep :tactic = fn g0 =>
                                 print_theorem th;
                                 print_newline())
                             else (); *)
-                            TAC_PROOF
+                            TAC_PROOF_in ctxt
                               (([], gl),
                                   REPEAT CONJ_TAC
                                   THEN FIRST(map ACCEPT_TAC (CONJUNCTS th)))
@@ -471,14 +484,14 @@ fun choplist a b =
 
 infix THEN1_DEP;
 
-fun ctac1 THEN1_DEP ctac2 = fn g =>
-    let val (asl1,gs1,ps1,gl1,p1) = ctac1 g
+fun ctac1 THEN1_DEP ctac2 = fn g => fn ctxt =>
+    let val (asl1,gs1,ps1,gl1,p1) = ctac1 g ctxt
     in
     case gl1
     of [] =>
          (asl1,gs1,ps1,gl1,p1)
      | (g1::gl1') =>
-         let val (asl2,gs2,ps2,gl2,p2) = ctac2 g1
+         let val (asl2,gs2,ps2,gl2,p2) = ctac2 g1 ctxt
          in
          (op_intersect aconv asl1 asl2, gs1@gs2, ps1@ps2, gl2@gl1',
           (fn ths => let val (ths1,ths2) = choplist gl2 ths in
@@ -489,14 +502,14 @@ fun ctac1 THEN1_DEP ctac2 = fn g =>
     handle HOL_ERR _ => failwith "THEN1_DEP";
 
 
-val ALL_DEP = fn (asl,gl) =>
+val ALL_DEP = fn (asl,gl) => fn _ (* ctxt *) =>
     (asl,[],[],[(asl,gl)],hd);
 
 
 infix ORELSE_DEP;
 
-fun ctac1 ORELSE_DEP ctac2 = fn g =>
-    ctac1 g handle HOL_ERR _ => ctac2 g;
+fun ctac1 ORELSE_DEP ctac2 = fn g => fn ctxt =>
+    ctac1 g ctxt handle HOL_ERR _ => ctac2 g ctxt;
 
 
 fun FIRST_DEP cl =
@@ -518,8 +531,8 @@ fun REPEAT_DEP ctac g =
     ((ctac THEN1_DEP REPEAT_DEP ctac) ORELSE_DEP ALL_DEP) g;
 
 
-fun CHANGED_DEP ctac g =
-    let val (asl,gls,pls,gl,p) = ctac g in
+fun CHANGED_DEP ctac g ctxt =
+    let val (asl,gls,pls,gl,p) = ctac g ctxt in
     if goals_eq gl [g] then failwith "CHANGED_DEP"
     else (asl,gls,pls,gl,p)
     end;

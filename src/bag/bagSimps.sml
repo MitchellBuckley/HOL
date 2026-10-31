@@ -107,7 +107,7 @@ fun SBAG_SOLVE thms tm = let
   val goal_thm1 = MP goal_thm0 (LIST_CONJ newasms)
   val goal_thm2 = EQT_INTRO (GEN gvar goal_thm1)
   val thm = TRANS newgoal_thm goal_thm2
-  val _  =  Trace.trace(1,Trace.PRODUCE(tm,"SBAG_SOLVE",thm))
+  val _ = Trace.trace(1,Trace.PRODUCE(tm,"SBAG_SOLVE",thm))
 in
   thm
 end
@@ -117,7 +117,7 @@ fun is_ok t =
   (is_sub_bag t orelse (is_eq t andalso is_bag_ty (type_of (rand t)))) andalso
   diff_free t
 val (CACHED_SBAG_SOLVE, sbag_cache) =
-    Cache.RCACHE(free_vars, is_ok, SBAG_SOLVE)
+    Cache.RCACHE {capacity=2000, per_key_cap=50} (free_vars, is_ok, SBAG_SOLVE)
 
 
 val SBAG_SOLVER = let

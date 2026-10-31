@@ -1,12 +1,10 @@
-open HolKernel Parse boolLib bossLib;
+Theory bnfAlgebra
+Ancestors
+  relation pair combin pred_set cardinal ordinal ordinalBasic
 
-open relationTheory pairTheory combinTheory pred_setTheory
-open cardinalTheory
-
-open ordinalTheory
-
-val _ = new_theory "bnfAlgebra";
-
+(* cardinalTheory keeps the sets' own exponent to itself, since the
+   datatype package makes it everyone's ancestor *)
+Overload "**"[local] = “set_exp”
 fun SRULE ths = SIMP_RULE (srw_ss()) ths
 
 val _ = new_type ("F", 2)
@@ -196,14 +194,13 @@ Type alg[local,pp] = “:α set # ((β,α)F -> α)”
 val idx_tydef as
               {absrep_id, newty, repabs_pseudo_id, termP, termP_exists,
                termP_term_REP, ...} =
-  newtypeTools.rich_new_type(
-  "idx",
-  prove(“∃i : (α,β) alg. alg i”,
+  newtypeTools.rich_new_type{
+  tyname = "idx",
+  exthm = prove(“∃i : (α,β) alg. alg i”,
         simp[EXISTS_PROD] >> qexists_tac ‘UNIV’ >>
-        simp[alg_def]));
-Overload dIx = (#term_REP_t idx_tydef)
-Overload mkIx = (#term_ABS_t idx_tydef)
-
+        simp[alg_def]),
+  ABS = "mkIx",
+  REP = "dIx"};
 
 Definition bigprod_def:
   bigprod : ((α,β)idx -> α, β) alg =
@@ -434,6 +431,8 @@ Proof
   simp[setB_map, EXTENSION] >> gs[GSYM MEMBER_NOT_EMPTY] >> metis_tac[]
 QED
 
+Overload "𝟙" = “{()}”
+
 (* see Lemma 33 in ITP2014's
      "Cardinals in Isabelle/HOL" by Blanchette, Popescu and Traytel
  *)
@@ -464,7 +463,7 @@ Proof
         first_x_assum $ C (resolve_then (Pos hd) irule) cardleq_TRANS >>
         simp[]) >>
   first_assum $ C (resolve_then (Pos last) irule) cardleq_TRANS >>
-  qabbrev_tac ‘d = λ(y:('a,'c ordinal)F ,f). mapF I (THE o f) y’ >>
+  qabbrev_tac ‘d = λ(y:('a,'c ordinal)F,f). mapF I f y’ >>
   simp[cardleq_def] >>
   irule_at Any (SRULE [PULL_EXISTS] SURJ_IMP_INJ) >> qexists_tac ‘d’ >>
   simp[SURJ_DEF] >> conj_tac
@@ -486,7 +485,7 @@ Proof
         >- (gs[INJ_IFF, SF CONJ_ss] >> csimp[]) >>
         DEEP_INTRO_TAC optionTheory.some_intro >> simp[] >>
         gs[SUBSET_DEF]) >>
-  qexists_tac ‘(y, λbp. if bp ∈ preds bd then SOME $ f bp else NONE)’ >>
+  qexists_tac ‘(y, λbp. if bp ∈ preds bd then f bp else ARB)’ >>
   conj_tac
   >- (simp[Abbr‘kA’, Fin_def, Abbr‘y’, setB_map] >> conj_tac
       >- gs[INJ_IFF, SUBSET_DEF, PULL_EXISTS] >>
@@ -782,7 +781,9 @@ Proof
   pop_assum mp_tac >> simp[Once FUN_EQ_THM, arbify_def] >> metis_tac[]
 QED
 
-val itype = newtypeTools.rich_new_type("nty", inhabited)
+val itype = newtypeTools.rich_new_type{
+  tyname = "nty", exthm = inhabited, ABS = "nty_ABS", REP = "nty_REP"
+  }
 
 Definition NCONS_def:
   NCONS (x : (α, α nty)F) = nty_ABS $ Cons $ mapF I nty_REP x
@@ -1019,4 +1020,3 @@ Proof
   irule map_CONG >> simp[] >> metis_tac[]
 QED
 
-val _ = export_theory();

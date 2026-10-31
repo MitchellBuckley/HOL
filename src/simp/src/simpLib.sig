@@ -131,9 +131,18 @@ sig
   val ssfrags_of      : simpset -> ssfrag list
   val mk_simpset      : ssfrag list -> simpset
   val remove_ssfrags  : string list -> simpset -> simpset
+
+  (* Like remove_ssfrags, but additionally records the names so that any
+     subsequent ++ of a named fragment with one of those names is silently
+     a no-op.  force_add is the override for that prohibition.
+     Never raises Conv.UNCHANGED. *)
+  val exclude_ssfrags : string list -> simpset -> simpset
+  val force_add       : simpset -> ssfrag -> simpset
+
   val ssfrag_names_of : simpset -> string list
   val ++              : simpset * ssfrag -> simpset  (* infix *)
   val -*              : simpset * string list -> simpset (* infix *)
+  val remove_simps    : string list -> simpset -> simpset (* curried version *)
   val &&              : simpset * thm list -> simpset  (* infix *)
   val limit           : int -> simpset -> simpset
   val unlimit         : simpset -> simpset
@@ -223,13 +232,14 @@ sig
    val ASM_SIMP_RULE : simpset -> thm list -> thm -> thm
 
    (* ---------------------------------------------------------------------*)
-   (* Accumulating the rewrite rules that are actually used.               *)
+   (* Reporting which rewrite rules actually fired.  This is an aid for a
+      human watching a simplification, so it hands the list back with the
+      result rather than leaving it in a ref to be read afterwards; there
+      is no flag to set and none to forget to unset.  Nested tracking
+      reports only the inner extent.                                     *)
    (* ---------------------------------------------------------------------*)
 
-   val used_rewrites : thm list ref
-   val track_rewrites : bool ref
-
-   val track : ('a -> 'b) -> 'a -> 'b
+   val track : ('a -> 'b) -> 'a -> 'b * thm list
 
    (* ---------------------------------------------------------------------*)
    (* Prettyprinters for ssfrags and simpsets.                             *)

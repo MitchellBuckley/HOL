@@ -18,7 +18,8 @@ open NumRelNorms
 structure Parse = (* Fix the grammar used by this file *)
 struct
   open Parse
-  val (Type,Term) = parse_from_grammars arithmeticTheory.arithmetic_grammars
+  val SOME arithmetic_grammars = grammarDB {thyname="arithmetic"}
+  val (Type,Term) = parse_from_grammars arithmetic_grammars
 end
 open Parse
 
@@ -92,7 +93,6 @@ val arithmetic_rewrites =
       "SUB_RIGHT_LESS", "SUB_RIGHT_GREATER_EQ", "SUB_RIGHT_LESS_EQ",
 
       (* exponentiation *)
-      "ZERO_LT_EXP",
       "EXP_EXP_INJECTIVE", "EXP_BASE_INJECTIVE", "EXP_BASE_LT_MONO",
       "EXP_BASE_LE_MONO", "EXP_EXP_LT_MONO", "EXP_EXP_LE_MONO",
 
@@ -110,7 +110,7 @@ val arithmetic_rewrites =
       "MIN_LT", "MAX_LT", "MIN_MAX_EQ", "MIN_MAX_LT",
 
       (* mods and divs *)
-      "X_MOD_Y_EQ_X", "DIVMOD_ID", "DIV_1", "MOD_1", "LESS_MOD",
+      "X_MOD_Y_EQ_X", "DIV_1", "MOD_1", "LESS_MOD",
       "ZERO_MOD", "MOD_MOD", "NUMERAL_MULT_EQ_DIV", "MOD_LESS",
       "DIV_LESS",
 
@@ -468,7 +468,7 @@ val (CACHED_ARITH,arith_cache) = let
     (ty=Type.bool andalso (is_arith tm orelse aconv tm F))
   end
 in
-  RCACHE (dp_vars, check, CTXT_ARITH)
+  RCACHE {capacity=2000, per_key_cap=50} (dp_vars, check, CTXT_ARITH)
   (* the check function determines whether or not a term might be handled
      by the decision procedure -- we want to handle F, because it's possible
      that we have accumulated a contradictory context. *)
@@ -660,8 +660,10 @@ in
                          "LEQ_CANON_CONV")],
           rewrs = [(SOME {Thy = "arithmetic", Name = "GREATER_DEF"},
                     arithmeticTheory.GREATER_DEF),
-                   (SOME {Thy = "arithmeticTheory", Name = "GREATER_EQ"},
-                    arithmeticTheory.GREATER_EQ)] @
+                   (SOME {Thy = "arithmetic", Name = "GREATER_EQ"},
+                    arithmeticTheory.GREATER_EQ),
+                   (SOME {Thy = "arithmetic", Name = "SUC_MINUS_NUMERAL"},
+                    arithmeticTheory.SUC_MINUS_NUMERAL)] @
                   map (fn (s, th) => (SOME {Name = s, Thy = ""}, th)) [
                     ("LT_SUB", DECIDE “x < y - z <=> x + z < y”),
                     ("SUB_LE", DECIDE “x - y <= z <=> x <= y + z”),

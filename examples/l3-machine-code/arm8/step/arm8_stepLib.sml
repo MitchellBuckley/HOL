@@ -14,7 +14,7 @@ struct
    open Parse
    fun remove (s, tmg) = fst (term_grammar.mfupdate_overload_info
                                 (Overload.remove_overloaded_form s) tmg)
-   val (tyg, tmg) = arm8_stepTheory.arm8_step_grammars
+   val (tyg, tmg) = valOf $ grammarDB {thyname="arm8_step"}
    val tmg = List.foldl remove tmg ["cond", "size"]
    val (Type, Term) = parse_from_grammars (tyg, tmg)
 end
@@ -77,13 +77,7 @@ val DATATYPE_RULE = Conv.CONV_RULE DATATYPE_CONV
 val FULL_DATATYPE_RULE = utilsLib.FULL_CONV_RULE DATATYPE_CONV
 val HYP_DATATYPE_RULE = utilsLib.ALL_HYP_CONV_RULE DATATYPE_CONV
 
-val COND_UPDATE = Q.prove(
-   `!b a x y c m n f.
-      (if b then (a =+ x) ((c =+ m) f) else (a =+ y) ((c =+ n) f)) =
-      (a =+ if b then x else y) ((c =+ if b then m else n) f)`,
-   Cases
-   THEN REWRITE_TAC [combinTheory.APPLY_UPDATE_ID]
-   )
+val COND_UPDATE = arm8_stepTheory.COND_UPDATE
 
 val COND_UPDATE_CONV =
    REWRITE_CONV
@@ -283,10 +277,7 @@ val TestBitAndBranch_rwt =
 
 (* ---------------------------- *)
 
-val lem = Q.prove(
-   `!a:'a word b c. (if b then a else a + c) = a + (if b then 0w else c)`,
-   lrw []
-   )
+val lem = arm8_stepTheory.cond_add_lemma
 
 val sp_rule =
    utilsLib.ALL_HYP_CONV_RULE
@@ -443,16 +434,16 @@ fun arm8_fetch tm = inst_opcode tm Fetch_rwt
 (* Decode *)
 
 local
-   val cmp = wordsLib.words_compset()
-   val () = ( bitstringLib.add_bitstring_compset cmp
-            ; integer_wordLib.add_integer_word_compset cmp
-            ; intReduce.add_int_compset cmp
-            ; computeLib.scrub_thms
+   val cmp = wordsLib.words_compset
+   val cmp = bitstringLib.add_bitstring_compset cmp
+   val cmp = integer_wordLib.add_integer_word_compset cmp
+   val cmp = intReduce.add_int_compset cmp
+   val cmp = computeLib.scrub_thms
                 [wordsTheory.bit_field_insert_def,
                  wordsTheory.word_quot_def,
                  wordsTheory.word_div_def]
                 cmp
-            ; computeLib.add_thms
+   val cmp = computeLib.add_thms
                 (datatype_thms
                    [DecodeShift_def, HighestSetBit_def, Ones_def, Zeros_def,
                     Replicate_def, DecodeRegExtend_def, ShiftValue_def,
@@ -461,9 +452,8 @@ local
                     wordsTheory.WORD_OR_CLAUSES, num2ShiftType_thm,
                     num2ExtendType_thm])
                 cmp
-            ; computeLib.add_conv
+   val cmp = computeLib.add_conv
                 (bitstringSyntax.v2w_tm, 1, bitstringLib.v2w_n2w_CONV) cmp
-            )
 in
    val ARM8_CONV = computeLib.CBV_CONV cmp
 end

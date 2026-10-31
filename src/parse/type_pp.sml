@@ -12,6 +12,21 @@ datatype single_rule = IR of int * associativity * string
 
 val ERR = mk_HOL_ERR "type_pp" "pp_type";
 
+(* Pretty-printer variant of Type.dest_thy_type: applies Globals.oldify
+   to the Tyop if the underlying type operator has been retired, so
+   retired type operators don't match the special-syntax hooks and print
+   with their "old"-tagged name.  Type.dest_thy_type now skips this
+   check because it sits on the hot path (TypeBase, datatype-package,
+   is-a-specific-type predicates, etc.).
+
+   Uses Type.display_name_of_id (exposed in FinalType) rather than
+   Context.typesig's baked field so this works under both --stdknl and
+   --expk (whose typesig lives in its own Context.Data slot). *)
+fun dest_thy_type ty =
+    let val {Thy, Tyop = id, Args} = Type.dest_thy_typeid ty
+    in {Thy = Thy, Tyop = Type.display_name_of_id id, Args = Args}
+    end
+
 val avoid_unicode = ref (Systeml.OS = "winNT")
 local
   open Globals
@@ -137,9 +152,9 @@ fun pp_type0 (G:grammar) (backend: PPBackEnd.t) = let
             val i = Char.ord (String.sub(s, 1)) - Char.ord #"a" + 0x3B1
           in
             if 0x3B1 <= i andalso i <= 0x3C9 andalso i <> 0x3BB then UTF8.chr i
-            else s
+            else String.toString s
           end
-        else s
+        else String.toString s
   in
     if depth = 0 then add_string "..."
     else
@@ -187,7 +202,7 @@ fun pp_type0 (G:grammar) (backend: PPBackEnd.t) = let
                 let
                   val knm = {Thy = thy, Name = abop}
                 in
-                  case Binarymap.peek (abbs, knm) of
+                  case KNametab.lookup abbs knm of
                       NONE => realtype ty (* probably shouldn't happen *)
                     | SOME st => doabbrev st
                 end
@@ -195,13 +210,13 @@ fun pp_type0 (G:grammar) (backend: PPBackEnd.t) = let
                 let
                   val privabbs = type_grammar.privileged_abbrevs G
                 in
-                  case Binarymap.peek (privabbs, abop) of
+                  case Symtab.lookup privabbs abop of
                       NONE => realtype ty
                     | SOME thy =>
                       let
                         val knm = {Thy = thy, Name = abop}
                       in
-                        case Binarymap.peek (abbs, knm) of
+                        case KNametab.lookup abbs knm of
                             NONE => raise Fail "Very confused tyabbrev"
                           | SOME st => doabbrev st
                       end

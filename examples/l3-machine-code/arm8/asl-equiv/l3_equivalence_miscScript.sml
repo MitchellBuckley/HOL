@@ -1,14 +1,14 @@
-open HolKernel boolLib bossLib Parse BasicProvers dep_rewrite
-open wordsTheory bitstringTheory integer_wordTheory listTheory rich_listTheory
-     integerTheory arithmeticTheory realTheory intrealTheory
-open wordsLib bitstringLib intLib
-
-val _ = new_theory "l3_equivalence_misc";
+Theory l3_equivalence_misc
+Ancestors
+  words bitstring integer_word list rich_list integer arithmetic
+  real intreal
+Libs
+  BasicProvers dep_rewrite wordsLib bitstringLib intLib
 
 val _ = wordsLib.output_words_as_bin();
 val _ = wordsLib.guess_lengths();
 
-val _ = numLib.prefer_num();
+val _ = numLib.temp_prefer_num();
 val _ = intLib.deprecate_int()
 
 val _ = augment_srw_ss [
@@ -356,7 +356,7 @@ Theorem extract_bit:
 Proof
   rw[] >> bitstringLib.Cases_on_v2w `w` >>
   simp[word_extract_v2w] >>
-  irule $ iffLR WORD_EQ >> rw[] >> Cases_on `x` >> gvs[] >>
+  irule $ iffLR WORD_EQ >> rw[] >>
   simp[bit_v2w, testbit_el, word_bits_v2w, field_def, shiftr_def, fixwidth] >>
   simp[DROP_TAKE, TAKE1, HD_DROP] >>
   Cases_on `EL (dimindex (:α) - (i + 1)) v` >> gvs[] >> WORD_DECIDE_TAC
@@ -499,7 +499,7 @@ Proof
   \\ REWRITE_TAC [GSYM word_sub_def,WORD_SUB_ADD]
 QED
 
-Triviality v2n_add_less_limit:
+Theorem v2n_add_less_limit[local]:
   ∀xs. EXISTS I xs ⇒  v2n (MAP $¬ xs) + 1 < 2 ** LENGTH xs
 Proof
   rw[] >> gvs[] >>
@@ -557,7 +557,7 @@ Theorem LENGTH_add:
 Proof
   rw[] >> gvs[]
   >- (
-    gvs[LENGTH_add_MAX] >> reverse $ rw[MAX_DEF] >- (Cases_on `ys` >> gvs[]) >>
+    gvs[LENGTH_add_MAX] >> reverse $ rw[MAX_DEF] >- gvs[] >>
     qpat_x_assum `LENGTH _ < _` mp_tac >>
     simp[LENGTH_n2v, NOT_LESS, LE_LT1, ADD1] >>
     irule LOG_LT >> simp[v2n_add_less_limit]
@@ -572,7 +572,7 @@ Proof
   simp[n2v_2_POW, zero_extend_def, PAD_LEFT]
 QED
 
-Triviality LENGTH_ADD:
+Theorem LENGTH_ADD[local]:
   ∀m n. LENGTH xs = m + n ⇔
         ∃ys zs. LENGTH ys = m ∧ LENGTH zs = n ∧ xs = ys ++ zs
 Proof
@@ -660,7 +660,7 @@ Proof
   rpt $ pop_assum kall_tac >> map_every qid_spec_tac [`v`,`n`] >>
   Induct >> rw[v2n_lt] >>
   Cases_on `v` >> rw[v2n] >>
-  DEP_ONCE_REWRITE_TAC[GSYM bitTheory.MOD_PLUS_RIGHT] >> conj_tac >- simp[] >>
+  ONCE_REWRITE_TAC[GSYM bitTheory.MOD_PLUS_RIGHT] >>
   qsuff_tac `2 ** LENGTH t MOD 2 ** (LENGTH t - n) = 0`
   >- (disch_then SUBST_ALL_TAC >> simp[]) >>
   pop_assum kall_tac >>
@@ -710,6 +710,3 @@ QED
 
 
 (****************************************)
-
-val _ = export_theory();
-

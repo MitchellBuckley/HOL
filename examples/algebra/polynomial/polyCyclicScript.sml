@@ -4,57 +4,19 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "polyCyclic";
+Theory polyCyclic
+Ancestors
+  pred_set list arithmetic number combinatorics divides gcd
+  monoid group ring field polynomial polyWeak polyRing
+  polyDivision polyMonic polyEval polyRoot polyDivides
+  polyIrreducible
+Libs
+  jcLib
 
 (* ------------------------------------------------------------------------- *)
 
-
-
 (* val _ = load "jcLib"; *)
-open jcLib;
-
-(* Get dependet theories local *)
-
-(* (* val _ = load "monoidTheory"; *) *)
-(* (* val _ = load "groupTheory"; *) *)
-(* (* val _ = load "ringTheory"; *) *)
-(* val _ = load "ringUnitTheory"; *)
-open monoidTheory groupTheory ringTheory ringUnitTheory;
-
-(* (* val _ = load "integralDomainTheory"; *) *)
-(* val _ = load "fieldTheory"; *)
-open integralDomainTheory;
-open fieldTheory;
-
-(* val _ = load "groupCyclicTheory"; *)
-open monoidOrderTheory groupOrderTheory groupCyclicTheory;
-
-(* Get polynomial theory of Ring *)
-(* val _ = load "polyIrreducibleTheory"; *)
-open polynomialTheory polyWeakTheory polyRingTheory;
-open polyDivisionTheory;
-open polyMonicTheory;
-open polyEvalTheory;
-open polyRootTheory;
-open polyDividesTheory;
-open polyIrreducibleTheory;
-
-(* open dependent theories *)
-open pred_setTheory listTheory arithmeticTheory;
-
-(* Get dependent theories in lib *)
-(* (* val _ = load "helperNumTheory"; -- in monoidTheory *) *)
-(* (* val _ = load "helperSetTheory"; -- in monoidTheory *) *)
-open helperNumTheory helperSetTheory;
-
-(* (* val _ = load "dividesTheory"; -- in helperNumTheory *) *)
-(* (* val _ = load "gcdTheory"; -- in helperNumTheory *) *)
-open dividesTheory gcdTheory;
-
+val _ = intLib.deprecate_int ();
 
 (* ------------------------------------------------------------------------- *)
 (* Cyclic Polynomial Documentation                                           *)
@@ -471,9 +433,9 @@ p =  7, k = 5, order_5(7) = order_5(7 MOD 5) = order_5(2) = 4, hence factors of 
 *)
 
 (* Define Cyclic polynomials *)
-val poly_cyclic_def = Define`
+Definition poly_cyclic_def:
    poly_cyclic (r:'a ring) n = GENLIST (\k. #1) n
-`;
+End
 (* Use overload for poly_cyclic *)
 val _ = overload_on("cyclic", ``poly_cyclic r``);
 (* cyclic n = [#1;#1;#1; ... ;#1] (n elements) = 1 + X + X^2 + ... + X^(n-1) in conventional form *)
@@ -485,10 +447,11 @@ val _ = overload_on("cyclic", ``poly_cyclic r``);
    = []                    by GENLIST
    = |0|                   by poly_zero
 *)
-val poly_cyclic_0 = store_thm(
-  "poly_cyclic_0",
-  ``!r:'a ring. cyclic 0 = |0|``,
-  rw[poly_cyclic_def]);
+Theorem poly_cyclic_0:
+    !r:'a ring. cyclic 0 = |0|
+Proof
+  rw[poly_cyclic_def]
+QED
 
 (* Theorem: cyclic 1 = |1| *)
 (* Proof:
@@ -499,10 +462,11 @@ val poly_cyclic_0 = store_thm(
    = [#1]                          by SNOC
    = |1|                           by poly_one
 *)
-val poly_cyclic_1 = store_thm(
-  "poly_cyclic_1",
-  ``!r:'a ring. #1 <> #0 ==> (cyclic 1 = |1|)``,
-  rw[poly_cyclic_def, poly_one]);
+Theorem poly_cyclic_1:
+    !r:'a ring. #1 <> #0 ==> (cyclic 1 = |1|)
+Proof
+  rw[poly_cyclic_def, poly_one]
+QED
 
 (* export simple results *)
 val _ = export_rewrites ["poly_cyclic_0", "poly_cyclic_1"];
@@ -532,9 +496,9 @@ val _ = export_rewrites ["poly_cyclic_0", "poly_cyclic_1"];
          = #1:: cyclic (SUC n)                  by above.
          = RHS
 *)
-val poly_cyclic_suc = store_thm(
-  "poly_cyclic_suc",
-  ``!r:'a ring. #1 <> #0 ==> !n. cyclic (SUC n) = #1:: cyclic n``,
+Theorem poly_cyclic_suc:
+    !r:'a ring. #1 <> #0 ==> !n. cyclic (SUC n) = #1:: cyclic n
+Proof
   rpt strip_tac >>
   Induct_on `n` >-
   rw[poly_one] >>
@@ -546,7 +510,8 @@ val poly_cyclic_suc = store_thm(
   `_ = #1:: SNOC #1 (GENLIST (\k. #1) n)` by rw[poly_cyclic_def] >>
   `_ = #1:: GENLIST (\k. #1) (SUC n) ` by rw[GENLIST] >>
   `_ = #1:: cyclic (SUC n)` by rw[GSYM poly_cyclic_def] >>
-  rw[]);
+  rw[]
+QED
 
 (* export simple results *)
 val _ = export_rewrites ["poly_cyclic_suc"];
@@ -564,12 +529,13 @@ val _ = export_rewrites ["poly_cyclic_suc"];
         and poly (cyclic k)                 by induction hypothesis
        Thus poly (#1:: cyclic k)            by poly_cons_poly
 *)
-val poly_cyclic_poly = store_thm(
-  "poly_cyclic_poly",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. poly (cyclic n)``,
+Theorem poly_cyclic_poly:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. poly (cyclic n)
+Proof
   rpt strip_tac >>
   Induct_on `n` >>
-  rw[]);
+  rw[]
+QED
 
 (* export simple results *)
 val _ = export_rewrites ["poly_cyclic_poly"];
@@ -585,13 +551,14 @@ val _ = export_rewrites ["poly_cyclic_poly"];
    Only-if part: (n = 0) ==> (cyclic n = |0|)
       True by poly_cyclic_0.
 *)
-val poly_cyclic_eq_zero = store_thm(
-  "poly_cyclic_eq_zero",
-  ``!r:'a ring. #1 <> #0 ==> !n. (cyclic n = |0|) <=> (n = 0)``,
+Theorem poly_cyclic_eq_zero:
+    !r:'a ring. #1 <> #0 ==> !n. (cyclic n = |0|) <=> (n = 0)
+Proof
   rw_tac std_ss[poly_cyclic_0, EQ_IMP_THM] >>
   spose_not_then strip_assume_tac >>
   `?m. n = SUC m` by metis_tac[num_CASES] >>
-  metis_tac[poly_cyclic_suc, poly_zero, NOT_CONS_NIL]);
+  metis_tac[poly_cyclic_suc, poly_zero, NOT_CONS_NIL]
+QED
 
 (* Theorem: 0 < n ==> lead (cyclic n) = #1 *)
 (* Proof:
@@ -604,9 +571,9 @@ val poly_cyclic_eq_zero = store_thm(
      = lead [#1] = #1           if (cyclic n = |0|), by poly_lead_const
      = lead (cyclic n) = #1     if (cyclic n <> |0|), by induction hypothesis
 *)
-val poly_cyclic_lead = store_thm(
-  "poly_cyclic_lead",
-  ``!r:'a ring. #1 <> #0 ==> !n. 0 < n ==> (lead (cyclic n) = #1)``,
+Theorem poly_cyclic_lead:
+    !r:'a ring. #1 <> #0 ==> !n. 0 < n ==> (lead (cyclic n) = #1)
+Proof
   rpt strip_tac >>
   Induct_on `n` >| [
     rw[],
@@ -617,17 +584,19 @@ val poly_cyclic_lead = store_thm(
       `cyclic n <> |0|` by metis_tac[poly_cyclic_eq_zero] >>
       rw_tac std_ss[poly_cyclic_suc, poly_lead_cons]
     ]
-  ]);
+  ]
+QED
 
 (* export simple results *)
 val _ = export_rewrites ["poly_cyclic_lead"];
 
 (* Theorem: 0 < n ==> monic (cyclic n) *)
 (* Proof: by poly_monic_def, with poly_cyclic_lead, poly_cyclic_poly. *)
-val poly_cyclic_monic = store_thm(
-  "poly_cyclic_monic",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. 0 < n ==> monic (cyclic n)``,
-  rw[poly_monic_def]);
+Theorem poly_cyclic_monic:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. 0 < n ==> monic (cyclic n)
+Proof
+  rw[poly_monic_def]
+QED
 
 (* Theorem: deg (cyclic n) = PRE n *)
 (* Proof:
@@ -645,9 +614,9 @@ val poly_cyclic_monic = store_thm(
      = n                        by SUC_PRE, 0 < n
      = PRE (SUC n)              by prim_recTheory.PRE
 *)
-val poly_cyclic_deg = store_thm(
-  "poly_cyclic_deg",
-  ``!r:'a ring. #1 <> #0 ==> !n. deg (cyclic n) = PRE n``,
+Theorem poly_cyclic_deg:
+    !r:'a ring. #1 <> #0 ==> !n. deg (cyclic n) = PRE n
+Proof
   rpt strip_tac >>
   Induct_on `n` >| [
     rw[],
@@ -658,7 +627,8 @@ val poly_cyclic_deg = store_thm(
       `cyclic n <> |0|` by metis_tac[poly_cyclic_eq_zero] >>
       rw[GSYM SUC_PRE]
     ]
-  ]);
+  ]
+QED
 
 (* Theorem: eval (cyclic n) #1 = ##n *)
 (* Proof:
@@ -677,12 +647,13 @@ val poly_cyclic_deg = store_thm(
      = #1 + ##n                      by ring_mult_rone
      = ##(SUC n)                     by ring_num_SUC
 *)
-val poly_cyclic_eval_by_one = store_thm(
-  "poly_cyclic_eval_by_one",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. eval (cyclic n) #1 = ##n``,
+Theorem poly_cyclic_eval_by_one:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. eval (cyclic n) #1 = ##n
+Proof
   rpt strip_tac >>
   Induct_on `n` >>
-  rw[]);
+  rw[]
+QED
 
 (* Theorem: peval (cyclic n) |1| = |n| *)
 (* Proof:
@@ -701,12 +672,13 @@ val poly_cyclic_eval_by_one = store_thm(
      = |1| + |n|                         by poly_mult_rone
      = ### (SUC n)                       by poly_exp_SUC, ring_num_SUC
 *)
-val poly_cyclic_peval_by_one = store_thm(
-  "poly_cyclic_peval_by_one",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. peval (cyclic n) |1| = |n|``,
+Theorem poly_cyclic_peval_by_one:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. peval (cyclic n) |1| = |n|
+Proof
   rpt strip_tac >>
   Induct_on `n` >>
-  rw[]);
+  rw[]
+QED
 
 (* Theorem: cyclic (SUC n) = X * cyclic n + |1| *)
 (* Proof:
@@ -717,10 +689,11 @@ val poly_cyclic_peval_by_one = store_thm(
    = |1| + (cyclic n) * X         by poly_one, #1 <> #0
    = X * (cyclic n) + |1|         by poly_add_comm, poly_mult_comm
 *)
-val poly_cyclic_suc_alt = store_thm(
-  "poly_cyclic_suc_alt",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. cyclic (SUC n) = X * cyclic n + |1|``,
-  rw[poly_cons_eq_add_shift, poly_mult_X, poly_add_comm, poly_mult_comm, poly_one]);
+Theorem poly_cyclic_suc_alt:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. cyclic (SUC n) = X * cyclic n + |1|
+Proof
+  rw[poly_cons_eq_add_shift, poly_mult_X, poly_add_comm, poly_mult_comm, poly_one]
+QED
 
 (* Theorem: unity n = unity 1 * (cyclic n) *)
 (* Proof:
@@ -747,9 +720,9 @@ val poly_cyclic_suc_alt = store_thm(
      = unity 1 * (X * cyclic n + |1|)          by poly_mult_ladd
      = unity 1 * cyclic (SUC n)                by poly_cyclic_suc_alt
 *)
-val poly_cyclic_cofactor = store_thm(
-  "poly_cyclic_cofactor",
-  ``!r:'a ring. Ring r /\ #1 <> #0 ==> !n. unity n = unity 1 * (cyclic n)``,
+Theorem poly_cyclic_cofactor:
+    !r:'a ring. Ring r /\ #1 <> #0 ==> !n. unity n = unity 1 * (cyclic n)
+Proof
   rpt strip_tac >>
   Induct_on `n` >-
   rw_tac std_ss[poly_unity_0, poly_cyclic_0, poly_unity_poly, poly_mult_rzero] >>
@@ -763,7 +736,8 @@ val poly_cyclic_cofactor = store_thm(
   `_ = unity 1 * (X * cyclic n) + unity 1` by rw_tac std_ss[poly_mult_comm, GSYM poly_mult_assoc, GSYM poly_unity_1] >>
   `_ = unity 1 * (X * cyclic n) + unity 1 * |1|` by rw_tac std_ss[poly_mult_rone] >>
   `_ = unity 1 * (X * cyclic n + |1|)` by rw_tac std_ss[GSYM poly_mult_radd, poly_mult_poly] >>
-  rw_tac std_ss[poly_cyclic_suc_alt]);
+  rw_tac std_ss[poly_cyclic_suc_alt]
+QED
 
 (* ------------------------------------------------------------------------- *)
 (* Cyclic Irreducible Factor                                             *)
@@ -779,11 +753,11 @@ val poly_cyclic_cofactor = store_thm(
        or ~((cyclic n) % (X - |1|) = |0|)     by poly_factor_one
     Since pmonic (X - |1|),                   by poly_pmonic_X_sub_c
       and poly (cyclic n)                     by poly_cyclic_poly
-    hence ~ ((X - |1|) pdivides (cyclic n))   by poly_ulead_divides_alt
+    hence ~ ((X - |1|) pdivides (cyclic n))   by poly_divides_alt
 *)
-val poly_cyclic_has_no_factor_unity_1 = store_thm(
-  "poly_cyclic_has_no_factor_unity_1",
-  ``!r:'a field. Field r ==> !n. 0 < n /\ n < char r ==> ~((unity 1) pdivides (cyclic n))``,
+Theorem poly_cyclic_has_no_factor_unity_1:
+    !r:'a field. Field r ==> !n. 0 < n /\ n < char r ==> ~((unity 1) pdivides (cyclic n))
+Proof
   rpt strip_tac >>
   `Ring r /\ #1 <> #0` by rw[] >>
   `0 < char r` by decide_tac >>
@@ -794,7 +768,8 @@ val poly_cyclic_has_no_factor_unity_1 = store_thm(
   `~((cyclic n) % (unity 1) = |0|)` by metis_tac[poly_factor_one, poly_unity_1] >>
   `pmonic (unity 1)` by rw_tac std_ss[poly_unity_pmonic, DECIDE ``0 < 1``] >>
   `poly (cyclic n)` by rw[poly_cyclic_poly] >>
-  metis_tac[poly_ulead_divides_alt]);
+  metis_tac[poly_divides_alt]
+QED
 
 (* Theorem: Field r ==> !n. 1 < n ==> ?h. ipoly h /\ h pdivides (cyclic n) *)
 (* Proof:
@@ -803,13 +778,14 @@ val poly_cyclic_has_no_factor_unity_1 = store_thm(
     Hence 0 < deg (cyclic n)
      Thus ?h. ipoly h /\ h pdivides (cyclic n)   by poly_irreducible_factor_exists
 *)
-val poly_cyclic_irreducible_factor = store_thm(
-  "poly_cyclic_irreducible_factor",
-  ``!r:'a field. Field r ==> !n. 1 < n ==> ?h. ipoly h /\ h pdivides (cyclic n)``,
+Theorem poly_cyclic_irreducible_factor:
+    !r:'a field. Field r ==> !n. 1 < n ==> ?h. ipoly h /\ h pdivides (cyclic n)
+Proof
   rpt strip_tac >>
   `deg (cyclic n) = PRE n` by rw[poly_cyclic_deg] >>
   `0 < PRE n` by decide_tac >>
-  rw[poly_irreducible_factor_exists]);
+  rw[poly_irreducible_factor_exists]
+QED
 
 (*
 From AKSsets.hol: Define monic irreducible factor
@@ -831,9 +807,9 @@ val _ = overload_on ("mifactor", ``\h z. monic h /\ ipoly h /\ (z % h = |0|)``);
      so (cyclic n) % h = |0|                             by poly_mod_eq_zero
    Therefore mifactor h (cyclic n)                       by overloading
 *)
-val poly_cyclic_monic_irreducible_factor = store_thm(
-  "poly_cyclic_monic_irreducible_factor",
-  ``!r:'a field. Field r ==> !n. 1 < n ==> ?h. mifactor h (cyclic n)``,
+Theorem poly_cyclic_monic_irreducible_factor:
+    !r:'a field. Field r ==> !n. 1 < n ==> ?h. mifactor h (cyclic n)
+Proof
   rpt strip_tac >>
   `?q. ipoly q /\ q pdivides (cyclic n)` by rw[poly_cyclic_irreducible_factor] >>
   `?c h. c IN R /\ monic h /\ ipoly h /\ (q = c * h)` by rw[poly_irreducible_make_monic] >>
@@ -842,7 +818,8 @@ val poly_cyclic_monic_irreducible_factor = store_thm(
   `_ = c * s * h` by rw[poly_mult_cmult] >>
   `poly (c * s)` by rw[] >>
   `poly (cyclic n)` by rw[poly_cyclic_poly] >>
-  metis_tac[poly_mod_eq_zero, field_is_ring]);
+  metis_tac[poly_mod_eq_zero, field_is_ring]
+QED
 
 (* Theorem: Field r ==> !n. 1 < n /\ n < char r ==> ?h. mifactor h (unity n) /\ h <> unity 1 *)
 (* Proof:
@@ -857,9 +834,9 @@ val poly_cyclic_monic_irreducible_factor = store_thm(
      But  ~(unity 1) pdivides (cyclic n))   by poly_cyclic_has_no_factor_unity_1
    Therefore h <> unity 1
 *)
-val poly_unity_irreducible_factor_exists = store_thm(
-  "poly_unity_irreducible_factor_exists",
-  ``!r:'a field. Field r ==> !n. 1 < n /\ n < char r ==> ?h. mifactor h (unity n) /\ h <> unity 1``,
+Theorem poly_unity_irreducible_factor_exists:
+    !r:'a field. Field r ==> !n. 1 < n /\ n < char r ==> ?h. mifactor h (unity n) /\ h <> unity 1
+Proof
   rpt strip_tac >>
   `Ring r /\ #1 <> #0` by rw[] >>
   `unity n = unity 1 * cyclic n` by rw[poly_cyclic_cofactor] >>
@@ -871,11 +848,8 @@ val poly_unity_irreducible_factor_exists = store_thm(
   `h pdivides (unity n)` by metis_tac[poly_divides_transitive] >>
   `(unity n) % h = |0|` by rw[GSYM poly_divides_alt] >>
   `0 < n` by decide_tac >>
-  metis_tac[poly_cyclic_has_no_factor_unity_1]);
+  metis_tac[poly_cyclic_has_no_factor_unity_1]
+QED
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

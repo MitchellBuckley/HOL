@@ -1,11 +1,9 @@
-
 structure satTools = struct
 
 local
 
 open Lib boolLib Globals Parse Term Type Thm Drule Psyntax Conv Feedback
 open SatSolvers satCommonTools satTheory
-
 
 in
 
@@ -43,12 +41,6 @@ fun parseSat (s1,s2) ss =
   List.map (valOf o Int.fromString o Substring.string) ssl
  end
  handle _ => failwith("parseSat");
-
-(*
-** Test for success of the result of Process.system
-** N.B. isSuccess expected to primitive in next release of
-** Moscow ML, and Process.status will lose eqtype status
-*)
 
 fun isSuccess s = Process.isSuccess s
 
@@ -125,12 +117,12 @@ fun satCheck model t =
       DISCH mtm th4 (* |- l1 /\ ... /\ ln ==> t *)
    end
    handle Interrupt => raise Interrupt
-        | HOL_ERR {origin_function = "EQT_ELIM", ...} =>
-             if is_neg t
-                then UNDISCH (EQF_ELIM (REWRITE_CONV [] t))
-                     handle HOL_ERR _ => raise satCheckError
-             else raise satCheckError
-        |  _ => raise satCheckError;
+        | HOL_ERR herr =>
+            if top_function_of herr = "EQT_ELIM" andalso is_neg t then
+                 (UNDISCH (EQF_ELIM (REWRITE_CONV [] t))
+                  handle HOL_ERR _ => raise satCheckError)
+            else raise satCheckError
+        | otherwise => raise satCheckError;
 
 end
 end

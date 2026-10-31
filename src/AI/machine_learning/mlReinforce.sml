@@ -58,7 +58,7 @@ fun mk_mctsparam splayer rlobj =
 fun mk_mctsobj rlobj (splayer as {unib,tnn,noiseb,nsim}) =
   let
     val game = #game rlobj
-    val player =  if unib then uniform_player game else
+    val player = if unib then uniform_player game else
       #player_from_tnn (#dplayer rlobj) tnn
   in
     {player=player, game=game, mctsparam = mk_mctsparam splayer rlobj}
@@ -219,7 +219,7 @@ fun rl_explore_targetl (unib,noiseb) (rlobj,es) tnn targetl =
     val {ncore,nsim,...} = #rlparam rlobj
     val splayer = {unib=unib,tnn=tnn,noiseb=noiseb,nsim=nsim}
     val (l,t) = add_time (parmap_queue_extern ncore es splayer) targetl
-    val _ =  log rlobj ("Exploration time: " ^ rts t)
+    val _ = log rlobj ("Exploration time: " ^ rts t)
     val resultl = combine (targetl, map fst l)
     val nwin = length (filter fst l)
     val _ = log rlobj ("Exploration wins: " ^ its nwin)
@@ -339,7 +339,8 @@ fun rl_loop ngen (rlobj,es) (rlex,targetd) =
   let
     val _ = log rlobj ("\nGeneration " ^ its ngen)
     val tnn = rl_train ngen rlobj rlex
-    val (newrlex,newtargetd) = rl_explore_cont ngen (rlobj,es) (tnn,rlex,targetd)
+    val (newrlex,newtargetd) =
+        rl_explore_cont ngen (rlobj,es) (tnn,rlex,targetd)
   in
     rl_loop (ngen + 1) (rlobj,es) (newrlex,newtargetd)
   end

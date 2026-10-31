@@ -1,9 +1,7 @@
-
-open HolKernel Parse boolLib bossLib;
-open arithmeticTheory listTheory pairTheory finite_mapTheory stringTheory llistTheory;
-open source_valuesTheory source_syntaxTheory source_semanticsTheory mp_then;
-
-val _ = new_theory "source_properties";
+Theory source_properties
+Ancestors
+  arithmetic list pair finite_map string llist
+  source_values source_syntax source_semantics
 
 
 (* In this file we prove that the big-step relational semantics (--->)
@@ -68,7 +66,7 @@ Proof
 QED
 
 Theorem eval_set_clock = CONJUNCT1 evals_set_clock;
-Theorem evals_set_clock = CONJUNCT2 evals_set_clock;
+Theorem evals_set_clock[allow_rebind] = CONJUNCT2 evals_set_clock;
 
 
 Theorem Eval_imp_evals:
@@ -171,7 +169,7 @@ val thms =
    ‘(env,[If test xs y z],s1)’,
    ‘(env,[Call fname xs],s1)’]
 
-Triviality Call_eq:
+Theorem Call_eq[local]:
   (env,[Call fname xs],s1) ---> a1 ⇔
   ∃vs s2 v s3.
     (env,xs,s1) ---> (vs,s2) ∧
@@ -245,12 +243,6 @@ Definition free_vars_def[simp]:
   free_vars (If _ xs  y z) = FLAT (MAP free_vars xs) ++ free_vars y ++ free_vars z ∧
   free_vars (Let n x y) = free_vars x ++ FILTER (\k. k ≠ n) (free_vars y) ∧
   free_vars (Call _ xs) = FLAT (MAP free_vars xs)
-Termination
-  WF_REL_TAC ‘measure exp_size’ \\ rw []
-  \\ qsuff_tac ‘!xs a. MEM a xs ==> exp_size a <= exp1_size xs’
-  \\ TRY (rw [] \\ res_tac \\ fs [] \\ NO_TAC)
-  \\ Induct \\ fs [] \\ rw [] \\ fs [exp_size_def]
-  \\ res_tac \\ fs []
 End
 
 Theorem delete_env_update:
@@ -319,7 +311,13 @@ fun get_induction_for_def def = let
     in (split_at (not o is_var) xs) end
   val xs = map find_pat_match cs
   val ty = map (fn (_,x,_) => type_of x) xs |> hd
-  val raw_ind = TypeBase.induction_of ty
+  (* this builds a predicate per member, which is what the older
+     construction's principle had; the package proves the one-predicate
+     form and legacyInduction puts it back *)
+  (* the stated principle: legacyInduction reads the set functions *)
+  val ind0 = TypeBase.set_induction_of ty
+  val raw_ind = legacyInduction.mutual_induction
+                  (legacyInduction.operators_of ind0) ind0
   fun my_mk_var ty = mk_var("pat_var", ty)
   fun list_mk_fun_type [] = hd []
     | list_mk_fun_type [ty] = ty
@@ -342,7 +340,9 @@ fun get_induction_for_def def = let
   val goal1 = ind |> concl |> dest_imp |> snd
   val goal2 = list_mk_conj (map (fst o snd) res)
   val goal = mk_imp(goal1,goal2)
-  val lemma = snd ((REPEAT STRIP_TAC THEN ASM_REWRITE_TAC []) ([],goal)) []
+  val lemma =
+      snd ((REPEAT STRIP_TAC THEN ASM_REWRITE_TAC [])
+             ([],goal) (Context.snapshot())) []
   val ind = MP lemma (ind |> UNDISCH_ALL) |> DISCH_ALL |> GENL (map fst res)
   in ind end handle HOL_ERR _ =>
   failwith "unable to construct induction theorem from TypeBase info"
@@ -636,5 +636,3 @@ Proof
          take_branch_def,get_env_and_body_def]
   \\ rw [] \\ fs []
 QED
-
-val _ = export_theory();

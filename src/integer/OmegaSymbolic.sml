@@ -23,17 +23,7 @@ val lhand = rand o rator
 
 val REWRITE_CONV = GEN_REWRITE_CONV TOP_DEPTH_CONV bool_rewrites
 
-fun EVERY_CONJ_CONV c t =
-    if is_conj t then BINOP_CONV (EVERY_CONJ_CONV c) t
-    else c t
-
-fun EVERY_DISJ_CONV c t =
-    if is_disj t then BINOP_CONV (EVERY_DISJ_CONV c) t
-    else c t
-
-fun ERR f msg = HOL_ERR { origin_structure = "OmegaSymbolic",
-                          origin_function = f,
-                          message = msg}
+val ERR = mk_HOL_ERR "OmegaSymbolic"
 
 (* ----------------------------------------------------------------------
     clause_to_evals v t
@@ -262,11 +252,7 @@ end
 
     tm is of the form   ?x. (c * x = e) /\ c1 /\ c2 /\ c3
     where each ci is either of the form  d * x <= U  or  L <= e * x.
-    If e contains any variables that appear in ctxt, then
-    leaf_normalise all of the ci's and the equality term and then rename
-    x to be v (which is its correct name).
-
-    Otherwise, multiply the ci's through so as to make them include
+    Multiply the ci's through so as to make them include
     c * x as a subterm, then rewrite with the first conjunct, and then
     leaf normalise.  The variable x will have been eliminated from all
     but the first conjunct.  Then push the ?x inwards, and turn that
@@ -284,7 +270,7 @@ in
   else let
       open CooperMath
       val d_i = int_of_term d
-      val lc = lcm(c_i, d_i)
+      val lc = Arbint.lcm(c_i, d_i)
       fun multiply_through tm =
           if lc <> d_i then let
               val f_i = Arbint.div(lc, d_i)
@@ -322,18 +308,18 @@ fun do_divisibility_analysis v ctxt tm = let
   val (x, body) = dest_exists tm
   val (eqterm, rest) = dest_conj body
 in
-  if not (null (op_intersect aconv (free_vars (rand eqterm)) ctxt)) then
+  (*if not (null (op_intersect aconv (free_vars (rand eqterm)) ctxt)) then
     (* leave it as an equality *)
     BINDER_CONV (EVERY_CONJ_CONV OmegaMath.leaf_normalise) THENC
     RAND_CONV (ALPHA_CONV v)
-  else let
+  else*) let
       val c = lhand (lhand eqterm)
       val c_i = int_of_term c
       fun ctxt_rwt tm = let
         val (c1, c2) = dest_conj tm
         val thm0 = DISCH_ALL (REWRITE_CONV [ASSUME c1] c2)
       in
-        MATCH_MP CooperThms.simple_conj_congruence thm0
+        MATCH_MP cooperTheory.simple_conj_congruence thm0
       end
     in
       BINDER_CONV (RAND_CONV (EVERY_CONJ_CONV (lcmify x c c_i)) THENC
@@ -468,8 +454,9 @@ fun apply_fmve ctype = let
         RAND_CONV (calculate_nightmare ctxt)
       end
   end t
-  fun elim_rT tm = (if Teq (rand tm) then REWR_CONV CooperThms.T_and_r
-                    else ALL_CONV) tm
+  fun elim_rT tm =
+      (if Teq (rand tm) then REWR_CONV cooperTheory.T_and_r
+       else PURE_REWRITE_CONV [RIGHT_AND_OVER_OR, OR_CLAUSES, AND_CLAUSES]) tm
 in
   initially THENC LAND_CONV finisher THENC elim_rT
 end
@@ -491,15 +478,15 @@ fun new_varinfo () : varinfo =
 exception NotFound
 
 fun variable_information vs t = let
-  val table = ref (Redblackmap.mkDict Term.compare)
+  val table : varinfo Termtab.table ref = ref Termtab.empty
   fun ins_initial_recs v =
-    table := Redblackmap.insert (!table, v, new_varinfo())
+    table := Termtab.update (v, new_varinfo()) (!table)
   val _ = app ins_initial_recs vs
   fun examine_cv t = let
     val (c, v) = dest_mult t
     val c_i = int_of_term c
   in
-    case Redblackmap.peek (!table, v) of
+    case Termtab.lookup (!table) v of
       NONE => ()
     | SOME {maxupc, maxloc, numups, numlos} =>
       if Arbint.<(c_i, Arbint.zero) then (* upper bound *)
@@ -532,7 +519,7 @@ fun findleast gt f l =
 
 fun best_variable_to_eliminate vs t = let
   val table = variable_information vs t
-  val items = Redblackmap.listItems (!table)
+  val items = Termtab.dest (!table)
   fun is_vacuous (_, {numups, numlos,...}) = !numups = 0 orelse !numlos = 0
   fun is_exact (_, {maxloc, maxupc,...}) = !maxloc = Arbint.one orelse
                                            !maxupc = Arbint.one

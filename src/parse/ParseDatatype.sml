@@ -1,19 +1,47 @@
 (*---------------------------------------------------------------------------
                 Parsing datatype specifications
 
-   The grammar we're parsing is:
+   This file implements two distinct datatype grammars, dispatched
+   from a single parse_form entry point.  The two grammars share the
+   record / form / top-level structure but differ in how a
+   constructor's arguments are written.  The choice is made by the
+   caller, by passing either parse_phrase or parse_hphrase to
+   parse_form; the two phrase styles are not mixed within a single
+   datatype definition.
 
-       G ::=              id "=" <form>
-       form ::=           <phrase> ( "|" <phrase> ) *  |  <record_defn>
-       phrase ::=         id  | id "of" <under_constr>
-       under_constr ::=   <ptype> ( "=>" <ptype> ) * | <record_defn>
-       record_defn ::=    "<|"  <idtype_pairs> "|>"
-       idtype_pairs ::=   id ":" <type> | id : <type> ";" <idtype_pairs>
-       ptype ::=          <type> | "(" <type> ")"
+   --- Grammar A: the Hol_datatype style ---
+   Used by parse_phrase.  Constructor arguments are introduced by
+   "of" and separated by "=>".
 
-  It had better be the case that => is not a type infix.  This is true of
-  the standard HOL distribution.  In the event that => is an infix, this
-  code will still work as long as the input puts the types in parentheses.
+       G            ::= id "=" <form>
+       form         ::= "|"? <phrase> ( "|" <phrase> )*  |  <record_defn>
+       phrase       ::= id  |  id "of" <under_constr>
+       under_constr ::= <ptype> ( "=>" <ptype> )*  |  <record_defn>
+       ptype        ::= <type>  |  "(" <type> ")"
+       record_defn  ::= "<|" <idtype_pairs> ";"? "|>"
+       idtype_pairs ::= id ":" <type> ( ";" id ":" <type> )*
+
+   It had better be the case that "=>" is not a type infix.  This is
+   true of the standard HOL distribution.  In the event that "=>" is
+   an infix, this code will still work as long as the input puts the
+   types in parentheses.
+
+   --- Grammar B: the Datatype block style ---
+   Used by parse_hphrase.  Constructor arguments are juxtaposed
+   Haskell-style, with each argument either a single atomic type or
+   a parenthesised compound type.  There is no "of" keyword and no
+   "=>" between successive arguments.
+
+       G            ::= id "=" <form>
+       form         ::= "|"? <phrase> ( "|" <phrase> )*  |  <record_defn>
+       phrase       ::= id <harg>*
+       harg         ::= <atomic_type>  |  "(" <type> ")"
+       record_defn  ::= "<|" <idtype_pairs> ";"? "|>"
+       idtype_pairs ::= id ":" <type> ( ";" id ":" <type> )*
+
+   --- Top level ---
+   Multiple datatype definitions are ";"-separated, with the trailing
+   ";" optional.
  ---------------------------------------------------------------------------*)
 
 structure ParseDatatype :> ParseDatatype =
@@ -271,8 +299,10 @@ fun parse_harg G qb =
         end
       else
         (parse_atom G qb
-         handle HOL_ERR {origin_structure = "Parse", message, ...} =>
-                raise ERR "parse_harg" message)
+         handle e as HOL_ERR herr =>
+            if top_structure_of herr = "Parse" then
+                raise ERR "parse_harg" (message_of herr)
+            else raise e)
     | (base_tokens.BT_AQ ty, _) => (qbuf.advance qb; dAQ ty)
     | (_, locn) => raise ERRloc "parse_harg" locn
                          "Unexpected token in constructor's argument"
@@ -300,6 +330,73 @@ fun parse_form G phrase_p qb =
       (_,base_tokens.BT_Ident "<|",_) => Record (parse_record_defn G qb)
     | _ => Constructors (qb |> optscan (base_tokens.BT_Ident "|")
                             |> sepby1 "|" (phrase_p G))
+
+(* An optional block of attributes after the type's name:
+
+       list[map=MAP,set=LIST_TO_SET] = NIL | CONS 'a list
+
+   spelled the way a theorem's attributes are — comma-separated, each
+   with whitespace-separated arguments after an "=".  A name with
+   punctuation in it needs a space before the comma that ends it, since
+   the punctuation would otherwise clump with the comma. *)
+fun parse_attributes qb =
+  let
+    fun peek s = case pdtok_of qb of
+                     (adv, base_tokens.BT_Ident s', _) =>
+                       if s = s' then SOME adv else NONE
+                   | _ => NONE
+    (* an argument is a name, which may carry its own attributes *)
+    fun arg () =
+        let val nm = ident qb
+        in
+          case peek "[" of
+              NONE => (nm, [])
+            | SOME adv =>
+              (adv();
+               case peek "]" of
+                   SOME adv' => (adv'(); (nm, []))
+                 | NONE => (nm, List.map #1 (attributes [])))
+        end
+    and args acc =
+        case pdtok_of qb of
+            (_, base_tokens.BT_Ident s, _) =>
+              if s = "," orelse s = "]" then List.rev acc
+              else args (arg () :: acc)
+          | (_, t, locn) =>
+              raise ERRloc "parse_attributes" locn
+                    ("Wanted an attribute argument; got \"" ^
+                     base_tokens.toString t ^ "\"")
+    and attribute () =
+        let val key = ident qb
+        in
+          case peek "=" of
+              SOME adv => (adv(); (key, args []))
+            | NONE => (key, [])
+        end
+    and attributes acc =
+        let val a = attribute ()
+        in
+          case peek "," of
+              SOME adv => (adv(); attributes (a :: acc))
+            | NONE =>
+              case peek "]" of
+                  SOME adv => (adv(); List.rev (a :: acc))
+                | NONE =>
+                  let val (_, t, locn) = pdtok_of qb
+                  in
+                    raise ERRloc "parse_attributes" locn
+                          ("Wanted \",\" or \"]\"; got \"" ^
+                           base_tokens.toString t ^ "\"")
+                  end
+        end
+  in
+    case peek "[" of
+        NONE => []
+      | SOME adv =>
+        (adv(); case peek "]" of
+                    SOME adv' => (adv'(); [])
+                  | NONE => attributes [])
+  end
 
 fun extract_tynames q =
   let
@@ -332,6 +429,7 @@ fun extract_tynames q =
           | _ =>
             let
               val tyname = ident qb
+              val _ = parse_attributes qb
               val () = scan "=" qb
             in
               recurse [] (tyname :: acc)
@@ -342,19 +440,23 @@ fun extract_tynames q =
 
 fun parse_g G phrase_p qb = let
   val tyname = ident qb
+  val attrs = parse_attributes qb
   val () = scan "=" qb
 in
-  (tyname, parse_form G phrase_p qb)
+  {name = tyname, attrs = attrs, form = parse_form G phrase_p qb}
 end
 
 fun hide_tynames q G0 =
   List.foldl (uncurry type_grammar.hide_tyop) G0 (extract_tynames q)
 
+val parse_listener : AST list Listener.t = Listener.new_listener ()
 
 fun core_parse G0 phrase_p q = let
   val G = hide_tynames q G0
   val qb = qbuf.new_buffer q
   val result = termsepby1 ";" base_tokens.BT_EOI (parse_g G phrase_p) qb
+  val plain = map (fn {name,form,...} => (name,form)) result
+  val _ = Listener.call_listener parse_listener plain
 in
   case qbuf.current qb of
       (base_tokens.BT_EOI,_) => result
@@ -362,8 +464,20 @@ in
                         ("Parse failed looking at "^base_tokens.toString t)
 end
 
-fun parse G0 = core_parse G0 parse_phrase
-fun hparse G0 = core_parse G0 parse_hphrase
+(* the plain entry points take the declarations that say nothing about
+   themselves beyond their constructors.  A declaration whose attributes
+   would be dropped here is an error rather than a silence: the package
+   that reads them has its own entry point. *)
+fun unannotated ({name, attrs = [], form} : annotatedAST) = (name, form)
+  | unannotated {name, ...} =
+      raise ERR "parse"
+            ("Attributes on type " ^ name ^ " are not read here; the \
+             \datatype package's own entry point takes them")
+
+fun parse G0 q = map unannotated (core_parse G0 parse_phrase q)
+fun hparse G0 q = map unannotated (core_parse G0 parse_hphrase q)
+fun parse_annotated G0 = core_parse G0 parse_phrase
+fun hparse_annotated G0 = core_parse G0 parse_hphrase
 
 
 end

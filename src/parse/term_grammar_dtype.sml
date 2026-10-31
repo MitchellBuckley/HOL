@@ -70,7 +70,9 @@ datatype user_delta =
        | ADD_STRLIT of {ldelim : string, tmnm : string}
        | RM_STRLIT of {tmnm:string}
        | ADD_UPRINTER of {codename: string, pattern : Term.term}
+       | RM_UPRINTER of {codename: string, pattern : Term.term}
        | ADD_ABSYN_POSTP of {codename: string}
+       | ADD_USER_STATE of {codename: string, delta : ThyDataSexp.t}
 
 
 end

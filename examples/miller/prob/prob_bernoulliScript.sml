@@ -1,68 +1,50 @@
-open HolKernel Parse boolLib bossLib arithmeticTheory pred_setTheory
-     listTheory state_transformerTheory
-     hurdUtils extra_numTheory combinTheory
-     pairTheory realTheory realLib extra_boolTheory
-     extra_pred_setTheory sumTheory
-     extra_realTheory extra_pred_setTools numTheory
-     simpLib seqTheory res_quanTheory;
+Theory prob_bernoulli
+Ancestors
+  arithmetic pred_set list state_transformer extra_num combin
+  pair real extra_bool extra_pred_set sum extra_real num seq
+  res_quan sequence subtype real_measure real_probability
+  prob_algebra prob
+Libs
+  hurdUtils realLib extra_pred_setTools simpLib sequenceTools
 
-open sequenceTheory sequenceTools subtypeTheory;
-open util_probTheory real_measureTheory real_probabilityTheory;
-open prob_algebraTheory probTheory;
-
-(* interactive mode
-quietdec := false;
-*)
-
-val _ = new_theory "prob_bernoulli";
-
-val EXISTS_DEF = boolTheory.EXISTS_DEF;
 val std_ss' = std_ss ++ boolSimps.ETA_ss;
-val Rewr = DISCH_THEN (REWRITE_TAC o wrap);
-val Rewr' = DISCH_THEN (ONCE_REWRITE_TAC o wrap);
-val STRONG_DISJ_TAC = CONV_TAC (REWR_CONV (GSYM IMP_DISJ_THM)) >> STRIP_TAC;
-val Cond =
-  DISCH_THEN
-  (fn mp_th =>
-   let
-     val cond = fst (dest_imp (concl mp_th))
-   in
-     KNOW_TAC cond >| [ALL_TAC, DISCH_THEN (MP_TAC o MP mp_th)]
-   end);
 
 (* ------------------------------------------------------------------------- *)
 (* The definition of the Bernoulli(p) sampling algorithm.                    *)
 (* ------------------------------------------------------------------------- *)
 
-val prob_bernoulli_iter_def = Define
-  `prob_bernoulli_iter p =
+Definition prob_bernoulli_iter_def:
+   prob_bernoulli_iter p =
    BIND sdest
    (\b.
     UNIT
     (if b then (if p <= (1 :real) / 2 then INR F else INL (2 * p - 1))
-     else (if p <= 1 / 2 then INL (2 * p) else INR T)))`;
+     else (if p <= 1 / 2 then INL (2 * p) else INR T)))
+End
 
 val prob_bernoulli_loop_def = new_definition
   ("prob_bernoulli_loop_def",
    ``prob_bernoulli_loop = prob_while ISL (prob_bernoulli_iter o OUTL)``);
 
-val prob_bernoulli_def = Define
-  `prob_bernoulli p = BIND (prob_bernoulli_loop (INL p)) (\a. UNIT (OUTR a))`;
+Definition prob_bernoulli_def:
+   prob_bernoulli p = BIND (prob_bernoulli_loop (INL p)) (\a. UNIT (OUTR a))
+End
 
 (* ------------------------------------------------------------------------- *)
 (* Theorems leading to:                                                      *)
 (* 1. !p. 0 <= p /\ p <= 1 ==> prob bern {s | FST (prob_bernoulli p s)} = p  *)
 (* ------------------------------------------------------------------------- *)
 
-val INDEP_FN_PROB_BERNOULLI_ITER = store_thm
-  ("INDEP_FN_PROB_BERNOULLI_ITER",
-   ``!p. prob_bernoulli_iter p IN indep_fn``,
+Theorem INDEP_FN_PROB_BERNOULLI_ITER:
+     !p. prob_bernoulli_iter p IN indep_fn
+Proof
    RW_TAC std_ss [INDEP_FN_BIND, INDEP_FN_UNIT, prob_bernoulli_iter_def,
-                  INDEP_FN_SDEST]);
+                  INDEP_FN_SDEST]
+QED
 
-val PROB_TERMINATES_BERNOULLI = store_thm
-  ("PROB_TERMINATES_BERNOULLI",
-   ``prob_while_terminates ISL (prob_bernoulli_iter o OUTL)``,
+Theorem PROB_TERMINATES_BERNOULLI:
+     prob_while_terminates ISL (prob_bernoulli_iter o OUTL)
+Proof
    RW_TAC std_ss [PROB_TERMINATES_HART, o_THM, INDEP_FN_PROB_BERNOULLI_ITER]
    >> Q.EXISTS_TAC `1 / 2`
    >> RW_TAC std_ss [HALF_POS, GBIGUNION_IMAGE]
@@ -105,7 +87,8 @@ val PROB_TERMINATES_BERNOULLI = store_thm
                       BIND_RIGHT_UNIT, o_THM]
    >> MP_TAC (Q.SPEC `{x | ISR x} o FST o prob_bernoulli_iter x`
               (GSYM PROB_BERN_INTER_HALVES))
-   >> Cond >- RW_TAC std_ss [INDEP_FN_FST_EVENTS, INDEP_FN_PROB_BERNOULLI_ITER]
+   >> impl_tac
+   >- RW_TAC std_ss [INDEP_FN_FST_EVENTS, INDEP_FN_PROB_BERNOULLI_ITER]
    >> Rewr'
    >> RW_TAC std_ss [prob_bernoulli_iter_def] \\ (* 2 sub-goals here *)
  ( Know `!f b.
@@ -131,32 +114,35 @@ val PROB_TERMINATES_BERNOULLI = store_thm
        >> FULL_SIMP_TAC (srw_ss()) [])
    >> Rewr
    >> RW_TAC std_ss [PROB_BERN_UNIV, PROB_BERN_EMPTY, GSYM ONE]
-   >> RW_TAC real_ss [REAL_LE_REFL] ));
+   >> RW_TAC real_ss [REAL_LE_REFL] )
+QED
 
-val INDEP_FN_PROB_BERNOULLI_LOOP = store_thm
-  ("INDEP_FN_PROB_BERNOULLI_LOOP",
-   ``!a. prob_bernoulli_loop a IN indep_fn``,
+Theorem INDEP_FN_PROB_BERNOULLI_LOOP:
+     !a. prob_bernoulli_loop a IN indep_fn
+Proof
    RW_TAC std_ss [prob_bernoulli_loop_def, INDEP_FN_PROB_WHILE,
                   PROB_TERMINATES_BERNOULLI, INDEP_FN_PROB_BERNOULLI_ITER,
-                  o_THM]);
+                  o_THM]
+QED
 
-val INDEP_FN_PROB_BERNOULLI = store_thm
-  ("INDEP_FN_PROB_BERNOULLI",
-   ``!p. prob_bernoulli p IN indep_fn``,
+Theorem INDEP_FN_PROB_BERNOULLI:
+     !p. prob_bernoulli p IN indep_fn
+Proof
    RW_TAC std_ss [prob_bernoulli_def, INDEP_FN_BIND, INDEP_FN_UNIT,
-                  INDEP_FN_PROB_BERNOULLI_LOOP]);
+                  INDEP_FN_PROB_BERNOULLI_LOOP]
+QED
 
-val PROB_BERNOULLI_ALT = store_thm
-  ("PROB_BERNOULLI_ALT",
-   ``prob_bernoulli p =
+Theorem PROB_BERNOULLI_ALT:
+     prob_bernoulli p =
      BIND sdest
      (\b.
       if b then (if p <= 1 / 2 then UNIT F else prob_bernoulli (2 * p - 1))
-      else (if p <= 1 / 2 then prob_bernoulli (2 * p) else UNIT T))``,
+      else (if p <= 1 / 2 then prob_bernoulli (2 * p) else UNIT T))
+Proof
    SIMP_TAC std_ss [prob_bernoulli_def, prob_bernoulli_loop_def]
    >> MP_TAC (Q.SPECL [`ISL`, `prob_bernoulli_iter o OUTL`, `INL p`]
               (INST_TYPE [alpha |-> ``:real+bool``] PROB_WHILE_ADVANCE))
-   >> Cond
+   >> impl_tac
    >- RW_TAC std_ss [INDEP_FN_PROB_BERNOULLI_ITER, PROB_TERMINATES_BERNOULLI,
                      o_THM]
    >> Rewr
@@ -166,11 +152,12 @@ val PROB_BERNOULLI_ALT = store_thm
    >> RW_TAC std_ss [PROB_WHILE_ADVANCE, INDEP_FN_PROB_BERNOULLI_ITER, o_THM,
                      PROB_TERMINATES_BERNOULLI]
    >> RW_TAC (std_ss ++ boolSimps.COND_elim_ss) []
-   >> RW_TAC std_ss [BIND_LEFT_UNIT]);
+   >> RW_TAC std_ss [BIND_LEFT_UNIT]
+QED
 
-val PROB_BERNOULLI = store_thm
-  ("PROB_BERNOULLI",
-   ``!p. 0 <= p /\ p <= 1 ==> (prob bern {s | FST (prob_bernoulli p s)} = p)``,
+Theorem PROB_BERNOULLI:
+     !p. 0 <= p /\ p <= 1 ==> (prob bern {s | FST (prob_bernoulli p s)} = p)
+Proof
    Know `!p. {s | FST (prob_bernoulli p s)} = I o FST o prob_bernoulli p`
    >- (SET_EQ_TAC
        >> RW_TAC std_ss [GSPECIFICATION, IN_o, o_THM, IN_I])
@@ -203,7 +190,7 @@ val PROB_BERNOULLI = store_thm
        >> REAL_ARITH_TAC)
    >> GEN_TAC
    >> MP_TAC (Q.SPEC `I o FST o prob_bernoulli p` (GSYM PROB_BERN_INTER_HALVES))
-   >> Cond >- RW_TAC std_ss [INDEP_FN_FST_EVENTS, INDEP_FN_PROB_BERNOULLI]
+   >> impl_tac >- RW_TAC std_ss [INDEP_FN_FST_EVENTS, INDEP_FN_PROB_BERNOULLI]
    >> Rewr'
    >> REPEAT DISCH_TAC
    >> Know `!x y : real. abs 2 * x <= 2 * y ==> x <= y`
@@ -252,6 +239,6 @@ val PROB_BERNOULLI = store_thm
     >> Q.PAT_X_ASSUM `~x` MP_TAC
     >> RW_TAC std_ss []
     >> Know `2 * p <= 2 * (1 / 2)` >- RW_TAC std_ss [HALF_CANCEL]
-    >> RW_TAC arith_ss [REAL_LE_LMUL, REAL_LT]]);
+    >> RW_TAC arith_ss [REAL_LE_LMUL, REAL_LT]]
+QED
 
-val _ = export_theory ();

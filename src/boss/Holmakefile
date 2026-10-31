@@ -10,21 +10,21 @@ HOLHEAP = $(HOLDIR)/src/num/termination/numheap
 boss_deps = listTheory pred_setTheory arithmeticTheory numLib \
             pred_setLib pred_setSimps numSimps optionTheory \
             RecordType rich_listTheory
-DEPS = bossLib.uo $(patsubst %,$(dprot $(SIGOBJ)/%.uo),$(boss_deps))
+DEPS = holTheory.uo bossLib.uo $(patsubst %,$(dprot $(SIGOBJ)/%.uo),$(boss_deps))
 
 all: $(TARGET)
 
 $(TARGET): $(DEPS)
-	$(protect $(HOLDIR)/bin/buildheap) $(DEBUG_FLAG) -o $(TARGET) -b $(HOLHEAP) $(boss_deps) bossLib
+	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $(TARGET) -b $(HOLHEAP) $(boss_deps) bossLib holTheory
 
 endif
 
-UOFILES = bossLib.uo selftest.uo
+UOFILES = holTheory.uo selftest.uo
 
 all: selftest.exe $(UOFILES)
 .PHONY: all
 
-selftest.exe: selftest.uo bossLib.uo
+selftest.exe: selftest.uo holTheory.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifeq ($(KERNELID),otknl)
@@ -43,23 +43,36 @@ ARTS = bool_defs.ot.art \
   ../num/theories/prim_rec.ot.art \
   ../num/theories/arithmetic.ot.art \
   ../num/theories/numeral.ot.art \
+  ../num/reduce/src/reduce.ot.art \
   ../num/theories/basicSize.ot.art \
-  ../num/theories/while.ot.art \
+  ../num/theories/While.ot.art \
   ../num/extra_theories/numpair.ot.art \
   ../num/extra_theories/divides.ot.art \
   ../num/extra_theories/logroot.ot.art \
   ../num/extra_theories/gcd.ot.art \
   ../num/extra_theories/bit.ot.art \
   ../num/extra_theories/numeral_bit.ot.art \
-  ../datatype/ind_type.ot.art \
+  ../datatype/bnfPrelims.ot.art \
+  ../datatype/bnfInitial.ot.art \
+  ../datatype/bnfFixBNF.ot.art \
+  ../datatype/bnfMutual.ot.art \
   ../pred_set/src/pred_set.ot.art \
   ../pred_set/src/set_relation.ot.art \
+  ../pred_set/src/permutes.ot.art \
+  ../pred_set/src/wellorder.ot.art \
+  ../pred_set/src/cardinalityCore.ot.art \
+  ../pred_set/src/cardinal.ot.art \
+  ../pred_set/src/ordinalBasic.ot.art \
   ../list/src/list.ot.art \
   ../list/src/rich_list.ot.art \
   ../list/src/indexedLists.ot.art \
-  ../list/src/numposrep.ot.art
+  ../list/src/numposrep.ot.art \
+  ../quotient/src/quotient.ot.art
+
+OTPKGCHECK = $(protect $(HOLDIR)/src/opentheory/otpkgcheck.exe)
 
 hol4-base-unint.art: hol4-base-unint.thy $(ARTS)
+	$(OTPKGCHECK) $<
 	opentheory info --article -o $@ $<
 
 base-theorems.art:
@@ -76,7 +89,7 @@ hol4-base.art: hol4-base.thy hol4-base-unint.art ../opentheory/hol4.int \
                bool_defs.ot.art prove_base_assums.ot.art
 	opentheory info --article -o $@ $<
 
-install: hol4-base.thy hol4-base.art 
+install: hol4-base.thy hol4-base.art
 	opentheory install --reinstall $<
 
 all: hol4-base.art

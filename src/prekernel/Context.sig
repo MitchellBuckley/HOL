@@ -1,0 +1,165 @@
+signature Context =
+sig
+
+  (* The unified prover-state container: a snapshotable value bundling the
+     kernel signatures (baked in as typed fields for fast access from Term
+     and Type) plus an extensible UniversalType-indexed dictionary of
+     session-local slots for everything else.
+
+     The live cell is not exposed — callers reach the current context
+     through `snapshot` and mutate it through the helpers below, which
+     coordinate on an internal RW-lock so `restore` is properly fenced. *)
+  type t
+
+  (* Snapshot semantics: `snapshot()` reads the current context as an
+     immutable value; `restore` replaces the live context with a captured
+     one.  Restore is silent — no TheoryDelta events fire — so any state
+     that needs to travel with the context must live in the context.
+
+     `restore` is a **non-logical** operation.  It rewinds the bindings
+     inside the kernel signatures and every `Data` slot, but it does
+     NOT rewind the process-global kernelid allocation clock (see
+     `KernelSig`'s `alloc_counter`).  A `restore` followed by a fresh
+     `new_definition` therefore mints a *new* constant whose kernelid
+     differs from any pre-restore id of the same name — the old
+     constant is reported as retired by `uptodate_id`.  This is the
+     invariant `Term.same_const` / `id_compare` rely on.  Do NOT use
+     `restore` as a scoping mechanism to reintroduce a name at an
+     earlier epoch; see issue #2025 for the exploit that motivated
+     the design.
+
+     Locking (see Context.sml for the full story):
+       - `snapshot` is lock-free: `t` is immutable, so the caller keeps
+         a consistent view even if writers race with them afterwards.
+       - `restore` takes the write side of an internal RW-lock, so it is
+         serialised against every in-flight `Data.write` / `Data.modify`
+         (which take the read side).  Concurrent `Data.write` /
+         `Data.modify` calls on different slots proceed in parallel.
+       - Do NOT call `restore` from inside a `Data.modify` callback —
+         a thread holding the read side would block waiting for itself
+         to release. *)
+  val snapshot : unit -> t
+  (* Note that this does not reach a thread inside `with_context`:
+     that thread reads and writes its pin, so a `restore` of the live
+     cell is invisible to it until the pin is released.  Deliberate --
+     it is what makes a replayed proof immune to a compile rewinding
+     the cell under it.  A `restore` issued *by* a pinned thread
+     replaces that thread's pin, so capture/restore brackets keep
+     working inside one. *)
+  val restore  : t -> unit
+
+  (* Runs `f x` as a parameterised proof: while it is running, an
+     ambient `snapshot` on this thread is reported under the trace
+     "ambient context inside proof" (0 silent, 1 one report per
+     theory, 2 every read, 3 error).
+     `TAC_PROOF` is the only sanctioned caller. *)
+  val in_proof : ('a -> 'b) -> 'a -> 'b
+
+  (* The live context, for the kernel signatures alone: `mk_type` and
+     `mk_const` resolve a name against the live signature rather than a
+     supplied context, so name-based construction inside a proof is an
+     ambient read that no amount of tactic plumbing removes.  Do not use
+     it for anything else.
+
+     It reports under its own trace, "ambient signature inside proof",
+     with the same levels but silent by default: a different population
+     with a different fix, which would otherwise swamp the tactic-state
+     census.  Turn it up to find which proofs construct terms by name. *)
+  val live : unit -> t
+
+  (* Answer this thread's ambient reads from `c` for the duration of
+     `f x`, rather than from the live cell.  What a replaying proof runs
+     under: the cell belongs to whatever compile is in progress, and a
+     `restore` on that thread would otherwise change the signature a
+     proof is halfway through resolving names against -- reported as a
+     failure of a proof that is in fact fine.
+
+     Reads and writes both.  `update`, `gen_update`, `restore`,
+     `Data.write` and `Data.modify` all land in the pin while it is
+     held, so the thread reads back what it wrote and no other thread
+     sees any of it.  A pin is a sandbox rather than a window, and the
+     sandbox is thrown away at the end: a type or constant minted
+     inside one is not in the live signature when the pin is released,
+     and a theorem naming it will not be up to date.  (`Data.new` is
+     the exception and registers into the live cell -- slots are minted
+     at load time, by a process that is not replaying anything.)
+
+     Two standing assumptions, both load-bearing and neither enforced:
+
+       - Pins do not nest.  Exiting clears the slot rather than
+         restoring what was there, so a nested `with_context` would
+         drop its parent's pin on the way out.
+
+       - At most one subsystem installs pins, and only while proofs
+         replay.  `ambient` reads a counter first and only consults the
+         thread it is on when that counter is non-zero, which is what
+         keeps the cost of this off `mk_const`: 0.8ns for the plain
+         read, 1.5ns with the counter, 5.6ns going to the thread every
+         time.  A second pinning client -- or pinning moved somewhere
+         that holds one for the length of a batch build -- leaves the
+         counter permanently non-zero and every thread paying the
+         third figure, with nothing failing to say so. *)
+  val with_context : t -> ('a -> 'b) -> 'a -> 'b
+
+  (* Whether a pin is answering this thread's reads and taking its
+     writes.  Introspection rather than a correctness tool: callers
+     that derive a value and write it back so the derivation is done
+     once needed this while the write went somewhere the read could
+     not see it, and no longer do.  What it is still good for is
+     deciding whether a write is worth making at all, a pinned one
+     being discarded with the pin.  As cheap as the counter `ambient'
+     reads. *)
+  val is_pinned : unit -> bool
+
+  (* Whole-context mutators.  Both take the RW-lock's read side so
+     `restore` won't interleave.  `f` runs under the internal Sref
+     mutex, so nested `update` / `gen_update` inside `f` deadlocks;
+     for cross-slot patterns use `Data.modify` instead. *)
+  val update     : (t -> t) -> unit
+  val gen_update : (t -> t * 'a) -> 'a
+
+  (* Baked-in kernel-signature access.  Fast typed reads for Term/Type. *)
+  val termsig  : t -> Type_dtype.holty KernelSig.symboltable
+  val typesig  : t -> int KernelSig.symboltable
+
+  val map_termsig
+      : (Type_dtype.holty KernelSig.symboltable ->
+         Type_dtype.holty KernelSig.symboltable) -> t -> t
+  val map_typesig
+      : (int KernelSig.symboltable -> int KernelSig.symboltable) -> t -> t
+
+  (* Current-theory name.  Baked in alongside the kernel signatures so
+     snapshot/restore semantics travel with it.  `Thm.setCT` is the
+     only sanctioned mutator; it goes through `map_current_thy`. *)
+  val current_thy     : t -> string option
+  val map_current_thy : (string option -> string option) -> t -> t
+
+  (* Extensible session-local registry.  Each `new` mints a fresh
+     UniversalType witness and returns a typed slot handle; the handle's
+     `get`/`put`/`update` operate on the context's session-data dict.
+     Slots are session-local — not serialized to `.dat`; use
+     `LoadableThyData.new` for persistent theory-data. *)
+  structure Data : sig
+    type 'a slot
+    val new    : {name : string, empty : 'a, pp : 'a -> string} -> 'a slot
+
+    (* Pure combinators against a supplied context value. *)
+    val get    : 'a slot -> t -> 'a
+    val put    : 'a slot -> 'a -> t -> t
+    val update : 'a slot -> ('a -> 'a) -> t -> t
+
+    (* Direct-on-live-context mutators.  Both take the RW-lock's read
+       side (fencing `restore`); `modify` additionally holds a per-slot
+       mutex (serialising same-slot writers).  `f` in `modify` runs
+       outside the internal Sref mutex but inside the per-slot mutex —
+       do not reacquire the same slot from within `f` (same-slot
+       recursion deadlocks; different-slot cross-callbacks are fine). *)
+    val write  : 'a slot -> 'a -> unit
+    val modify : 'a slot -> ('a -> 'a) -> unit
+
+    (* Lib.with_flag-style save-set-restore on a slot: writes `v`, runs
+       `f x`, restores the previous value (also on exception). *)
+    val with_slot_value : 'a slot -> 'a -> ('b -> 'c) -> 'b -> 'c
+  end
+
+end

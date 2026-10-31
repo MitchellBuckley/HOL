@@ -1,6 +1,4 @@
 (* ========================================================================= *)
-(* File Name: WSNScript.sml                                                  *)
-(*---------------------------------------------------------------------------*)
 (* Description: Formal Reliability Analysis of Data Transport Protocol       *)
 (*                 using Theorem Proving                                     *)
 (*                                                                           *)
@@ -10,33 +8,21 @@
 (*                                                                           *)
 (*          School of Electrical Engineering and Computer Sciences (SEECS)   *)
 (*          National University of Sciences and Technology (NUST), PAKISTAN  *)
-(*                                                                           *)
-(*                                                                           *)
 (* ========================================================================= *)
+Theory WSN
+Ancestors
+  lim arithmetic real prim_rec real_probability seq pred_set
+  res_quan sorting list transc rich_list pair combin option
+  extreal real_measure real_lebesgue real_sigma sat num RBD
+  FT_deep VDC smart_grid ASN_gateway
+Libs
+  res_quanTools realLib dep_rewrite extra_pred_setTools
 
-(*loadPath := "/home/waqar/Downloads/RBD" :: !loadPath;*)
-
-(*app load ["arithmeticTheory", "realTheory", "prim_recTheory", "seqTheory",
-          "pred_setTheory","res_quanTheory", "res_quanTools", "listTheory", "real_probabilityTheory", "numTheory",
-          "transcTheory", "rich_listTheory", "pairTheory", "extra_pred_setTools",
-          "combinTheory","limTheory","sortingTheory", "realLib", "optionTheory","satTheory",
-          "util_probTheory", "extrealTheory", "real_measureTheory", "real_lebesgueTheory","real_sigmaTheory",
-          "dep_rewrite","RBDTheory","FT_deepTheory","VDCTheory","smart_gridTheory","ASN_gatewayTheory"];*)
-open HolKernel Parse boolLib bossLib limTheory arithmeticTheory realTheory prim_recTheory real_probabilityTheory
-     seqTheory pred_setTheory res_quanTheory sortingTheory res_quanTools listTheory transcTheory
-     rich_listTheory pairTheory combinTheory realLib  optionTheory util_probTheory extrealTheory real_measureTheory
-     real_lebesgueTheory real_sigmaTheory satTheory numTheory dep_rewrite extra_pred_setTools
-      RBDTheory FT_deepTheory VDCTheory smart_gridTheory ASN_gatewayTheory ;
 
 fun K_TAC _ = ALL_TAC;
 
-open HolKernel boolLib bossLib Parse;
-val _ = new_theory "WSN";
-
-(*--------------------*)
 val op by = BasicProvers.byA;
 val POP_ORW = POP_ASSUM (fn thm => ONCE_REWRITE_TAC [thm]);
-(*---------------------------*)
 
 (*--------------------------------------*)
 Theorem E2W_WSN :
@@ -62,8 +48,10 @@ RW_TAC std_ss[]
 >> RW_TAC list_ss[]
 >> RW_TAC list_ss[exp_func_list_def,list_sum_def,list_prod_def]
 >> RW_TAC real_ss[GSYM transcTheory.EXP_ADD]
+>> AP_TERM_TAC
 >> REAL_ARITH_TAC
 QED
+
 (*------------------------------------*)
 Theorem one_minus_exp_equi :
 !t c. (one_minus_list (exp_func_list c t)) =
@@ -192,7 +180,6 @@ Theorem rel_parallel_series_exp_fail_rate :
       1 - (list_prod o (one_minus_list) of
         (\a. list_prod (exp_func_list a t))) C)
 Proof
-
 REPEAT GEN_TAC >> REPEAT STRIP_TAC
 >> DEP_REWRITE_TAC[parallel_series_struct_rbd_v2]
 >> DEP_REWRITE_TAC[parallel_series_exp_fail_rate]
@@ -244,4 +231,3 @@ QED
 
 
 
-val _ = export_theory();

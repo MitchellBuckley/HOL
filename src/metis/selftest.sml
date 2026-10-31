@@ -1,6 +1,8 @@
-open HolKernel Parse boolLib normalForms;
+open HolKernel Parse boolLib normalForms metisLib
 
 open testutils;
+
+val _ = new_theory "scratch"
 
 val _ = let
   val p = mk_var("p", bool)
@@ -94,5 +96,23 @@ val test_cases =
   ];
 
 val _ = List.app (ignore o normalForms_test) test_cases;
+
+val _ = new_constant("todie", bool)
+val c = mk_const("todie", bool)
+val _ = delete_const "todie"
+fun goalpr _ = "<some goals>"
+val _ = shouldfail {
+      checkexn = is_struct_HOL_ERR "metisTools",
+      printarg = K "Check correct failure on outdated const in thms",
+      printresult = goalpr,
+      testfn = fn ths => runtac (METIS_TAC ths) ([], “p ==> q”)
+    } [ASSUME c]
+
+val _ = shouldfail {
+      checkexn = is_struct_HOL_ERR "metisTools",
+      printarg = K "Check correct failure on outdated const in goal",
+      printresult = goalpr,
+      testfn = runtac (METIS_TAC [])
+    } ([], mk_imp(c, mk_var("p", bool)))
 
 val _ = Process.exit Process.success;

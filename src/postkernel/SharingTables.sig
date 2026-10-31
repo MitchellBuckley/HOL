@@ -1,34 +1,29 @@
 signature SharingTables =
 sig
 
-  structure Map : Binarymap
   exception SharingTables of string
 
   type id = {Thy : string, Other : string}
-  datatype shared_type = TYV of string
-                       | TYOP of int list
+  datatype raw_type = datatype RawTheory_dtype.raw_type
+  type thminfo = DB_dtype.thminfo
+  datatype raw_term = datatype RawTheory_dtype.raw_term
 
-  val shared_type_decode : shared_type HOLsexp.decoder
-  val shared_type_encode : shared_type HOLsexp.encoder
-
-  datatype shared_term = TMV of string * int
-                       | TMC of int * int
-                       | TMAp of int * int
-                       | TMAbs of int * int
-  val shared_term_decode : shared_term HOLsexp.decoder
-  val shared_term_encode : shared_term HOLsexp.encoder
+  type 'a idtab  (* abstract; backed by a local Table instantiation
+                    keyed on `id` -- not exposed as a structure to
+                    avoid leaking the TABLE signature, which trips
+                    mosml on case-insensitive filesystems *)
 
   type stringtable =
-       {size : int, map : (string,int) Map.dict, list : string list}
+       {size : int, map : int Symtab.table, list : string list}
   type idtable = {idsize : int,
-                  idmap : (id, int) Map.dict,
+                  idmap : int idtab,
                   idlist : (int * int) list}
   type typetable = {tysize : int,
-                    tymap : (Type.hol_type, int)Map.dict,
-                    tylist : shared_type list}
+                    tymap : int Typetab.table,
+                    tylist : raw_type list}
   type termtable = {termsize : int,
-                    termmap : (Term.term, int)Map.dict,
-                    termlist : shared_term list}
+                    termmap : int Termtab.table,
+                    termlist : raw_term list}
 
   val empty_strtable : stringtable
   val empty_idtable : idtable
@@ -40,23 +35,22 @@ sig
   val enc_tytable  : typetable HOLsexp.encoder
   val enc_tmtable  : termtable HOLsexp.encoder
 
-  val dec_strings  : string Vector.vector HOLsexp.decoder
   val dec_ids      : string Vector.vector -> id Vector.vector HOLsexp.decoder
 
-  val make_shared_type : Type.hol_type -> stringtable -> idtable -> typetable ->
+  val make_raw_type : Type.hol_type -> stringtable -> idtable -> typetable ->
                          (int * stringtable * idtable * typetable)
 
-  val make_shared_term : Term.term ->
+  val make_raw_term : Term.term ->
                          (stringtable * idtable * typetable * termtable) ->
                          int * (stringtable * idtable * typetable * termtable)
 
   val build_id_vector   : string Vector.vector -> (int * int) list ->
                           id Vector.vector
-  val build_type_vector : id Vector.vector -> shared_type list ->
+  val build_type_vector : id Vector.vector -> raw_type list ->
                           Type.hol_type Vector.vector
 
   val build_term_vector : id Vector.vector -> Type.hol_type Vector.vector ->
-                          shared_term list -> Term.term Vector.vector
+                          raw_term list -> Term.term Vector.vector
 
   type sharing_data_in
   type sharing_data_out
@@ -64,7 +58,7 @@ sig
                        unnamed_terms : Term.term list,
                        named_types : (string * Type.hol_type) list,
                        unnamed_types : Type.hol_type list,
-                       theorems : (string * Thm.thm) list}
+                       theorems : (string * Thm.thm * thminfo) list}
   val build_sharing_data : extract_data -> sharing_data_in
   val add_strings : string list -> sharing_data_in -> sharing_data_in
   val add_types : Type.hol_type list -> sharing_data_in -> sharing_data_in
@@ -75,13 +69,22 @@ sig
   val enc_sdata : sharing_data_in HOLsexp.encoder
 
   val dec_sdata :
-      {with_strings: (int -> string) -> unit,
-       with_stridty:
-         (int -> string) * (int -> id) * Type.hol_type Vector.vector -> unit} ->
-      sharing_data_out HOLsexp.decoder
+      {before_types: unit -> unit,
+       before_terms: Type.hol_type Vector.vector -> unit,
+       tables : RawTheory_dtype.sharing_tables,
+       exports : string RawTheory_dtype.raw_exports} ->
+      sharing_data_out
   val export_from_sharing_data : sharing_data_out -> extract_data
   val read_term : sharing_data_out -> string -> Term.term
   val read_string : sharing_data_out -> int -> string
+
+  (* A raw theory's locations are string-table indices, so a reader that
+     took `RawTheoryReader.load_raw_thydata' straight off disk cannot
+     turn one into a path without these.  `f' resolves an index against
+     that theory's own string table. *)
+  val translatepath : string list -> string
+  val translate_loc : (int -> string) -> RawTheory_dtype.raw_loc ->
+                      RawTheory_dtype.thm_src_location
 
 end
 

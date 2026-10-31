@@ -1,10 +1,12 @@
 open HolKernel Parse bossLib boolLib;
 
+val _ = new_theory "scratch"
+
 open ratLib ratReduce;
 
 open testutils;
 
-fun mkt s c (t1, t2) i =
+fun mkt s c (t1: term, t2: term) i =
   (s ^ "(" ^ StringCvt.padLeft #"0" 2 (Int.toString i) ^ ")", c, t1, t2)
 
 val rmc = mkt "RAT_MUL_CONV" RAT_MUL_CONV

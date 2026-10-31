@@ -1,7 +1,3 @@
-ifdef POLY
-HOLHEAP = ../../num/termination/numheap
-endif
-
 EXTRA_CLEANS = selftest.exe selftest.log
 
 THYFILES = $(patsubst %Script.sml,%Theory.uo,$(wildcard *.sml))
@@ -10,7 +6,7 @@ TARGETS = $(patsubst %.sml,%.uo,$(THYFILES))
 all: $(TARGETS) selftest.exe
 .PHONY: all
 
-selftest.exe: selftest.uo $(dprot $(SIGOBJ)/term_pp.uo) state_transformerTheory.uo
+selftest.exe: selftest.uo $(dprot $(SIGOBJ)/term_pp.uo) state_transformerTheory.uo state_monadLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifeq($(KERNELID),otknl)
@@ -28,14 +24,14 @@ install: hol4-monad.thy hol4-monad.art
 endif
 
 ifdef HOLSELFTESTLEVEL
-all: selftest.log
+all: more-monads-selftest.log
 
-selftest.log: ./selftest.exe
-	./selftest.exe > $@ 2>&1
+more-monads-selftest.log: ./selftest.exe
+	$(tee $<, $@)
 
 endif
 
-EXTRA_CLEANS += selftest.log
+EXTRA_CLEANS += more-monads-selftest.log
 
 ifdef HOLBUILD
 all: link-to-sigobj

@@ -14,9 +14,9 @@
 structure Type :> Type =
 struct
 
-open Feedback Lib KernelTypes;   infix |->;
+open Feedback Lib Type_dtype KernelTypes;   infix |->;
 
-type hol_type = KernelTypes.hol_type;
+type hol_type = Type_dtype.hol_type;
 
 val ERR = mk_HOL_ERR "Type";
 val WARN = HOL_WARNING "Type";
@@ -26,35 +26,56 @@ val WARN = HOL_WARNING "Type";
               Create the signature for HOL types
  ---------------------------------------------------------------------------*)
 
-val typesig = KernelSig.new_table()
+fun typesig() = Context.typesig (Context.live())
+fun upd_typesig f = Context.update (Context.map_typesig f)
+fun genupd_typesig f =
+    Context.gen_update (fn c =>
+      let val (new, r) = f (Context.typesig c)
+      in (Context.map_typesig (fn _ => new) c, r) end)
+
+fun type_epoch () = KernelSig.symtab_epoch (typesig())
+fun display_name_of_id id = KernelSig.display_name_of_id (typesig()) id
+
 fun prim_delete_type (k as {Thy, Tyop}) =
-    ignore (KernelSig.retire_name(typesig, {Thy = Thy, Name = Tyop}))
+    if KernelSig.is_sealed_thy Thy then
+      raise ERR "prim_delete_type"
+            ("target theory \"" ^ Thy ^
+             "\" is sealed; cross-theory deletes are refused")
+    else
+      upd_typesig (#1 o KernelSig.retire_name {Thy = Thy, Name = Tyop})
 
 fun prim_new_type {Thy,Tyop} n = let
   val _ = n >= 0 orelse failwith "invalid arity"
+  val _ = not (KernelSig.is_sealed_thy Thy) orelse
+          raise ERR "prim_new_type"
+                ("target theory \"" ^ Thy ^
+                 "\" is sealed; cross-theory mints are refused")
 in
-  ignore (KernelSig.insert(typesig,{Thy=Thy,Name=Tyop},n))
+  upd_typesig (#1 o KernelSig.insert({Thy=Thy,Name=Tyop},n))
 end
-fun del_segment s = KernelSig.del_segment(typesig, s)
+fun del_segment s =
+    if KernelSig.is_sealed_thy s then
+      raise ERR "del_segment"
+            ("theory \"" ^ s ^ "\" is sealed; segment delete refused")
+    else
+      upd_typesig (KernelSig.del_segment s)
 
 fun uptodate_type (Tyv s) = true
   | uptodate_type (Tyapp((info,_), args)) =
-    KernelSig.uptodate_id info andalso List.all uptodate_type args
-
-
-
+    KernelSig.uptodate_id (typesig()) info andalso List.all uptodate_type args
 
 (*---------------------------------------------------------------------------*
  * Builtin type operators (fun, bool, ind). These are in every HOL           *
  * signature, and it is convenient to nail them down here.                   *
  *---------------------------------------------------------------------------*)
 
-local open KernelSig
+local
+  fun insert knm_aty = genupd_typesig (KernelSig.insert knm_aty)
 in
-val fun_tyid = insert(typesig, {Thy = "min", Name = "fun"}, 2)
+val fun_tyid = insert({Thy = "min", Name = "fun"}, 2)
 val fun_tyc = (fun_tyid, 2)
-val bool_tyid = insert(typesig, {Thy = "min", Name = "bool"}, 0)
-val ind_tyid = insert(typesig, {Thy = "min", Name = "ind"}, 0)
+val bool_tyid = insert({Thy = "min", Name = "bool"}, 0)
+val ind_tyid = insert({Thy = "min", Name = "ind"}, 0)
 end
 
 
@@ -91,7 +112,7 @@ fun mk_thy_type {Thy,Tyop,Args} = let
   open KernelSig
   val knm = {Thy=Thy, Name = Tyop}
 in
-  case peek(typesig,{Thy=Thy,Name=Tyop}) of
+  case peek(typesig(),{Thy=Thy,Name=Tyop}) of
       Success const => make_type const Args ("mk_thy_type", name_toString knm)
     | Failure (NoSuchThy _) =>
       raise ERR "mk_thy_type" ("theory " ^ Thy ^ " is not in ancestry")
@@ -100,12 +121,31 @@ in
                   " has not been declared in theory "^quote Thy^".")
 end
 
+(* Declare {Thy,Tyop} at arity |Args| and return that mint applied to
+   Args.  prim_type_definition used to declare the operator and then
+   look the name up again to build its theorem, which is one step more
+   than it needs: the mint is in the caller's hand already, and every
+   constant path has always used what prim_new_const returned.  See
+   Context.with_context for what the round trip cost back when the
+   write and the read could answer from different contexts. *)
+fun prim_mk_new_type {Thy,Tyop} Args =
+    let
+      val _ = not (KernelSig.is_sealed_thy Thy) orelse
+              raise ERR "prim_mk_new_type"
+                    ("target theory \"" ^ Thy ^
+                     "\" is sealed; cross-theory mints are refused")
+      val arity = length Args
+      val id = genupd_typesig (KernelSig.insert({Thy=Thy,Name=Tyop}, arity))
+    in
+      Tyapp ((id, arity), Args)
+    end
+
 fun decls nm = let
   fun foldthis({Thy,Name},_,acc) = if Name = nm then
                                      {Tyop=Name,Thy=Thy} :: acc
                                    else acc
 in
-  KernelSig.foldl foldthis [] typesig
+  KernelSig.foldl foldthis [] (typesig())
 end
 
 local
@@ -114,7 +154,7 @@ local
         if Name = Tyop then tycon :: acc
         else acc
   in
-    case KernelSig.foldl foldthis [] typesig of
+    case KernelSig.foldl foldthis [] (typesig()) of
       [] => raise ERR "mk_type" (Lib.quote Tyop^" has not been declared")
     | [c] => c
     | c::_ => (WARN "mk_type" "more than one possibility"; c)
@@ -129,14 +169,27 @@ end
  * Take a type apart.                                                        *
  *---------------------------------------------------------------------------*)
 
-local open KernelTypes KernelSig
+local open Type_dtype KernelSig
 in
 fun break_type (Tyapp p) = p | break_type _ = raise ERR "break_type" "";
 
-fun dest_thy_type (Tyapp((tyc,_),A)) = {Thy=seg_of tyc,Tyop=name_of tyc,Args=A}
+fun dest_thy_typeid (Tyapp((tyc,_),A)) =
+    {Thy = seg_of tyc, Tyop = tyc, Args = A}
+  | dest_thy_typeid _ = raise ERR "dest_thy_typeid" "";
+
+(* Skips the uptodate/display check for the same reason as dest_thy_const
+   in Term.sml: this function is on the hot path (TypeBase, datatype
+   package, Type.dest_type, various is_X predicates).  Pretty-printers
+   that want oldification decoration should call display_name_of_id
+   directly. *)
+fun dest_thy_type (Tyapp((tyc,_),A)) =
+    {Thy = seg_of tyc, Tyop = KernelSig.name_of tyc, Args = A}
   | dest_thy_type _ = raise ERR "dest_thy_type" "";
 
-fun dest_type (Tyapp((tyc,_),A)) = (name_of tyc, A)
+fun dest_type (ty as Tyapp _) =
+    let val {Tyop,Args,...} = dest_thy_type ty
+    in (Tyop, Args)
+    end
   | dest_type _ = raise ERR "dest_type" ""
 end;
 
@@ -145,10 +198,10 @@ end;
  *---------------------------------------------------------------------------*)
 
 fun op_arity {Thy,Tyop} =
-    case KernelSig.peek(typesig,{Thy=Thy,Name=Tyop}) of
+    case KernelSig.peek(typesig(),{Thy=Thy,Name=Tyop}) of
       KernelSig.Success (id, a) => SOME a
     | _ => NONE
-fun uptodate_kname knm = KernelSig.isSuccess (KernelSig.peek(typesig,knm))
+fun uptodate_kname knm = KernelSig.isSuccess (KernelSig.peek(typesig(),knm))
 
 (*---------------------------------------------------------------------------
        Declared types in a theory segment
@@ -157,7 +210,7 @@ fun uptodate_kname knm = KernelSig.isSuccess (KernelSig.peek(typesig,knm))
 fun thy_types s = let
   fun xlate (knm, (id,arity)) = (KernelSig.name_of id, arity)
 in
-  map xlate (KernelSig.listThy typesig s)
+  map xlate (KernelSig.listThy (typesig()) s)
 end;
 
 
@@ -180,7 +233,9 @@ fun mk_vartype "'a" = alpha  | mk_vartype "'b" = beta
   | mk_vartype "'e" = etyvar | mk_vartype "'f" = ftyvar
   | mk_vartype s = if Lexis.allowed_user_type_var s then Tyv s
                    else (if !varcomplain then
-                           WARN "mk_vartype" "non-standard syntax"
+                           WARN "mk_vartype"
+                                ("non-standard syntax: \""^ String.toString s ^
+                                 "\"")
                          else (); Tyv s)
 
 fun dest_vartype (Tyv s) = s
@@ -193,13 +248,12 @@ val is_type = not o is_vartype;
  * The variables in a type.                                                  *
  *---------------------------------------------------------------------------*)
 
-local fun tyvars (Tyapp(_,Args)) vlist = tyvarsl Args vlist
-        | tyvars v vlist = Lib.insert v vlist
-      and tyvarsl L vlist = rev_itlist tyvars L vlist
-in
-fun type_vars ty = rev(tyvars ty [])
-fun type_varsl L = rev(tyvarsl L [])
-end;
+fun type_vars_acc (Tyapp(_,Args)) vlist = type_varsl_acc Args vlist
+  | type_vars_acc v vlist = Lib.insert v vlist
+and type_varsl_acc L vlist = rev_itlist type_vars_acc L vlist
+
+fun type_vars ty = type_vars_acc ty []
+fun type_varsl L = type_varsl_acc L []
 
 
 (*---------------------------------------------------------------------------
@@ -225,14 +279,19 @@ fun type_var_in v =
  *---------------------------------------------------------------------------*)
 
 fun ty_sub [] _ = SAME
-  | ty_sub theta (Tyapp(tyc,Args))
-      = (case delta_map (ty_sub theta) Args
-          of SAME => SAME
-           | DIFF Args' => DIFF (Tyapp(tyc, Args')))
-  | ty_sub theta v =
-      case Lib.subst_assoc (equal v) theta
-       of NONE    => SAME
-        | SOME ty => DIFF ty
+  | ty_sub theta ty =
+    let
+      fun ty_sub1 theta (Tyapp(tyc,Args)) =
+            (case delta_map (ty_sub1 theta) Args of
+                SAME => SAME
+              | DIFF Args' => DIFF (Tyapp(tyc, Args')))
+        | ty_sub1 theta v =
+             case Lib.subst_assoc (equal v) theta of
+                NONE    => SAME
+              | SOME ty => DIFF ty
+    in
+       ty_sub1 theta ty
+    end
 
 fun type_subst theta = delta_apply (ty_sub theta)
 
@@ -288,13 +347,21 @@ fun match_type pat ob = match_type_in_context pat ob []
         An order on types
  ---------------------------------------------------------------------------*)
 
-fun compare (Tyv s1, Tyv s2) = String.compare (s1,s2)
-  | compare (Tyv _, _) = LESS
-  | compare (Tyapp _, Tyv _) = GREATER
-  | compare (Tyapp((c1,_),A1), Tyapp((c2,_),A2)) =
-      case KernelSig.id_compare (c1, c2)
-       of EQUAL => Lib.list_compare compare (A1,A2)
-        |   x   => x;
+fun fast_ty_eq (ty1:hol_type) (ty2:hol_type) = Portable.pointer_eq (ty1,ty2);
+
+fun compare (ty1,ty2) =
+    if fast_ty_eq ty1 ty2 then
+       EQUAL
+    else
+    case (ty1,ty2)
+     of (Tyv s1, Tyv s2) => String.compare (s1,s2)
+      | (Tyv _, _) => LESS
+      | (Tyapp _, Tyv _) => GREATER
+      | (Tyapp((c1,_),A1), Tyapp((c2,_),A2)) =>
+          (case KernelSig.id_compare (c1, c2)
+           of EQUAL => Lib.list_compare compare (A1,A2)
+            | other => other);
+
 
 (*---------------------------------------------------------------------------
      Automatically generated type variables. The unusual names make

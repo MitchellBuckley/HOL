@@ -19,8 +19,7 @@ sig
       (term qbuf * term PStack, unit, string locn.located) errormonad.t
 
   datatype mx_order = datatype parse_term_dtype.mx_order
-  val mk_prec_matrix :
-      term_grammar.grammar ->
-      ((stack_terminal * bool) * stack_terminal, mx_order) Binarymap.dict Uref.t
+  type prec_matrix = parse_term_dtype.prec_matrix
+  val mk_prec_matrix : term_grammar.grammar -> prec_matrix
 
 end

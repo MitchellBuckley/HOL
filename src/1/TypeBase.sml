@@ -65,8 +65,9 @@ val bool_info =
       {ax=ORIG boolTheory.boolAxiom,
        induction = ORIG boolTheory.bool_INDUCT,
        case_def = boolTheory.bool_case_thm,
-       case_eq =
-         Prim_rec.prove_case_eq_thm{
+       case_eq = boolTheory.bool_case_eq,
+       case_elim =
+         Prim_rec.prove_case_ho_elim_thm{
            case_def = boolTheory.bool_case_thm,
            nchotomy = boolTheory.BOOL_CASES_AX
          },
@@ -91,10 +92,16 @@ val itself_info = tweak_tyi itself_info0
  *--------------------------------------------------------------------------*)
 
 local
-  val update_fns = ref ([]:(tyinfo -> tyinfo) list)
+  val update_fns_slot : (tyinfo -> tyinfo) list Context.Data.slot =
+      Context.Data.new
+        {name = "TypeBase.update_fns", empty = [],
+         pp = fn _ => "<TypeBase.update_fns>"}
 in
-  fun register_update_fn f = (update_fns := !update_fns @ [f])
-  fun apply_update_fns tyi = list_compose (!update_fns) tyi
+  fun register_update_fn f =
+      Context.Data.modify update_fns_slot (fn fs => fs @ [f])
+  fun apply_update_fns_of ctxt tyi =
+      list_compose (Context.Data.get update_fns_slot ctxt) tyi
+  fun apply_update_fns tyi = apply_update_fns_of (Context.snapshot()) tyi
 end;
 
 fun apply_delta tyi tyb = TypeBasePure.insert tyb (tweak_tyi tyi)
@@ -104,6 +111,7 @@ val initial_tydb = TypeBasePure.empty
                      |> rev_itlist apply_delta [bool_info, itself_info]
 
 val fullresult as {DB = thy_typebase, get_global_value = theTypeBase,
+                   get_global_value_of = theTypeBase_of,
                    record_delta, get_deltas = thy_updates,
                    merge = merge_typebases, update_global_value, ...} =
     let open TypeBasePure
@@ -125,7 +133,9 @@ fun export tyis = (write tyis; List.app record_delta tyis)
 
 (* various ways to access the global value *)
 fun read {Thy,Tyop} = prim_get (theTypeBase()) (Thy,Tyop);
-fun fetch ty = TypeBasePure.fetch (theTypeBase()) ty;
+fun fetch_of ctxt ty = TypeBasePure.fetch (theTypeBase_of ctxt) ty
+fun fetch ty = fetch_of (Context.snapshot()) ty
+fun elts_of ctxt = listItems (theTypeBase_of ctxt)
 val elts = listItems o theTypeBase;
 
 fun print_sp_type ty =
@@ -147,9 +157,19 @@ fun pfetch s ty =
 
 fun axiom_of ty        = TypeBasePure.axiom_of (pfetch "axiom_of" ty)
 fun induction_of ty    = TypeBasePure.induction_of (pfetch "induction_of" ty)
-fun constructors_of ty = TypeBasePure.constructors_of (pfetch "constructors_of" ty)
-fun destructors_of ty  = TypeBasePure.destructors_of (pfetch "destructors_of" ty)
-fun recognizers_of ty  = TypeBasePure.recognizers_of (pfetch "recognizers_of" ty)
+fun set_induction_of ty =
+    let val tyi = pfetch "set_induction_of" ty
+    in
+      case TypeBasePure.set_induction_of tyi of
+          SOME th => th
+        | NONE => TypeBasePure.induction_of tyi
+    end
+fun constructors_of ty =
+    TypeBasePure.constructors_of (pfetch "constructors_of" ty)
+fun destructors_of ty  =
+    TypeBasePure.destructors_of (pfetch "destructors_of" ty)
+fun recognizers_of ty  =
+    TypeBasePure.recognizers_of (pfetch "recognizers_of" ty)
 fun case_const_of ty   = TypeBasePure.case_const_of (pfetch "case_const_of" ty)
 fun case_cong_of ty    = TypeBasePure.case_cong_of (pfetch "case_cong_of" ty)
 fun case_def_of ty     = TypeBasePure.case_def_of (pfetch "case_def_of" ty)
@@ -176,7 +196,7 @@ fun encode_of ty       = valOf2 ty "encode_of"
 
 
 
-fun tyi_from_name s =
+fun tyi_from_name_of ctxt s =
   let
     open type_grammar
     fun tyi_from_kid thy nm =
@@ -186,7 +206,7 @@ fun tyi_from_name s =
           let
             val st = TYOP {Args = List.tabulate(i, PARAM), Thy = thy, Tyop = nm}
           in
-            case fetch (structure_to_type st) of
+            case fetch_of ctxt (structure_to_type st) of
                 NONE => raise ERR "tyi_from_name" ("No tyinfo for "^thy^"$"^nm)
               | SOME tyi => tyi
           end
@@ -194,13 +214,13 @@ fun tyi_from_name s =
     case String.fields (equal #"$") s of
         [nm] =>
         let
-          val tyg = Parse.type_grammar()
+          val tyg = Parse.get_type_grammar ctxt
         in
-          case Binarymap.peek(privileged_abbrevs tyg, nm) of
+          case Symtab.lookup (privileged_abbrevs tyg) nm of
               NONE => raise ERR "tyi_from_name"
                             ("Ty-grammar doesn't know name: "^nm)
             | SOME thy =>
-              (case Binarymap.peek(parse_map tyg, {Thy = thy, Name = nm}) of
+              (case KNametab.lookup (parse_map tyg) {Thy = thy, Name = nm} of
                    NONE => raise ERR "tyi_from_name"
                                  ("Ty-grammar has bad abbrev-map for name: "^nm)
                  | SOME (TYOP {Thy,Tyop,...}) => tyi_from_kid Thy Tyop
@@ -212,9 +232,11 @@ fun tyi_from_name s =
       | _ => raise ERR "tyi_from_name" ("Malformed tyname: "^s)
   end
 
-val CaseEq = TypeBasePure.case_eq_of o tyi_from_name
-val CaseEqs = Drule.LIST_CONJ o map CaseEq
-fun AllCaseEqs() =
+fun CaseEq_of ctxt = TypeBasePure.case_eq_of o tyi_from_name_of ctxt
+fun CaseEqs_of ctxt = Drule.LIST_CONJ o map (CaseEq_of ctxt)
+fun CaseEq s = CaseEq_of (Context.snapshot()) s
+fun CaseEqs ss = CaseEqs_of (Context.snapshot()) ss
+fun AllCaseEqs_of ctxt =
   let
     fun foldthis(ty, tyi, acc) =
       case Lib.total TypeBasePure.case_eq_of tyi of
@@ -222,8 +244,9 @@ fun AllCaseEqs() =
         | SOME th => if aconv (concl acc) boolSyntax.T then th
                      else CONJ th acc
   in
-    TypeBasePure.fold foldthis boolTheory.TRUTH (theTypeBase())
+    TypeBasePure.fold foldthis boolTheory.TRUTH (theTypeBase_of ctxt)
   end
+fun AllCaseEqs() = AllCaseEqs_of (Context.snapshot())
 
 fun type_info_of ty = {case_def = case_def_of ty, nchotomy = nchotomy_of ty}
 
@@ -234,6 +257,31 @@ fun case_rand_of ty = let
 
 val case_pred_disj_of = Prim_rec.prove_case_ho_elim_thm o type_info_of
 val case_pred_imp_of = Prim_rec.prove_case_ho_imp_thm o type_info_of
+
+fun CasePred' tyinfo =
+    let
+      val id = mk_abs(mk_var ("x", bool), mk_var ("x", bool))
+    in
+      case_elim_of tyinfo
+      |> Drule.ISPEC id
+      |> Conv.CONV_RULE (Conv.LHS_CONV Thm.BETA_CONV)
+    end
+
+fun CasePred_of ctxt = CasePred' o tyi_from_name_of ctxt
+fun CasePreds_of ctxt = Drule.LIST_CONJ o map (CasePred_of ctxt)
+fun CasePred s = CasePred_of (Context.snapshot()) s
+fun CasePreds ss = CasePreds_of (Context.snapshot()) ss
+fun AllCasePreds_of ctxt =
+  let
+    fun foldthis(ty, tyi, acc) =
+      case Lib.total CasePred' tyi of
+          NONE => acc
+        | SOME th => if aconv (concl acc) boolSyntax.T then th
+                     else CONJ th acc
+  in
+    TypeBasePure.fold foldthis boolTheory.TRUTH (theTypeBase_of ctxt)
+  end
+fun AllCasePreds() = AllCasePreds_of (Context.snapshot())
 
 (* ---------------------------------------------------------------------- *
  * Install case transformation function for parser                        *
@@ -265,8 +313,10 @@ fun is_constructor x = TypeBasePure.is_constructor (theTypeBase()) x;
 (*---------------------------------------------------------------------------*)
 
 fun mk_case x   = TypeBasePure.mk_case (theTypeBase()) x
-fun dest_case x = TypeBasePure.dest_case (theTypeBase()) x
-fun is_case x   = TypeBasePure.is_case (theTypeBase()) x;
+fun dest_case_of c x = TypeBasePure.dest_case (theTypeBase_of c) x
+fun dest_case x = dest_case_of (Context.snapshot()) x
+fun is_case_of c x = TypeBasePure.is_case (theTypeBase_of c) x
+fun is_case x   = is_case_of (Context.snapshot()) x;
 fun strip_case x = TypeBasePure.strip_case (theTypeBase()) x
 
 fun mk_pattern_fn css =
@@ -333,96 +383,6 @@ fun update_axiom th =
 (* ----------------------------------------------------------------------
     Initialise the case-split munger in the pretty-printer
    ---------------------------------------------------------------------- *)
-
-(*
-  This is broken because it can re-order rows in the case expression in a semantically significant way
-local
-  fun group_by f =
-    let
-      fun i x [] = [[x]]
-        | i x (y::ys) =
-          if f x (hd y)
-          then ((x::y)::ys)
-          else y::(i x ys)
-      fun g acc [] = acc
-        | g acc (x::xs) =
-          g (i x acc) xs
-    in
-      g []
-    end
-  fun aconv_snd x y = aconv (snd x) (snd y)
-  fun max x y = if x < y then y else x
-  fun lengths [] n acc = (n,acc)
-    | lengths (l::ls) n acc =
-      let
-        val m = length l
-      in
-        lengths ls (max n m) ((m,l)::acc)
-      end
-in
-  fun pp_strip_case tm =
-    let
-      val (split_on, splits) = strip_case tm
-      val reduced_splits =
-        let
-          val groups = group_by aconv_snd splits
-          (* groups are in order, but each group is reversed *)
-          val (maxl,lgs) = lengths groups 0 []
-          (* lgs are now reversed *)
-        in
-          case total (pluck (equal maxl o fst)) lgs of
-            SOME ((_,(p,v)::_),lgs) =>
-              rev ((mk_var("_",type_of p),v)::flatten (map snd lgs))
-          | _ => splits
-        end
-    in
-      (split_on, reduced_splits)
-    end
-end
-*)
-
-(* Less ambitious version, which only fires if all (>1) but one row have
-   the same right-hand-side and it doesn't depend on any pattern variables.
-
-   NOTE: This is also broken, since
-      ``case x of 0n => T | 2 => T | _ => F``
-   is printed as
-      ``case x of v => F | _ => T``
-
-local
-  fun disjoint x = HOLset.isEmpty (HOLset.intersection x)
-  fun FV tm = FVL [tm] empty_varset
-in
-  fun pp_strip_case tm =
-    let
-      val (split_on, splits) = strip_case tm
-      fun sole_exception (p,v) =
-        let
-          val (l1,l2) = partition (aconv v o snd) splits
-          val v_rest = snd (hd l2)
-          fun good (p,v) = aconv v_rest v andalso disjoint (FV p, FV v)
-        in
-          if length l1 = 1 andalso all good l2
-          then (hd l1, v_rest)
-          else raise Match
-        end
-      val reduced_splits =
-        case splits of
-          [] => splits
-        | [_] => splits
-        | [_,_] => splits
-        | _ =>
-          let
-            val (u as (p,_),v_rest) = tryfind sole_exception splits
-          in
-            [u,(mk_var("_",type_of p),v_rest)]
-          end
-          handle HOL_ERR _ => splits
-    in
-      (split_on, reduced_splits)
-    end
-end
-*)
 
 val _ = term_pp.init_casesplit_munger strip_case
 

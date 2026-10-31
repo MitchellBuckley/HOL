@@ -35,7 +35,7 @@ As *per* [the standard installation instructions](http://hol-theorem-prover.org/
 
     Repeated calls to `build` should complete quickly: theorem-proving work will not be redone unnecessarily.
     The building of the theory graph can be slow however, and this *does* happen with every invocation of `build` by default.
-    To avoid this use `build`’s `--nograph` option.
+    To avoid this, pass `--no-mdbook` or `--no-helpdocs` to `build`: either flag skips the documentation pipeline (which includes the theory graph).
 
 # Configuration
 
@@ -49,21 +49,35 @@ This is important because the compilation and creation of executables differs so
 Once this determination is made, actual configuration work is done in either `tools-poly/configure.sml` or `tools/configure.sml`
 (See [Sources](#sources) below for more on how these sources are organised.)
 
-## Building `Holmake`
+One of the core outputs of configuration is the `Systeml` structure.
+This has a fixed signature, given in `tools/Holmake/Systeml.sig`, but has a `structure` that is filled with installation- and ML implementation-specific details.
+The generated file is `tools/Holmake/Systeml.sml`, which is generated from either `tools/Holmake/unix-systeml.sml` (for Moscow ML) or `tools-poly/Holmake/unix-systeml.sml` (for Poly/ML).
+There is an additional `tools/Holmake/winNT-systeml.sml` meant for Moscow ML on Windows, but this code hasn’t been tested and is probably bit-rotted.
+
+## Building (and Rebuilding) `Holmake`
 
 Because `Holmake` is not assumed to exist when `Holmake` is built, the configuration script is responsible for assembling the constituent sources.
 In the case of Moscow\ ML, this means that it makes the successive calls to `mosmlc` as necessary.
-With Poly/ML, the work is orchestrated by `tools-poly/Holmake/poly-Holmake.ML`.
-That script is a sequence of calls to `use`, followed by the boilerplate necessary to create an object-code file.
-The configuration script then calls the C compiler to link that object code into the final executable.
+With Poly/ML, the work is orchestrated by `tools/Holmake/poly/poly-Holmake.ML`.
+That file is a sequence of calls to `use`, followed by a simple definition of a `main` function.
+This can then be compiled with `polyc`.
 
 Note that we can’t simplify the Moscow\ ML build in a way analogous to what happens with Poly/ML because the complicated sequence of instructions are command-line invocations of `mosmlc`, rather than calls to `use` within a Poly/ML program.
 We might attempt to create a shell-script containing the calls to `mosmlc`, but it seems more OS-independent to invoke `OS.Process.system` from within `configure.sml`.
 
+Quick rebuilds of Poly/ML `Holmake` are possible by making the call
+
+    polyc -o ../../../bin/Holmake poly-Holmake.ML
+
+in the `tools/Holmake/poly` directory.
+It *is* necessary to specify the output path (with the `-o` option) to replace the old `Holmake` if one is going to test/use the new tool in the existing `HOL` sources.
+Without doing this, the new implementation will see that it is in a HOL source–tree and then switch to call the `Holmake` in that source-tree’s `bin` directory.
+
+
 # Build
 
 The standard options to build are described in its help documentation, which is accessible by invoking `build --help` (or `build -h`, or `build -?`, but not `build help` because this builds the HOL documentation).
-The file containing this information about options is located at `tools/buildhelp.txt`.
+The file containing this information about options is located at `tools/build/buildhelp.txt`.
 
 The most frequently used options to build are those to do with “selftest” level, and the selection of kernel.
 
@@ -72,7 +86,7 @@ The most frequently used options to build are those to do with “selftest” le
 The build program’s `--selftest` option can be given as is (in which case the selftest level is 1), or followed by a positive number, which gives the selftest level explicitly.
 The higher the number, the more regression tests are executed.
 Developers are expected to categorise their tests so that those at level 1 will complete quickly, those at level 2 will execute in moderate time, and those at level 3 can take as long as is necessary.[^selftestnote]
-As of 2022, there are no regression tests that require a level greater than 3,and we will likely keep things this way.
+As of 2022, there are no regression tests that require a level greater than 3, and we will likely keep things this way.
 
 [^selftestnote]: As of 2022, our automatic testing infrastructure runs one selftest at level 3 each day, and one at level 2, with the latter testing the experimental kernel. Yes, this means that things only in level 3 are not getting tested for the experimental kernel.
 
@@ -84,14 +98,15 @@ There are two standard ways to the install a test that can be run by `build`:
          ifdef HOLSELFTESTLEVEL
          endif
 
-    block to get the executable to be run.  Just checking if the variable is set, will cause execution at all non-zero levels. To fire a test only at particular levels, use the `ifeq` and related commands. It may also be a good idea to have this block produce a log-file recording the execution of the selftest; this can be done effectively with the `Holmake` function `$(tee ...)`.
+    block to get the executable to be run.  Just checking if the variable is set, will cause execution at all non-zero levels. To fire a test only at particular levels, use the `ifeq` and related commands. 
+    It may also be a good idea to have this block produce a log-file recording the execution of the selftest; this can be done effectively with the `Holmake` function `$(tee ...)`.
 
     There are a number of examples of constructing `selftest.exe` executables in the sources.
     See for example `src/boss/selftest.sml` and `src/boss/Holmakefile`.
     Though the `Holmakefile` gives build commands in terms of `$(HOLMOSMLC)`, the `selftest.exe` executable will also be built correctly if running Poly/ML.
 
 2.  Create a new directory for build to operate on.
-    This directory can be inserted into the early stages of the build sequence, as explained in the documentation at the head of `tools/build-sequence`.
+    This directory can be inserted into the early stages of the build sequence, as explained in the documentation at the head of `tools/build/build-sequence`.
     If the testing happens after `bossLib` and (in Poly/ML) the creation of the standard `hol.state` heap, the directory should be included in the `Holmakefile` in `src/parallel_builds/core`.
     The various tests in that file can be used to insert regression test directories into the big parallel build of all the post-`bossLib` directories.
     Using a test-directory is necessary if the tests need to examine behaviours to do with theory export and loading.
@@ -112,16 +127,47 @@ The experimental kernel can be selected by passing the `--expk` option to `build
 The *OpenTheory kernel* is based on the experimental kernel, but adds proof-logging to the primitive inference rules so that OpenTheory theory packages can be exported from HOL.
 This kernel can be selected by passing the `--otknl` option to `build`.
 
+The *tracing kernel* uses the same proof-logging to the primitive inference rules as OpenTheory, but exports inference rules without additional translation.
+This kernel can be selected by passing the `--trknl` option to `build`.
+
 ## Build Sequences
 
 When `build` runs, it choreographs its calls to `Holmake` by referring to a specified sequence of directories.
-By default this sequence is that specified in the file `tools/build-sequence`, which in turn refers to other files *via* `#include` directives.
+By default this sequence is that specified in the file `tools/build/build-sequence`, which in turn refers to other files *via* `#include` directives.
 It is possible to provide a different sequence by using the `--seq` commandline option to `build`.
 Such sequences can be constructed more easily by referring to sequence fragments in the `tools/sequences` directory, and including these with `#include` commands.
-The details of the required format for sequence files is spelled out in a comment at the head of the `tools/build-sequence` file.
+The details of the required format for sequence files is spelled out in a comment at the head of the `tools/build/build-sequence` file.
 
 Past the initial prefix of this process, most directories in the build sequence are actually listed in the `Holmakefile` in `src/parallel_builds/core`.
 This arrangement allows parallel processing of lots of directories at once.
+The sequence file `upto-parallel` gives the sequence of build targets up this point, so is a reasonable argument to `--seq` for tests of the core system.
+
+## Poly/ML Build Phases
+
+When building under Poly/ML, `build` proceeds through three phases, distinguished by which Poly/ML heap the per-directory `Holmake` invocations use.
+The transitions are driven by the `phase_extras` function in `tools-poly/build.sml`.
+
+1.  **Initial.**
+    No HOL-specific heap exists yet, so `Holmake` is invoked with `--poly_not_hol`.
+    This phase covers the kernel through `src/proofman`, the directory in which the bare heap, `bin/hol.state0`, is built (along with its accompanying `proofManagerLib.uo`).
+
+2.  **Bare.**
+    Once both `bin/hol.state0` and `sigobj/proofManagerLib.uo` exist, subsequent `Holmake` invocations are passed `--holstate <HOLDIR>/bin/hol.state0` so that they load against the bare heap.
+    This phase covers everything from after `src/proofman` up to and including `src/boss`, in which the full `bin/hol.state` heap (which embodies `bossLib`) is built.
+
+3.  **Full.**
+    After `src/boss` (signalled by the build reaching the `bin/hol` entry in the sequence), `Holmake` is invoked with no `--holstate` argument and so falls back to the default `bin/hol.state` heap.
+    This phase covers all post-`bossLib` directories, including `src/parallel_builds/` and the `examples/` tree.
+
+When editing in a directory that the build visits in the Initial or Bare phase (e.g., `src/marker`, `src/q`, `src/combin`, `src/simp/src`, `src/IndDef`, `src/list/src`, …), a plain `Holmake` invocation in that directory will either fail — when `bin/hol.state` hasn't been built yet, as on a fresh tree — or, worse, succeed by compiling against `bin/hol.state`, processing the file under edit in a context that already contains material built on top of it.
+To do a local re-compile before re-running the full build, pass `--holstate $HOLDIR/bin/hol.state0` to `Holmake`.
+Otherwise, just rerun `bin/build`; on incremental changes this is fast and rebuilds downstream theories as well.
+
+## Rebuilding
+
+It is often possible to repeat `build` to get the system to rebuild itself in the face of changed source files.
+If source files have moved directories, or disappeared entirely, `build` (more accurately `Holmake` when `build` calls it) may get confused by stale dependency information.
+In this situation, cleaning everything first with `build cleanall` may be necessary.
 
 # Things in `bin`
 
@@ -129,41 +175,50 @@ The build process deposits various tools in the `bin` directory.
 Under both Moscow&nbsp;ML and Poly/ML the following are created:
 
 `build`
-: the build tool as above
+: The build tool as above
 
 `hol`
-: the standard executable, which loads a `bossLib` based logical context. This is designed for use by “every user”.
+: The standard executable, which loads a `bossLib` based logical context. This is designed for use by “every user”.
 
-`hol.bare`
-: the “bare” executable, which includes `boolLib` and the goalstack infrastructure but no theories past `bool`.
+`hol --bare`
+: the “bare” mode, which includes `boolLib` and the goalstack infrastructure but no theories past `bool`.
 
 `Holmake`
-: the Holmake tool, again designed for every user.
+: The Holmake tool, again designed for every user.
+
+`linkToSigobj`
+: When the multi-directory, potentially parallel, build begins, this special-purpose tool is run in every directory after that directory’s build completes. It is responsible for linking to relevant `src` files in the `sigobj` directory, allowing HOL users to see/find those files without needing to explicitly mention the original `src` directory in an `INCLUDES`-directive.
 
 `mkmunge.exe`
 : This tool creates LaTeX mungers, as described in the *DESCRIPTION* manual.
 
 `unquote`
-: This is the quotation filter embodied as a Unix filter, with a variety of options to specify behaviour. Note that this is not used by Poly/ML HOL, but can be useful there to see what the filter (as embodied by the `QFRead` module) is doing when it messes with user input.
+: This is the quotation filter embodied as a Unix filter, with a variety of options to specify behaviour. 
+  Note that this is not used by Poly/ML HOL, but can be useful there to see what the filter (as embodied by the `HOLSource` module) is doing when it messes with user input.
 
 Under Poly/ML, the following additional files will appear:
 
-`buildheap`
-:   this is the core execution engine of all Poly/ML HOL (but not `Holmake` or `build`). It will appear as the process name for HOL executions when working interactively, or when scripts are run to generate a theory file. It embodies the quotation handling by implementing a copy of the standard Poly/ML REPL that fiddles with the lexer.
+`hol`
+:   this is the main Poly/ML HOL executable with subcommand-based CLI. It supports the following subcommands:
+
+    - `hol` or `hol repl`: Start an interactive REPL (default)
+    - `hol --bare`: Start REPL with minimal heap (hol.state0)
+    - `hol lsp`: Start LSP server
+    - `hol buildheap -o <file>`: Build a heap from object files
+    - `hol run`: Run script files for side effects (used by Holmake)
+    - `hol heapname`: Print the heap path (reads HOLHEAP from Holmakefile)
+
+    It embodies the quotation handling by implementing a copy of the standard Poly/ML REPL that fiddles with the lexer.
 
 `genscriptdep`
 :   Given a filename, this utility executable will generate a list of a script files dependencies.
 
-`heapname`
-:   this little executable reads the startup directory’s `Holmakefile` (if present) to determine which heap should be used as the basis for interactive execution in this directory.  It is called by `hol`, but *not* `hol.bare`.
-
-    `Holmake` reads `Holmakefile`s for `HOLHEAP` information for every invocation, so interactive execution of HOL in directories such as `src/pred_set/src` and `src/list/src` will have to use `hol.bare` (these are before bossLib), and will not get to use the `numheap` executable created in `src/num/termination`, even though non-interactive builds do get that benefit.
-
 `hol.state`
-:   the Poly/ML heap used by `hol` by default. This embodies `bossLib` and is created in `src/boss`.
+:   The Poly/ML heap used by `hol` by default. 
+    This embodies `bossLib` and is created in `src/boss`.
 
 `hol.state0`
-:   the Poly/ML heap used by `hol.bare`. This is built in `src/proofman`.
+:   the Poly/ML heap used by `hol --bare`. This is built in `src/proofman`.
 
 # Sources and Their Organisation {#sources}
 
@@ -179,34 +234,100 @@ Unless otherwise noted, they are built by the configuration process.
 
 `build`
 :   Described [above](#build).
-    The top-level driver code is in files called `build.sml` in `tools` and `tools-poly`.
-    Shared code is in `tools/buildutils.sml`.
+    The top-level driver code is in files called `build.sml` in `tools/build` and `tools-poly`.
+    Shared code is in `tools/build/buildutils.sml`.
+    The executable is in `bin/`.
 
 `cmp`
 :   A simple-minded tool for comparing two files, returning (*via* exit code) 0 (success) if the two command-line arguments are byte-for-byte identical.
     Useful in regression testing of other tools.
     Built on demand *via* a Holmakefile.
+    The executable is in `tools/cmp`.
+
+`dat-printer`
+:   A utility designed to pretty-print the theorem statements from theory files, using a simple-minded s-expression based format.
+    The source files are located in `src/portableML/rawtheory/`.
 
 `Holmake`
 :   The user-facing tool for building HOL developments.
     Use of this tool is described in the Description manual.
-    The `tools/Holmake` directory contains almost all of the sources, but the Poly/ML-specific implementation of the `Systeml` module (on top of which everything else in the system is built) is in `tools-poly/Holmake`.
+    The `tools/Holmake` directory contains almost all of the sources, but the Poly/ML-specific template for the `Systeml` module (on top of which everything else in the system is built) is in `tools-poly/Holmake`.
     The Poly/ML specific code implementing concurrent `Holmake` is in `tools/Holmake/poly`.
+    The executable is in `bin/`.
 
-`mllex`
+`mllex.exe`
 :   The tool from SML/NJ.
+    The executable is in `tools/mllex`.
 
-`mllyacc`
+`mlyacc.exe`
 :   The tool from SML/NJ.
+    The executable is in `tools/mlyacc/src/`.
 
-`quote-filter`
+`theorytool`
+:   A dependency and definition analysis tool. 
+    Running it allows you to dynamically dump `.dat` keys, or output a full hierarchical ancestry graph of the theories using `dot` format *via* the `--thygraph` option.
+    The source files are located in `src/portableML/rawtheory/`.
+
+`unquote`
 :   The quotation filter that runs over sources before they are seen by SML implementations.
-    This is used interactively (*via* a Unix filter that preprocesses all user-input), and non-interactively (by being applied to source files).
+    This is used interactively (*via* a Unix filter that preprocesses all user-input under Moscow ML, or built into the Poly/ML REPL), and non-interactively (by being applied to source files).
+    The core sources are in `tools/Holmake`, but the standalone executable is built in `tools/quote-filter` and it is moved to `bin/` as part of configuration.
+
+`h4pedant`
+:   Our tool for enforcing code style ([as documented below](#coding-standardsrequirements)).
+    The directories to scan come from positional command-line arguments or, when none are given, from the `[h4pedant]` section of the enclosing `holproject.toml` (see the *Description* manual); options dictate which requirements are enforced/checked for.
+    The enforcing of style is done by the `Holmakefile` in `src/portableML/testsrc`.
+    The executable is in `tools/h4pedant`.
 
 ## Other Tools Directories
 
 `tools/build-logs` and `tools-poly/build-logs`
 :   As each build proceeds, log files recording execution times *per* theory are generated and stored in these directories.
+    These feed `checkRegressions`, which compares a finished build against the median of recent ones.
+    They are *not* what the parallel scheduler reads; see `build-times` below.
+
+`build-times` (at a project root) and `.hol/build-logs/target-times`
+:   Cost data for Holmake's parallel scheduler, in child CPU seconds: `<key> <secs>` per line, `#` comments allowed.
+    `Holmake` picks the ready job with the largest sum-of-costs-to-a-sink, so without these it falls back to the order jobs happened to be added to the graph.
+
+    `.hol/build-logs/target-times` is the per-project cache, rewritten by every parallel `Holmake` run out of the child-CPU time it already measures for each job.
+    It is gitignored, so a fresh checkout starts with nothing --- which is when the longest build of all is run.
+
+    `build-times` is the committed *seed* that covers that gap.
+    It is read-only, and any locally measured value overrides it, so it matters only until a target has been built once here.
+    A project names a different path for it with a `build_times` key in its `holproject.toml`.
+
+    Regenerate it with `developers/gen-build-times`, never by hand:
+
+    ~~~~
+    developers/gen-build-times --exempt src/real/prove_real_assums > build-times
+    ~~~~
+
+    It captures its own dependency graph, by running `Holmake --json` in `src/parallel_builds/core` at `--level` (default 3), which is also the level recorded in the seed's header.
+    The tree must have been built at least once: `KERNELID` is read from `.kernelidstr` rather than from the environment, and without that file `examples/bootstrap` drops out of the graph and so out of the coverage check below.
+    The generator refuses to capture in that state rather than quietly checking less.
+    Whether individual targets are currently up to date makes no difference --- every theory target is in the graph either way, and the generator ignores which of them need rebuilding.
+    `--graph` supplies a pre-captured graph instead, and `--save-graph` keeps the captured one for working out why the gate rejected it.
+
+    A target the build never builds has to be named: `prove_real_assums` is
+    excluded from `src/real`'s `TARGETS` and exists only for the OpenTheory
+    `hol4-real.art` path, so it appears in the graph and will never have a
+    measurement.
+    `--exempt` is repeatable, and `--exempt-keys-file` reads a list.
+
+    The generator refuses to write a seed unless every theory target in the supplied dependency graph has a measurement.
+    That check is the point of the tool.
+    A seed that omits an expensive target is *worse than no seed*: the scheduler orders everything else confidently while the uncovered target weighs nothing and is run last.
+    Measured, a seed built from a core build --- and so missing `examples/` --- was slower than shipping nothing at all.
+    Nothing at build time can detect this, because a missing entry looks exactly like a cheap one.
+
+    So regenerate from a *full* build (`bin/build -F -t`) at the highest selftest level anyone runs.
+    The level is part of the contract: a seed generated and checked at `-t1` leaves whoever builds `-t3` with precisely the most expensive subtrees uncovered.
+
+    Staleness is otherwise soft, and in one direction only.
+    A key whose theory has been renamed or deleted is inert --- costs are only ever looked up for targets already in the graph, so a dead key is never consulted.
+    A *new* expensive theory with no entry is the case that costs you something.
+    Regenerate when large theories land or directories move, rather than on a calendar: drift among cheap entries is worth about 0.2%.
 
 `tools-poly/poly`
 :   Implementations of `Binarymap`, `Binaryset`, `Listsort` and `Help` (from the Moscow\ ML library) so that these libraries can be used in Poly/ML.
@@ -223,18 +344,36 @@ Unless otherwise noted, they are built by the configuration process.
     This file is `use`-d in, and so made available by, `poly-init.ML`.
     Subsequently, there needs to be a call made to initialise the database with an entry for the `HOLDIR` key.
     This is done in `Holmake` within `poly/BuildCommand.sml`, and also within `poly-init2.ML` (for interactive use).
+    User-supplied entries come from `holproject.toml` files: when a project file's `name` key is set, the project root is registered under that name during `Holmake`'s upward walk for project files.
+    An optional `holpath` key overrides `name` for this registration only, leaving `name` free to serve as a human-facing project label distinct from the variable name (e.g. `name = "cakeml"` together with `holpath = "CAKEMLDIR"`).
+    Conflicting registrations (same name pointing at different directories) are reported as fatal startup errors.
 
 `tools/sequences`
 :   Build sequence files.
     These are “modularised” so that, in principle, custom build sequences can be constructed more easily.
 
-`tools/vim`
-:   Implementation of the vim editor mode.
+`tools/editor-modes`
+:   Implementation of the editor modes.
+
+## Coding Standards/Requirements
+
+We are fairly liberal in the style of code we accept, which is almost required given the long history of our sources (see `arithmeticScript.sml` for lots of old comments).
+However, the regression machinery does enforce some coding requirements, and these requirements may tighten over time.
+As of March 2025, the requirements are:
+
+-   No use of TABs anywhere.
+
+-   No trailing whitespace.
+
+We encourage developers to keep their lines under 80 columns in width.
 
 
 <!-- # Appropriate Idioms  -->
 
-# Glossary of common abbreviations in the source code
+# Glossary of Common Abbreviations in the Source Code
+
+These appear with either capitalisation.
+There is a slight tendency to having all upper-case SML identifiers refer to theorems, or functions that return theorems.
 
 `abs`
 :   Abstraction.
@@ -242,8 +381,8 @@ Unless otherwise noted, they are built by the configuration process.
 `ant`
 :   Antecedent of an implication.
 
-`asm`
-:   Assumptions of a theorem or goal.
+`asl`, `asm`
+:   Assumptions of a theorem or goal.  The `asl` name is particularly commonly used to name a goal’s assumptions (used, *e.g.,* when writing tactics).
 
 `conseq`
 :   Consequent of an implication.
@@ -265,7 +404,7 @@ Unless otherwise noted, they are built by the configuration process.
 
 `l`
 :   - A list.
-:   - Suffix for a variant of a functions whose difference is that it operates on a list instead of a single element. E.g: the tactical `THENL` compared to `THEN`.
+:   - Suffix for a variant of a function whose difference is that it operates on a list instead of a single element. E.g: the tactical `THENL` compared to `THEN`.
 
 `lhs`
 :   Left-hand side of an equation.
@@ -276,8 +415,8 @@ Unless otherwise noted, they are built by the configuration process.
 `prim_`
 :   “primitive”. Optional prefix for the name of internal functions that contain most of the implementation. The function without the prefix is a thin wrapper that implements the public interface.
 
-`q_`
-:   Optional prefix in the name of a tactical to indicates that it takes a term quotation which is parsed in the context of the goal. Example: `q_abbrev_tac`.
+`q_` or just `q`
+:   Optional prefix in the name of a tactical to indicates that it takes a term quotation which is parsed in the context of the goal. Example: `qabbrev_tac`.
 
 `rand`
 :   Ope*rand* of a combination.
@@ -312,3 +451,8 @@ Unless otherwise noted, they are built by the configuration process.
 
 <!--  LocalWords:  executables mosmlc sml categorise
  -->
+<!--
+Local variables:
+compile-command: "Holmake"
+End:
+-->

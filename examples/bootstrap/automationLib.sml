@@ -62,7 +62,9 @@ fun get_induction_for_def def = let
   val goal1 = ind |> concl |> dest_imp |> snd
   val goal2 = list_mk_conj (map (fst o snd) res)
   val goal = mk_imp(goal1,goal2)
-  val lemma = snd ((REPEAT STRIP_TAC THEN ASM_REWRITE_TAC []) ([],goal)) []
+  val lemma =
+      snd ((REPEAT STRIP_TAC THEN ASM_REWRITE_TAC [])
+             ([],goal) (Context.snapshot())) []
   val ind = MP lemma (ind |> UNDISCH_ALL) |> DISCH_ALL |> GENL (map fst res)
   in ind end handle HOL_ERR _ =>
   failwith "unable to construct induction theorem from TypeBase info"
@@ -97,7 +99,7 @@ local
   val comments = ref ([]:term list)
   val next_comment = ref “""”
   fun print_defun defun = let
-    val str = mk_comb(“v2str”,mk_comb(“dec2v”,defun))
+    val str = mk_comb(“printing$v2str”,mk_comb(“printing$dec2v”,defun))
               |> QCONV EVAL |> concl |> rand |> stringSyntax.fromHOLstring
     in print ("\n\n" ^ str ^ "\n\n\n") end
 in
@@ -167,7 +169,7 @@ val finalised_mem = ref ([]: (term * thm) list)
 val in_flight_mem = ref ([]: (term * thm) list)
 val trans_thms    = ref (DB.find "auto_"
   |> filter (fn ((thy,_),_) => thy = "automation_lemmas")
-  |> map (CONJUNCTS o fst o snd)
+  |> map (CONJUNCTS o #1 o #2)
   |> flatten |> (fn xs => xs @ [last_bool_if]));
 
 fun update_mem lemma =
@@ -310,7 +312,7 @@ fun hol2deep tm =
 
 fun ABBREV_CONV fname params name tm = let
   val v = mk_var(name,type_of tm)
-  val defun = list_mk_comb(“Defun”,[fname,params,tm])
+  val defun = list_mk_comb(“source_syntax$Defun”,[fname,params,tm])
   val _ = add_defun defun
   in GSYM (Define ‘^v = ^tm’) end
 
@@ -349,7 +351,7 @@ fun process_def def = let
   val c_name = c |> dest_const |> fst
   val fname = fix_name c_name |> stringSyntax.fromMLstring
   val th3 = th2 |> CONV_RULE (PATH_CONV "lrrrr"
-                     (ABBREV_CONV “name ^fname” params (c_name ^ "_code")))
+                     (ABBREV_CONV “source_values$name ^fname” params (c_name ^ "_code")))
                 |> UNDISCH
   val th4 = th3 |> CONV_RULE (PATH_CONV "rrlrr" (REWR_CONV (GSYM def)))
   val th5 = th4 |> CONV_RULE (PATH_CONV "lr"
@@ -527,7 +529,7 @@ fun to_deep def = let
       val goal = concl t |> rand
       val tac = match_mp_tac t \\ rw [] \\ once_rewrite_tac [side_def]
                 \\ fs [name_def] \\ CCONTR_TAC \\ fs [] \\ fs [] \\ fs [name_def]
-      val lemma = snd (tac ([],goal)) []
+      val lemma = snd (tac ([],goal) (Context.snapshot())) []
       in lemma end handle HOL_ERR _ => side_def
   val side_is_true =
     aconv (side_def |> SPEC_ALL |> concl |> rand) T handle HOL_ERR _ => false

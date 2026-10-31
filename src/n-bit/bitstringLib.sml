@@ -6,11 +6,9 @@ open listLib wordsLib bitstringSyntax
 
 structure Parse = struct
   open Parse
-  val (Type, Term) = parse_from_grammars bitstringTheory.bitstring_grammars
+  val (Type, Term) = parse_from_grammars $ valOf $ grammarDB{thyname="bitstring"}
 end
 open Parse
-
-val _ = Lib.with_flag (Feedback.emit_MESG, false) bossLib.srw_ss ()
 
 val ERR = Feedback.mk_HOL_ERR "bitstringLib"
 
@@ -22,7 +20,7 @@ fun Cases_on_v2w t =
 
 (* ------------------------------------------------------------------------- *)
 
-fun qm l = Feedback.trace ("metis", 0) (metisLib.METIS_TAC l)
+fun qm l = Tactical.trace_tac ("metis", 0) (metisLib.METIS_TAC l)
 
 fun new_def s x = Definition.new_definition (s ^ "_def", boolSyntax.mk_eq x)
 
@@ -60,7 +58,7 @@ local
    open bitstringTheory
    val cnv =
      Conv.REWR_CONV (REWRITE_RULE [zero_extend_def] fixwidth_def)
-     THENC change_compset_conv (listSimps.list_compset())
+     THENC change_compset_conv (listSimps.list_compset)
              [computeLib.Defs [combinTheory.K_THM],
               computeLib.Convs
                 [(``fcp$dimindex:'a itself -> num``, 1, wordsLib.SIZES_CONV)]]
@@ -100,29 +98,14 @@ end
 local
    open arithmeticTheory numeralTheory
 
-   val l2n_2_compute = prove(
-      “(l2n 2 [] = 0) /\
-       (!l. l2n 2 (0::l) = 2 * l2n 2 l) /\
-       (!l. l2n 2 (1::l) = 2 * l2n 2 l + 1)”,
-      simp [numposrepTheory.l2n_def])
-
-   val l2n_2_numeric = prove(
-      “(l2n 2 [] = ZERO) /\
-       (!l. l2n 2 (0::l) = numeral$iDUB (l2n 2 l)) /\
-       (!l. l2n 2 (1::l) = BIT1 (l2n 2 l))”,
-      qm
-       [l2n_2_compute, ALT_ZERO, ONE, ADD_ASSOC, BIT1, TIMES2, MULT_COMM, iDUB])
-
-   val num_from_bin_list_compute = prove(
-     “(num_from_bin_list [] = 0) /\
-      (!l. num_from_bin_list (0::l) = NUMERAL (l2n 2 (0::l))) /\
-      (!l. num_from_bin_list (1::l) = NUMERAL (l2n 2 (1::l)))”,
-      simp [numposrepTheory.num_from_bin_list_def] >> qm [NUMERAL_DEF])
+   val l2n_2_compute = bitstringTheory.l2n_2_compute
+   val l2n_2_numeric = bitstringTheory.l2n_2_numeric
+   val num_from_bin_list_compute = bitstringTheory.num_from_bin_list_compute
 
    val cnv =
       Conv.REWR_CONV bitstringTheory.v2n_def
       THENC Conv.RAND_CONV (PURE_REWRITE_CONV [bitstringTheory.bitify_def])
-      THENC PURE_ONCE_REWRITE_CONV [num_from_bin_list_compute]
+      THENC Conv.REWR_CONV (GSYM NUMERAL_DEF)
       THENC Conv.TRY_CONV
               (Conv.RAND_CONV (PURE_REWRITE_CONV [l2n_2_numeric, iDUB_removal])
                THENC Conv.TRY_CONV (Conv.REWR_CONV NORM_0))
@@ -137,9 +120,7 @@ end
 (* Convert ``v2w [...]`` to ``n2w n`` *)
 
 local
-   val v2w_n2w_thm = prove(
-      “!l n. (v2n l = n) ==> (v2w l = n2w n : 'a word)”,
-      qm [bitstringTheory.ops_to_n2w])
+   val v2w_n2w_thm = bitstringTheory.v2w_n2w_thm
 in
    fun v2w_n2w_CONV tm =
       let
@@ -148,7 +129,7 @@ in
       in
          Drule.MATCH_MP (Thm.INST_TYPE [Type.alpha |-> ty] v2w_n2w_thm) thm
       end
-      handle HOL_ERR {message = m, ...} => raise ERR "v2w_n2w_CONV" m
+      handle HOL_ERR herr => raise ERR "v2w_n2w_CONV" (message_of herr)
 end
 
 val v2w_n2w_ss =
@@ -168,7 +149,7 @@ fun n2w_v2w_CONV tm =
    in
       Thm.SYM (v2w_n2w_CONV (bitstringSyntax.mk_v2w (l, ty)))
    end
-   handle HOL_ERR {message = m, ...} => raise ERR "n2w_v2w_CONV" m
+   handle HOL_ERR herr => raise ERR "n2w_v2w_CONV" (message_of herr)
 
 (* ------------------------------------------------------------------------- *)
 
@@ -202,7 +183,7 @@ fun v2w_eq_CONV tm =
                    THENC FIX_CONV)
          THENC listLib.LIST_EQ_SIMP_CONV) tm
    end
-   handle HOL_ERR {message = m, ...} => raise ERR "v2w_eq_n2w_CONV" m
+   handle HOL_ERR herr => raise ERR "v2w_eq_n2w_CONV" (message_of herr)
 
 (* ------------------------------------------------------------------------- *)
 
@@ -214,7 +195,7 @@ local
    fun is_bool tm = Teq tm orelse Feq tm
    val cnv =
      Conv.REWR_CONV bitstringTheory.v2w_11
-     THENC change_compset_conv (listSimps.list_compset())
+     THENC change_compset_conv (listSimps.list_compset)
              [computeLib.Defs
                 [bitstringTheory.v2w_fixwidth,
                  bitstringTheory.fixwidth,
@@ -236,7 +217,7 @@ in
             then (Conv.RHS_CONV v2w_n2w_CONV THENC wordsLib.word_EQ_CONV) tm
          else wordsLib.word_EQ_CONV tm
       end
-      handle HOL_ERR {message = m, ...} => raise ERR "word_eq_CONV" m
+      handle HOL_ERR herr => raise ERR "word_eq_CONV" (message_of herr)
 end
 
 (* ------------------------------------------------------------------------- *)
@@ -250,16 +231,10 @@ end
 *)
 
 local
-   val extract_v2w_cor = prove(
-     “!h l v.
-        (LENGTH v <= dimindex(:'a)) /\ (dimindex(:'b) = SUC h - l) /\
-        dimindex(:'b) <= dimindex(:'a) ==>
-        ((h >< l) (v2w v : 'a word) : 'b word =
-         v2w (fixwidth (dimindex(:'b)) (shiftr v l)))”,
-     qm [bitstringTheory.extract_v2w, bitstringTheory.field_def])
+   val extract_v2w_cor = bitstringTheory.extract_v2w_cor
    val shiftr_CONV =
      Conv.REWR_CONV bitstringTheory.shiftr_def
-     THENC Conv.CHANGED_CONV (computeLib.CBV_CONV (listSimps.list_compset()))
+     THENC Conv.CHANGED_CONV (computeLib.CBV_CONV (listSimps.list_compset))
 in
    fun extract_v2w_CONV tm =
       let
@@ -292,7 +267,7 @@ in
           THENC Conv.RAND_CONV (Conv.RAND_CONV shiftr_CONV)
           THENC Conv.RAND_CONV FIX_CONV) tm
       end
-      handle HOL_ERR {message = m, ...} => raise ERR "extract_v2w_CONV" m
+      handle HOL_ERR herr => raise ERR "extract_v2w_CONV" (message_of herr)
 end
 
 (* ------------------------------------------------------------------------- *)
@@ -312,7 +287,7 @@ local
    val word_bit_last_shiftr =
       REWRITE_RULE [bitstringTheory.shiftr_def]
          bitstringTheory.word_bit_last_shiftr
-   val cnv = change_compset_conv (computeLib.bool_compset())
+   val cnv = change_compset_conv computeLib.bool_compset
                [computeLib.Defs
                   [numeral_distrib, numeral_suc, numeral_iisuc, numeral_sub,
                    numeral_lt, iSUB_THM, iDUB_removal,
@@ -335,7 +310,7 @@ in
       in
          (c THENC Conv.REWR_CONV thm THENC cnv) tm
       end
-      handle HOL_ERR {message = m, ...} => raise ERR "word_bit_CONV" m
+      handle HOL_ERR herr => raise ERR "word_bit_CONV" (message_of herr)
 end
 
 (* ------------------------------------------------------------------------- *)
@@ -367,8 +342,6 @@ local
          computeLib.add_conv (c, 1, BOOLIFY_v2w_CONV thm)
       end
 
-   val rw = SRW_TAC [boolSimps.LET_ss]
-
    fun Cases_on_v2w q =
       Q.ISPEC_THEN q STRUCT_CASES_TAC bitstringTheory.ranged_bitstring_nchotomy
 
@@ -393,7 +366,7 @@ local
 
    fun boolify_bitify_tac x l =
       Tactic.STRIP_TAC THEN pairLib.PairCases_on [HOLPP.ANTIQUOTE x]
-      THEN rw l
+      THEN SRW_TAC [boolSimps.LET_ss] l
 
    fun bitify_boolify_tac l =
       SRW_TAC [fcpLib.FCP_ss, boolSimps.LET_ss] (l @
@@ -476,10 +449,10 @@ type bitify_boolify =
 local
    fun findDef s =
       case s |> DB.find
-             |> List.partition (fn ((_, s2), (_, DB.Def)) => s2 = s
+             |> List.partition (fn ((_, s2), (_, DB.Def, _)) => s2 = s
                                  | _ => false)
              |> fst of
-        [((thy, _), (thm, _))] => SOME (thy, thm)
+        [((thy, _), (thm, _, _))] => SOME (thy, thm)
       | _ => NONE
 in
    fun bitify_boolify i =
@@ -556,7 +529,7 @@ local
               (fn (s, _) =>
                  not (Lib.mem s ["bitstring$modify", "bitstring$bitwise",
                                  "words$word_modify", "words$word_reduce"]))
-         |> Redblackmap.fromList String.compare
+         |> List.foldl (fn ((k,v),m) => Symtab.update (k,v) m) Symtab.empty
   fun is_ground_arg tm =
     Lib.can bitstringSyntax.bitlist_of_term tm orelse
     Lib.can (bitstringSyntax.bitlist_of_term o fst o
@@ -570,13 +543,13 @@ local
   fun is_ground tm =
     case Lib.total boolSyntax.dest_strip_comb tm of
        SOME (name, l) =>
-         (case Redblackmap.peek (s, name) of
+         (case Symtab.lookup s name of
              SOME i => List.length l = i andalso List.all is_ground_arg l
            | NONE => false)
      | NONE => false
 in
   val add_bitstring_compset = computeLib.add_thms thms
-  val cnv = change_compset_conv (wordsLib.words_compset())
+  val cnv = change_compset_conv (wordsLib.words_compset)
                [computeLib.Extenders [add_bitstring_compset]]
   fun BITSTRING_GROUND_CONV tm =
     if is_ground tm then cnv tm

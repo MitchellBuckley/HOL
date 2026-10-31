@@ -21,8 +21,10 @@ sig
   (* new (inductive) relations *)
   val Hol_reln     : term quotation -> thm * thm * thm
   val Hol_coreln   : term quotation -> thm * thm * thm
-  val xHol_reln    : string -> term quotation -> thm * thm * thm
-  val xHol_coreln  : string -> term quotation -> thm * thm * thm
+  val xHol_reln    : string -> term quotation -> Context.t ->
+                     thm * thm * thm
+  val xHol_coreln  : string -> term quotation -> Context.t ->
+                     thm * thm * thm
   val export_mono  : string -> unit
 
   (* Derived rule for specifying new constants.
@@ -53,8 +55,17 @@ sig
 
   val CASE_TAC          : tactic
   val CaseEq            : string -> thm
+  val CaseEq_of         : Context.t -> string -> thm
   val CaseEqs           : string list -> thm
+  val CaseEqs_of        : Context.t -> string list -> thm
   val AllCaseEqs        : unit -> thm
+  val AllCaseEqs_of     : Context.t -> thm
+  val CasePred          : string -> thm
+  val CasePred_of       : Context.t -> string -> thm
+  val CasePreds         : string list -> thm
+  val CasePreds_of      : Context.t -> string list -> thm
+  val AllCasePreds      : unit -> thm
+  val AllCasePreds_of   : Context.t -> thm
 
   (* Proof automation *)
 
@@ -80,7 +91,9 @@ sig
   val old_arith_ss    : simpset
   val list_ss         : simpset
   val srw_ss          : unit -> simpset
+  val srw_ss_of       : Context.t -> simpset
   val boss_ss         : unit -> simpset (* srw_ss() + LET_ss + ARITH_ss *)
+  val boss_ss_of      : Context.t -> simpset
 
   val ARITH_ss        : ssfrag            (* arithmetic d.p. + some rewrites *)
   val old_ARITH_ss    : ssfrag
@@ -113,6 +126,12 @@ sig
   val SF             : ssfrag -> thm
   val Req0           : thm -> thm
   val ReqD           : thm -> thm
+  val NoAsms         : thm
+  val IgnAsm         : 'a quotation -> thm
+
+  (* useful rules to use with simplification *)
+  val oneline        : thm -> thm
+  val lambdify       : thm -> thm
 
   val SIMP_CONV         : simpset -> thm list -> conv
   val SIMP_RULE         : simpset -> thm list -> thm -> thm
@@ -140,6 +159,7 @@ sig
 
   (* Call-by-value evaluation *)
   val EVAL           : conv
+  val EVALn          : int -> conv
   val EVAL_RULE      : thm -> thm
   val EVAL_TAC       : tactic
 
@@ -157,6 +177,9 @@ sig
   val suffices_by    : term quotation * tactic -> tactic   (* infix *)
   val sg             : term quotation -> tactic
   val subgoal        : term quotation -> tactic
+  val have           : term quotation -> tactic
+  val suff           : term quotation -> tactic
+  val contr          : tactic
   val >~             : ('a,'b)gentactic * term quotation list ->
                        ('a,'b)gentactic
   val >>~            : ('a,'b)gentactic * term quotation list ->
@@ -165,6 +188,32 @@ sig
                        ('a,'b)gentactic
   val cheat          : tactic
   val kall_tac       : 'a -> tactic
+  val CONG_TAC       : int option -> tactic
+  val cong_tac       : int option -> tactic
+  val cfg_cong       :
+  (* This function needs to be used with FunctionalRecordUpdate's
+     optional labelled arguments tech.  Ignore the scary type behind the
+     curtain.
+     In particular,
+        cfg_cong (Fld#<fld1> v1) (Fld#<fld2> v2) .. (Fld#<fldn> vn) $$
+     where <fldi> is one of the fields
+        flip, fn_ext, setcomp, or usercongs
+     (all visible at the end of the type below).  n can be 0, meaning that
+     cfg_cong $$ works (and is equal to cong_tac)
+  *)
+   ((((bool -> bool -> bool -> bool -> 'a) -> 'a) *
+   (unit ->
+     {flip: ('b -> 'c) * ('d -> 'b) -> 'd -> 'c,
+       fn_ext: ('e -> 'f -> 'g) * ('h -> 'f) -> 'e -> 'h -> 'g,
+       setcomp: ('i -> 'j -> 'k -> 'l) * ('m -> 'k) -> 'i -> 'j -> 'm -> 'l,
+       usercongs:
+       ('n -> 'o -> 'p -> 'q -> 'r) * ('s -> 'q) ->
+         'n -> 'o -> 'p -> 's -> 'r})) *
+   ((('t ->
+     'u -> 'v -> 'w -> {flip: 't, fn_ext: 'u, setcomp: 'v, usercongs: 'w}) ->
+     {flip: bool, fn_ext: bool, setcomp: bool, usercongs: bool}) * 'x ->
+     int option -> tactic) -> 'y) -> 'y
+  val EQ_MP_CONG_TAC : int option -> thm -> tactic
 
   (* Abbreviations  (see also Q structure) *)
 
@@ -172,12 +221,15 @@ sig
   val UNABBREV_ALL_TAC : tactic
   val REABBREV_TAC     : tactic
   val WITHOUT_ABBREVS  : tactic -> tactic
+  val mk_asm           : string -> thm -> tactic
+  val asm              : string -> thm_tactic -> tactic
+  val asm_x            : string -> thm_tactic -> tactic
 
   (* name cases of an induction theorem *)
   val name_ind_cases : term list -> thm -> thm
 
   (* convert aux size operators to combinators and use append rules *)
-  val size_comb_tac : tactic
+(*  val size_comb_tac : tactic *)
 
   (* more simplification variants *)
   val fsrw_tac : simpLib.ssfrag list -> thm list -> tactic
@@ -214,6 +266,7 @@ sig
   val qrefinel : term quotation list -> tactic
   val qsuff_tac : term quotation -> tactic
   val qid_spec_tac : term quotation -> tactic
+  val qid_specl_tac : term quotation list -> tactic
   val qspec_tac : term quotation * term quotation -> tactic
   val qspec_then : term quotation -> thm_tactic -> thm -> tactic
   val qspecl_then : term quotation list -> thm_tactic -> thm -> tactic
@@ -237,4 +290,7 @@ sig
   val qunabbrev_tac : term quotation -> tactic
   val qunabbrevl_tac : term quotation list -> tactic
   val unabbrev_all_tac : tactic
+
+  (* tactics related to suspension and resumption of proofs *)
+  val suspend : string -> tactic
 end

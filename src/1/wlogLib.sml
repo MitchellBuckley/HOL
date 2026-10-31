@@ -1,7 +1,7 @@
 (* wlogLib.sml - Without loss of generality tacticals
 
-   by Mario Castelán Castro                                                  UOK
-      (see doc/copyrights/public-domain-contributions.txt)
+   by Mario Castelán Castro
+      (see copyrights/public-domain-contributions.txt)
 *)
 
 structure wlogLib :> wlogLib =
@@ -19,7 +19,7 @@ fun LIST_SPLICE l =
   | (t::l) =>
     let
       val deep_thm = LIST_SPLICE l
-      (* If “deep_thm” is «l ⇔ r», “lifted_deep_thm” is «t ∧ l ⇔ t ∧ r». UOK *)
+      (* If “deep_thm” is «l ⇔ r», “lifted_deep_thm” is «t ∧ l ⇔ t ∧ r». *)
       val lifted_deep_thm = AP_TERM (mk_comb (conjunction, t)) deep_thm
     in
       RIGHT_CONV_RULE SPLICE_CONJ_CONV lifted_deep_thm
@@ -60,10 +60,10 @@ fun UNDISCH_CONJ l thm =
   handle HOL_ERR _ => raise ERR "UNDISCH_CONJ" ""
 
 (* Proves
-  ⊢ (¬P ⇒ (∀(vars). P_hyp ⇒ t) ⇒ t) ⇒   (* “wlog_thm”. *)                  UOK
-     (∀(vars). P ∧ hyp ⇒ t) ⇒           (* “new_sg_thm”. *)                UOK
-     hyp ⇒                                                                 UOK
-     t»                                                                    UOK
+  ⊢ (¬P ⇒ (∀(vars). P_hyp ⇒ t) ⇒ t) ⇒   (* “wlog_thm”. *)
+     (∀(vars). P ∧ hyp ⇒ t) ⇒           (* “new_sg_thm”. *)
+     hyp ⇒
+     t»
 except that when "hyp" is "NONE", it is omitted the obvious way. If "hyp" is
 none then "p_hyp" is just "hyp" else it is the splice of "p" with "hyp". The
 tuple returned is the aforementioned theorem and "P_hyp". *)
@@ -124,14 +124,14 @@ fun wlog_rule vars p hyp t =
     (final_thm, wlog_hyp)
   end
 
-fun wlog_then q vars_q (ttac :thm_tactic) (g as (asm, c)) =
+fun wlog_then q vars_q (ttac :thm_tactic) (g as (asm, c)) ctxt =
   let
     open Parse
     val mem = curry HOLset.member
     val lconst = FVL asm empty_tmset
-    val context = HOLset.listItems (FVL [c] lconst)
-    val p = typed_parse_in_context bool context q
-    val extra_vars = map (parse_in_context context) vars_q
+    val fvl = HOLset.listItems (FVL [c] lconst)
+    val p = typed_parse_in_context bool fvl q
+    val extra_vars = map (parse_in_context fvl) vars_q
     val extra_var_set = HOLset.addList (empty_varset, extra_vars)
     val efv = filter (fn t => not (mem lconst t orelse mem extra_var_set t))
                      (* The conjunction is just an arbitrary way to put p and
@@ -156,7 +156,7 @@ fun wlog_then q vars_q (ttac :thm_tactic) (g as (asm, c)) =
         end
     val not_p = mk_neg p
     val sg1 = (not_p::wlog_hyp::asm, c)
-    val (ttac_sg, ttac_verify) = ttac (ASSUME p) (asm, c)
+    val (ttac_sg, ttac_verify) = ttac (ASSUME p) (asm, c) ctxt
     fun verify (thm1::thm_l) =
       let
         val ttac_thm = ttac_verify thm_l

@@ -30,9 +30,9 @@ sig
 
   val fromInt     : int -> num    (* raises Overflow if i < 0 *)
   val toInt       : num -> int    (* raises Overflow if n > maxInt *)
+  val toReal      : num -> real   (* raises Overflow if real calcs do so; no posinf for you! *)
 
   val floor       : real -> num   (* raises Overflow if r < 0 *)
-  val toReal      : num -> real
 
   val asList      : num -> int list
 
@@ -44,12 +44,15 @@ sig
   val mod         : num * num -> num
   val divmod      : num * num -> num * num
   val gcd         : num * num -> num
+  val lcm         : num * num -> num
   val isqrt       : num -> num
 
   val <           : num * num -> bool
   val <=          : num * num -> bool
   val >           : num * num -> bool
   val >=          : num * num -> bool
+  val max         : num * num -> num
+  val min         : num * num -> num
 
   val compare     : num * num -> order
 

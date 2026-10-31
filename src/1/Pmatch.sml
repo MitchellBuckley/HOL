@@ -171,7 +171,7 @@ end;
 
 fun partition _ _ (_,_,_,[]) = raise ERR"partition" "no rows"
   | partition gv ty_match
-              (constructors, colty, res_ty, rows as (((prefix:term list,_),_)::_)) =
+       (constructors, colty, res_ty, rows as (((prefix:term list,_),_)::_)) =
 let val fresh = fresh_constr ty_match colty gv
      fun part {constrs = [],      rows, A} = rev A
        | part {constrs = c::crst, rows, A} =
@@ -182,9 +182,10 @@ let val fresh = fresh_constr ty_match colty gv
                  then [((prefix, #2(fresh c)), mk_omitted (mk_arb res_ty))]
                  else in_group
          in
-          part{constrs = crst,
-               rows = not_in_group,
-               A = {constructor = c', new_formals = gvars, group = in_group'}::A}
+          part{
+            constrs = crst,
+            rows = not_in_group,
+            A = {constructor = c', new_formals = gvars, group = in_group'}::A}
          end
 in part{constrs=constructors, rows=rows, A=[]}
 end;
@@ -358,10 +359,14 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
      if ((#skip_rows heu) andalso length rows0 > 1 andalso all is_var pL)
      then mk {path = rstp0, rows = [hd rows0]}
      else
-     let val col_index = (#col_fun heu) ty_info (map (fn ((_, pL), _) => pL) rows0)
+     let val col_index =
+             (#col_fun heu) ty_info (map (fn ((_, pL), _) => pL) rows0)
          val u_rstp = bring_to_front_list col_index rstp0
          val (u, rstp) = (hd u_rstp, tl u_rstp)
-         val rows = map (fn ((prefix, pL), rhs) => ((prefix, bring_to_front_list col_index pL), rhs)) rows0
+         val rows =
+             map (fn ((prefix, pL), rhs) =>
+                     ((prefix, bring_to_front_list col_index pL), rhs))
+                 rows0
          val ((_, pL), _) = hd rows
          val p = hd pL
          val (pat_rectangle,rights) = unzip rows
@@ -373,7 +378,10 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
               val (pref_patl,tm) = mk{path = rstp,
                                       rows = zip pat_rectangle' rights'}
               val pat_rect1 = map v_to_pats pref_patl
-              val pat_rect1' = map (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL)) pat_rect1
+              val pat_rect1' =
+                  map
+                    (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL))
+                    pat_rect1
           in (pat_rect1', tm)
           end
      else
@@ -386,9 +394,11 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
                            " is a bad pattern (of var type?)")
      in
      if exists Literal.is_pure_literal col0 (* col0 has a literal *) then
-       let val is_lit_col = all (fn t => Literal.is_literal t orelse is_var t) col0
-           val _ = if is_lit_col then () else
-                   mk_case_fail "case expression mixes literals with non-literals."
+       let val is_lit_col =
+               all (fn t => Literal.is_literal t orelse is_var t) col0
+           val _ =
+               if is_lit_col then () else
+               mk_case_fail "case expression mixes literals with non-literals."
            val other_var = fresh_var pty
            val constructors =
                rev (op_mk_set aconv (rev (filter (not o is_var) col0))) @
@@ -409,7 +419,9 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
                                  switch_tm (case_functions@[u])
            val tree' = under_literal_bool_case beta_conv tree
            val pat_rect1 = flatten(map2 mk_patl constructors' pat_rect)
-           val pat_rect1' = map (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL)) pat_rect1
+           val pat_rect1' =
+               map (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL))
+                   pat_rect1
        in
            (pat_rect1',tree')
        end
@@ -435,7 +447,9 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
              if ((#collapse_cases heu) andalso
                  (List.all (aconv (hd dtrees)) (tl dtrees)) andalso
                  (List.all (fn (vL, tree) =>
-                    (List.all (fn v => not (free_in v tree)) vL)) (zip new_formals dtrees))) then
+                               (List.all (fn v => not (free_in v tree)) vL))
+                           (zip new_formals dtrees)))
+             then
                (* If all cases lead to the same result, no split is necessary *)
                (hd dtrees)
              else let
@@ -446,7 +460,9 @@ fun mk_case0_heu (heu : pmatch_heuristic) ty_info ty_match FV range_ty =
                val tree = list_mk_comb(case_const', u::case_functions)
              in tree end
            val pat_rect1 = flatten(map2 mk_pat constructors' pat_rect)
-           val pat_rect1' = map (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL)) pat_rect1
+           val pat_rect1' =
+               map (fn (x, y, pL) => (x, y, undo_bring_to_front col_index pL))
+                   pat_rect1
        in
           (pat_rect1',tree)
          end
@@ -462,16 +478,20 @@ fun mk_case0 ty_info ty_match FV range_ty rows =
 let
   fun run_heu heu = mk_case0_heu heu ty_info ty_match FV range_ty rows
 
-  val (min_fun0, heu_fun) = (!pmatch_heuristic) ()
+  val (min_fun0, heu_fun) = pmatch_heuristic () ()
   fun min_fun ((pL1, dt1), (pL2, dt2)) =
-    min_fun0 ((map (fn (x, _, _) => x) pL1, dt1), (map (fn (x, _, _) => x) pL2, dt2))
+      min_fun0 ((map (fn (x, _, _) => x) pL1, dt1),
+                (map (fn (x, _, _) => x) pL2, dt2))
 
   fun res_min NONE res = res
     | res_min (SOME res1) res2 =
         (case min_fun (res1, res2) of GREATER => res2 | _ => res1)
 
   fun aux min = case (heu_fun ()) of
-     NONE => (case min of NONE => (print "SHOULD NOT HAPPEN! EMPTY PMATCH-HEURISTIC!"; fail()) | SOME min' => min')
+     NONE =>
+     (case min of
+          NONE => (print "SHOULD NOT HAPPEN! EMPTY PMATCH-HEURISTIC!"; fail())
+        | SOME min' => min')
    | SOME heu => let
        val res = run_heu heu
        val min' = res_min min res
@@ -484,8 +504,9 @@ end
      Repeated variable occurrences in a pattern are not allowed.
  ---------------------------------------------------------------------------*)
 
-fun inc d k = case Binarymap.peek(d,k) of NONE => Binarymap.insert(d,k,1)
-                                        | SOME n => Binarymap.insert(d,k,n+1);
+fun inc d k = case Termtab.lookup d k of
+                  NONE => Termtab.update (k,1) d
+                | SOME n => Termtab.update (k,n+1) d;
 
 fun FV_multiset tm =
   let
@@ -500,15 +521,15 @@ fun FV_multiset tm =
              | COMB(Rator,Rand) => recurse d (TM Rator :: TM Rand :: rest)
              | LAMB(Bvar,Body) =>
                let
-                 val c0 = case Binarymap.peek(d,Bvar) of
+                 val c0 = case Termtab.lookup d Bvar of
                               NONE => 0
                             | SOME i => i
                in
                  recurse d (TM Body :: RESET(Bvar,c0) :: rest)
                end)
-        | RESET (v,c) :: rest => recurse (Binarymap.insert(d,v,c)) rest
+        | RESET (v,c) :: rest => recurse (Termtab.update (v,c) d) rest
   in
-    recurse (Binarymap.mkDict Term.compare) [TM tm]
+    recurse Termtab.empty [TM tm]
   end
 
 fun no_repeat_vars pat =
@@ -516,7 +537,8 @@ fun no_repeat_vars pat =
     fun check d =
       let
         val repeats =
-            Binarymap.foldl (fn (k,v,acc) => if v > 1 then k::acc else acc) [] d
+            Termtab.fold (fn (k,v) => fn acc =>
+                             if v > 1 then k::acc else acc) d []
       in
         if null repeats then true
         else
@@ -535,16 +557,21 @@ fun no_repeat_vars pat =
  ---------------------------------------------------------------------------*)
 fun pat_match1 fvs pat given_pat =
  let val (sub_tm, sub_ty) = Term.match_term pat given_pat
-     val _ = if null sub_ty then () else (raise ERR "pat_match1" "no type substitution expected");
+     val _ = if null sub_ty then ()
+             else (raise ERR "pat_match1" "no type substitution expected")
 
-     fun is_valid_bound_var v = (is_var v andalso not (List.exists (fn tm => aconv tm v) fvs))
-     val _ = if List.all (fn m => is_valid_bound_var (#residue m)) sub_tm then () else
-           (raise ERR "pat_match1" "expected a bound variable renaming");
+     fun is_valid_bound_var v =
+         is_var v andalso not (List.exists (fn tm => aconv tm v) fvs)
+     val _ =
+         if List.all (fn m => is_valid_bound_var (#residue m)) sub_tm then ()
+         else
+           (raise ERR "pat_match1" "expected a bound variable renaming")
  in sub_tm
  end
 
-fun pat_match2 fvs pat_exps given_pat = tryfind ((C (pat_match1 fvs) given_pat) o fst) pat_exps
-                                        handle HOL_ERR _ => ([]);
+fun pat_match2 fvs pat_exps given_pat =
+    tryfind ((C (pat_match1 fvs) given_pat) o fst) pat_exps
+    handle HOL_ERR _ => ([]);
 
 fun subst_to_renaming (s : (term, term) subst) : (term * string) list =
   map (fn m => (#redex m, fst (dest_var (#residue m)))) s;
@@ -568,8 +595,9 @@ fun purge_wildcards term_sub = filter (fn {redex,residue} =>
         handle _ => false) term_sub
 
 fun pat_match3 fvs pat_exps given_pats =
-     ((subst_to_renaming o distinguish fvs o reduce_mats o purge_wildcards o flatten))
-           (map (pat_match2 fvs pat_exps) given_pats);
+    (subst_to_renaming o distinguish fvs o reduce_mats o purge_wildcards o
+     flatten)
+    (map (pat_match2 fvs pat_exps) given_pats);
 
 
 (*---------------------------------------------------------------------------*)
@@ -699,7 +727,7 @@ local fun dest tybase (pat,rhs) =
            in
              if null (op_set_diff aconv fvs patvars) andalso null (free_vars e)
                 andalso is_var v
-                (* andalso null_intersection fvs (free_vars (hd rhsides)) *)
+                andalso tm_null_intersection fvs (free_vars (hd rhsides))
              then flatten
                     (map (dest tybase) (zip [subst [v |-> e] pat, pat] rhsides))
              else [(pat,rhs)]
@@ -774,7 +802,8 @@ fun mk_functional thy eqs =
      val f0 = if length fs = 1 then hd fs else err "function name not unique"
      val f  = if is_var f0 then f0 else mk_var(dest_const f0)
      val _  = map no_repeat_vars pats
-     val rows = zip (map (fn x => ([]:term list,[x])) pats) (map GIVEN (enumerate R))
+     val rows =
+         zip (map (fn x => ([]:term list,[x])) pats) (map GIVEN (enumerate R))
      val avs = all_varsl (L@R)
      val a = variant avs (mk_var("a", type_of(Lib.trye hd pats)))
      val FV = a::avs
@@ -800,7 +829,7 @@ fun mk_functional thy eqs =
                   err ("new clauses not allowed under current setting of "^
                        Lib.quote("Functional.allow_new_clauses")^" flag"))
              else ()
-     fun int_eq i1 (i2:int) =  (i1=i2)
+     fun int_eq i1 (i2:int) = (i1=i2)
      val inaccessibles = filter(fn x => not(op_mem int_eq x finals)) originals
      fun accessible p = not(op_mem int_eq (row_of_pat p) inaccessibles)
      val patts3 = (case inaccessibles of [] => patts2
@@ -812,10 +841,12 @@ fun mk_functional thy eqs =
      val case_tm' =
          let val (_,pat_exps) = strip_case thy case_tm
              val fvs = free_vars case_tm
-             val ren = pat_match3 fvs pat_exps pats (* better pats than givens patts3 *)
+             val ren = pat_match3 fvs pat_exps pats
+                             (* better pats than givens patts3 *)
          in (rename_top_bound_vars ren case_tm)
          end handle HOL_ERR _ =>
-           (Feedback.HOL_WARNING "Pmatch" "mk_functional" "SHOULD NOT HAPPEN! RENAMING CASE_TM FAILED!";
+           (Feedback.HOL_WARNING "Pmatch" "mk_functional"
+                                 "SHOULD NOT HAPPEN! RENAMING CASE_TM FAILED!";
             case_tm)
      (* Ensure that the case test variable is fresh for the rest of the case *)
      val avs = op_set_diff aconv (all_vars case_tm') [a]

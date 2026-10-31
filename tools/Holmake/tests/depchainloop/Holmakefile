@@ -1,6 +1,5 @@
-OPTIONS = NO_OVERLAY
 ifdef POLY
-CLINE_OPTIONS = --poly_not_hol
+HOLHEAP = $(HOLDIR)/bin/hol.state0
 endif
 
 depchainloop-selftest.log: selftest.exe
@@ -9,4 +8,6 @@ depchainloop-selftest.log: selftest.exe
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
-EXTRA_CLEANS = selftest.exe depchainloop-selftest.log
+# selftest drives Holmake in loopingdir/ -- not visited by INCLUDES from
+# this top.  Add its .hol/ tree so build cleanAll removes it.
+EXTRA_CLEANS = selftest.exe depchainloop-selftest.log loopingdir/.hol/

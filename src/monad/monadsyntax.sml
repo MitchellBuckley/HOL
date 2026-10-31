@@ -45,8 +45,7 @@ struct
                    "bad format - not an appropriately shaped list of 6 elements"
 end
 
-val monadDB =
-    ref (Binarymap.mkDict String.compare : (string,MonadInfo.t) Binarymap.dict);
+val monadDB : MonadInfo.t Symtab.table ref = ref Symtab.empty;
 
 fun write_keyval (nm, mi) =
   let
@@ -70,7 +69,7 @@ fun load_from_disk {thyname, data} =
   in
     case data of
         SOME (List keyvals) =>
-          monadDB := List.foldl (fn ((k,v), acc) => Binarymap.insert(acc,k,v))
+          monadDB := List.foldl (fn ((k,v), acc) => Symtab.update (k,v) acc)
                                 (!monadDB)
                                 (map dest_keyval keyvals)
       | NONE => ()
@@ -125,10 +124,10 @@ val {export = export_minfo, ...} = ThyDataSexp.new{
       merge = ThyDataSexp.alist_merge
     }
 
-fun predeclare (nm, t) = monadDB := Binarymap.insert(!monadDB, nm, t)
+fun predeclare (nm, t) = monadDB := Symtab.update (nm, t) (!monadDB)
 fun declare_monad p = (predeclare p; export_minfo (write_keyval p))
 
-fun all_monads () = Binarymap.listItems (!monadDB)
+fun all_monads () = Symtab.dest (!monadDB)
 
 
 fun to_vstruct a = let
@@ -334,11 +333,22 @@ fun print_monads (tyg, tmg) backend sysprinter ppfns (p,l,r) depth t = let
         end
   val (arg1',arg2') = brk_bind prname arg1 arg2
   val actions = strip [arg1'] arg2'
+  fun pr_action_list _ [] = []
+    | pr_action_list 0 _ = [strn "..."]
+    | pr_action_list print_length (b::bs) =
+        pr_action b :: pr_action_list (decdepth print_length) bs
+  fun concatWith brk [] = nothing
+    | concatWith brk [x] = x
+    | concatWith brk (x::xs) =
+        let fun mk [] = nothing
+              | mk (y::ys) = brk >> y >> mk ys
+        in x >> mk xs end
 in
   ublock PP.CONSISTENT 0
     (strn "do" >> brk(1,2) >>
      getbvs >- (fn oldbvs =>
-     pr_list pr_action (strn ";" >> brk(1,2)) actions >>
+     concatWith (strn ";" >> brk(1,2))
+      (pr_action_list (!Globals.max_print_length) actions) >>
      brk(1,0) >>
      strn "od" >> setbvs oldbvs))
 end
@@ -397,7 +407,7 @@ fun mk_unitbind mbind =
   end
 
 fun getMI fname s =
-  case Binarymap.peek(!monadDB, s) of
+  case Symtab.lookup (!monadDB) s of
       NONE => raise ERR fname ("No such monad defined: "^s)
     | SOME mi => mi
 
@@ -468,7 +478,7 @@ fun gen_disable_syntax rr rup rpp =
   (rr {term_name = monad_lform_name, tok = "do"};
    rr {term_name = monadassign_special, tok = "<-"};
    rr {term_name = monadmlet_special, tok = "<<-"};
-   rup "monadsyntax.print_monads";
+   ignore (rup ("monadsyntax.print_monads", mk_var("x", alpha)));
    rpp "monadsyntax.transform_absyn")
 
 fun disable_monadsyntax () =
@@ -491,8 +501,10 @@ fun print_explicit_monadic_lets b = (explicit_mlets := b);
 
 val _ = TexTokenMap.temp_TeX_notation
             {hol = "<-", TeX = ("\\HOLTokenLeftmap{}", 1)}
-val _ = TexTokenMap.temp_TeX_notation {hol = "do", TeX = ("\\HOLKeyword{do}", 2)}
-val _ = TexTokenMap.temp_TeX_notation {hol = "od", TeX = ("\\HOLKeyword{od}", 2)}
+val _ = TexTokenMap.temp_TeX_notation
+          {hol = "do", TeX = ("\\HOLKeyword{do}", 2)}
+val _ = TexTokenMap.temp_TeX_notation
+          {hol = "od", TeX = ("\\HOLKeyword{od}", 2)}
 
 val _ = predeclare (
       "option",

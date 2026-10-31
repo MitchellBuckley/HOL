@@ -1,6 +1,8 @@
 open HolKernel Parse boolLib bossLib;
 open blastLib testutils
 
+val _ = new_theory "scratch"
+
 (*
   fun die s = (print (s ^ "\n"); raise ERR "" "")
 *)
@@ -92,8 +94,8 @@ fun test_counter (c:conv) tm = let
                          NONE
                        else
                          SOME "bad counterexample"
-                   | HOL_ERR {origin_function,...} =>
-                         SOME ("unexpected exception from " ^ origin_function)
+                   | HOL_ERR herr =>
+                         SOME ("unexpected exception from " ^ top_function_of herr)
 in
   tprint ("Counterexample: " ^ trunc 49 tm);
   case res of
@@ -147,9 +149,12 @@ val _ = qtest_conv "simp+WORD_CANCEL" c
 val _ = let
   val _ = tprint "Word factorial termination with good simp"
   val fact_defn =
-      trace ("auto Defn.tgoal", 0) $ quietly $
-          TotalDefn.qDefine "wfact"
-             ‘wfact w = if w = 0w then 1 else w2n w * wfact (w - 1w)’
+      trace ("Definition.auto Defn.tgoal", 0) $
+      trace ("Theory.allow_rebinds", 1) $
+      quietly $
+      Lib.with_flag(Globals.interactive, true)
+        (TotalDefn.qDefine "wfact"
+             ‘wfact w = if w = 0w then 1 else w2n w * wfact (w - 1w)’)
 in
   require_msg (check_result (K true)) thm_to_string fact_defn NONE;
   TotalDefn.temp_exclude_termsimp "words.WORD_PRED_THM";
@@ -662,8 +667,31 @@ val () = qtest_conv "WORD_GROUND_CONV" wordsLib.WORD_GROUND_CONV
 
 val elapsed = Timer.checkRealTimer tt
 
-val _ = print ("\nTotal time: " ^ Lib.time_to_string elapsed ^ "\n");
+val _ = print ("\nTotal time: " ^ Lib.time_to_string elapsed ^
+               "\n\nbitstringLib tests\n\n");
+
+(* bitstringLib tests *)
+val _ = List.app convtest [
+      ("v2w_n2w_CONV (v2w [F; F] : bool[2])", bitstringLib.v2w_n2w_CONV,
+       “v2w [F; F] : bool[2]”, “0w : bool[2]”),
+      ("v2w_n2w_CONV (v2w [T; F] : bool[2])", bitstringLib.v2w_n2w_CONV,
+       “v2w [T; F] : bool[2]”, “2w : bool[2]”),
+      ("v2w_n2w_CONV (v2w [T; F; T] : bool[3])", bitstringLib.v2w_n2w_CONV,
+       “v2w [T; F; T] : bool[3]”, “5w : bool[3]”),
+      ("n2w_v2w_CONV (10w : word4)", bitstringLib.n2w_v2w_CONV,
+       “10w : word4”, “v2w [T; F; T; F] : word4”),
+      ("FIX_CONV (fixwidth 3 [F; T])", bitstringLib.FIX_CONV,
+       “fixwidth 3 [F; T]”, “[F;F;T]”),
+      ("FIX_CONV (fixwidth 3 [T; F; F; T])", bitstringLib.FIX_CONV,
+       “fixwidth 3 [T; F; F; T]”, “[F;F;T]”),
+      ("FIX_v2w_CONV (v2w [F;T] : word4)", bitstringLib.FIX_v2w_CONV,
+       “v2w [F; T] : word4”, “v2w [F; F; F; T] : word4”)
+    ]
 
 
+val _ = convtest
+  ("words_compset ALL_DISTINCT singleton",
+   computeLib.CBV_CONV wordsLib.words_compset,
+   “ALL_DISTINCT [NONE : num option]”, “T”)
 
 val _ = OS.Process.exit OS.Process.success

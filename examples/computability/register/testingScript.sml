@@ -1,18 +1,7 @@
-open HolKernel Parse boolLib bossLib;
-open arithmeticTheory;
-open combinTheory;
-open whileTheory;
-open indexedListsTheory;
-open numeralTheory;
-open rmModelTheory;
-open rmToPairTheory;
-open rmRecursiveFuncsTheory;
-open rmToolsTheory;
-open rmSampleMachinesTheory;
-
-val _ = new_theory "testing";
-
-
+Theory testing
+Ancestors
+  arithmetic combin While indexedLists numeral rmModel rmToPair
+  rmRecursiveFuncs rmTools rmSampleMachines
 
 (*
 val _ = computeLib.set_skip computeLib.the_compset ``COND`` (SOME 1);
@@ -139,9 +128,9 @@ Theorem exp_t1 = EVAL``RUN exponential [2;3]``
 
 (* Factorial *)
 Theorem fac_t1 = EVAL ``RUN factorial [0]``;
-Theorem fac_t1 = EVAL ``RUN factorial [1]``;
-Theorem fac_t1 = EVAL ``RUN factorial [3]``;
-Theorem fac_t1 = EVAL ``RUN factorial [5]``;
+Theorem fac_t2 = EVAL ``RUN factorial [1]``;
+Theorem fac_t3 = EVAL ``RUN factorial [3]``;
+Theorem fac_t4 = EVAL ``RUN factorial [5]``;
 
 (* old Cn *)
 (*
@@ -193,8 +182,8 @@ Theorem inv100' = EVAL ``invtri  100``;
 (* FST tests *)
 Theorem FST0 = EVAL``RUN FST [0]``;
 Theorem nfst0 = EVAL``nfst 0``;
-Theorem FST0 = EVAL``RUN FST [1]``;
-Theorem nfst0 = EVAL``nfst 1``;
+Theorem FST1 = EVAL``RUN FST [1]``;
+Theorem nfst1 = EVAL``nfst 1``;
 (*
 Theorem FST0 = EVAL``RUN FST [10]``;
 Theorem nfst0 = EVAL``nfst 10``;
@@ -205,8 +194,8 @@ Theorem nfst0 = EVAL``nfst 25``;
 (* SND tests *)
 Theorem SND0 = EVAL``RUN SND [0]``;
 Theorem nsnd0 = EVAL``nsnd 0``;
-Theorem SND0 = EVAL``RUN SND [1]``;
-Theorem nsnd0 = EVAL``nsnd 1``;
+Theorem SND1 = EVAL``RUN SND [1]``;
+Theorem nsnd1 = EVAL``nsnd 1``;
 (*
 Theorem SND0 = EVAL``RUN SND [5]``;
 Theorem nsnd0 = EVAL``nsnd 5``;
@@ -222,4 +211,3 @@ Theorem Pair0_1 = EVAL ``RUN (Pair identity add1) [0]``;
 Theorem npair0_5 = EVAL ``npair 0 2``;
 Theorem Pair0_5 = EVAL ``RUN (Pair identity (link (msInst 0 add1) (msInst 1 add1))) [0]``;
 
-val _ = export_theory()

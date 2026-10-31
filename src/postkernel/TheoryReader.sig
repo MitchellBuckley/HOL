@@ -2,7 +2,22 @@ signature TheoryReader =
 sig
 
   exception TheoryReader of string
-  val load_thydata : string -> string -> (string, Thm.thm) Redblackmap.dict
+  type raw_theory = RawTheory_dtype.raw_theory
+  type sharing_tables = RawTheory_dtype.sharing_tables
+  type 'a raw_exports = 'a RawTheory_dtype.raw_exports
+  type 'a raw_core = {tables : sharing_tables, exports : 'a raw_exports}
+  val load_thydata : {thyname:string,path:string,hash:string} ->
+                     (Thm.thm * DB_dtype.thminfo) Symtab.table
+  val core_decode : string raw_core HOLsexp.decoder
+
+  val load_raw_thydata : {path:string} -> raw_theory
+
+  (* Hook for alternative theorem sources (e.g., proof trace replay).
+     When set to something other than the default, load_thydata dispatches
+     to this function instead of loading theorems from .dat files. *)
+  val load_thydata_fn :
+      ({thyname:string,path:string,hash:string} ->
+       (Thm.thm * DB_dtype.thminfo) Symtab.table) ref
 
 end
 

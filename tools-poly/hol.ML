@@ -1,0 +1,1004 @@
+val _ = use "poly/poly-init2.ML";
+structure BasicIO = SML90;
+exception Interrupt = SML90.Interrupt
+
+val _ = use "../tools/Holmake/hmcore.ML";
+val _ = use "../tools/util/GetOpt.sig";
+val _ = use "../tools/util/GetOpt.sml";
+val _ = use "../tools/util/FunctionalRecordUpdate.sml";
+val _ = use "holrepl.ML";
+val _ = use "execompile.ML";
+
+val _ = use "../src/portableML/json/JSON.sml";
+val _ = use "../src/portableML/json/JSONErrors.sig";
+val _ = use "../src/portableML/json/JSONErrors.sml";
+val _ = use "../src/portableML/json/JSONUtil.sig";
+val _ = use "../src/portableML/json/JSONUtil.sml";
+val _ = use "../src/portableML/json/JSONSource.sml";
+val _ = use "../src/portableML/json/JSONParser.sig";
+val _ = use "../src/portableML/json/JSONParser.sml";
+val _ = use "../src/portableML/json/JSONDecode.sig";
+val _ = use "../src/portableML/json/JSONDecode.sml";
+val _ = use "lsp/lsp_namespace.ML";
+val _ = use "lsp/holide.ML";
+val _ = use "lsp/server.ML";
+
+val SIGOBJ = OS.Path.concat(Systeml.HOLDIR, "sigobj")
+local
+  open FunctionalRecordUpdate
+  fun makeUpdateT z = makeUpdate17 z
+in
+fun updateT z = let
+  fun from all_forced bare base_state check_proofs checkerr checkfors debug
+           defaultout exe
+           extra_data forced_objs help multithread output quietp thmsrc z_repl =
+    {all_forced = all_forced, bare = bare, base_state = base_state,
+     check_proofs = check_proofs,
+     checkerr = checkerr, checkfors = checkfors, debug = debug,
+     defaultout = defaultout, exe = exe,
+     extra_data = extra_data, forced_objs = forced_objs, help = help,
+     multithread = multithread,
+     output = output, quietp = quietp, thmsrc = thmsrc, z_repl = z_repl}
+  fun from' z_repl thmsrc quietp output multithread help forced_objs extra_data exe
+            defaultout debug checkfors checkerr check_proofs base_state bare
+            all_forced =
+    {all_forced = all_forced, bare = bare, base_state = base_state,
+     check_proofs = check_proofs,
+     checkfors = checkfors, checkerr = checkerr, debug = debug,
+     defaultout = defaultout, exe = exe,
+     extra_data = extra_data, forced_objs = forced_objs, help = help,
+     multithread = multithread,
+     output = output, quietp = quietp, thmsrc = thmsrc, z_repl = z_repl}
+  fun to f {all_forced, bare, base_state, check_proofs, checkerr, checkfors,
+            debug, defaultout,
+            exe, extra_data,
+            forced_objs, help, multithread, output, quietp, thmsrc, z_repl} =
+    f all_forced bare base_state check_proofs checkerr checkfors debug defaultout
+      exe extra_data
+      forced_objs help multithread
+      output quietp thmsrc z_repl
+in
+  makeUpdateT (from, from', to)
+end z
+val U = U
+val $$ = $$
+end (* FRU local *)
+
+(* Subcommand types *)
+datatype subcommand = REPL | LSP | BUILDHEAP | RUN | HEAPNAME
+
+fun parse_subcommand args =
+  case args of
+      [] => (REPL, args)
+    | first :: rest =>
+      (case first of
+           "repl" => (REPL, rest)
+         | "lsp" => (LSP, rest)
+         | "buildheap" => (BUILDHEAP, rest)
+         | "run" => (RUN, rest)
+         | "heapname" => (HEAPNAME, rest)
+         | _ => (REPL, args)) (* default to REPL, keep all args *)
+
+(* Get heap name from Holmakefile or return default *)
+fun get_heap_name () =
+  let
+    val default = Systeml.DEFAULT_STATE
+    val heap =
+        if OS.FileSys.access ("Holmakefile", [OS.FileSys.A_READ]) then
+          let
+            open Holmake_types
+            val holpathdb_extensions =
+                holpathdb.search_for_extensions ReadHMF.find_includes
+                  {starter_dirs = [OS.FileSys.getDir()],
+                   skip = holpathdb.db_dirs()}
+            val _ = List.app holpathdb.extend_db holpathdb_extensions
+            fun foldthis {vname,path} env = env_extend (vname, [LIT path]) env
+            val env0 = holpathdb.fold foldthis (base_environment())
+            val (env, _, _, _) = ReadHMF.read "Holmakefile" env0
+            val heap_v = Holmake_types.envlist
+                           internal_functions.default_diags env "HOLHEAP"
+          in
+            case heap_v of
+                [] => default
+              | [x] => x
+              | _ => default (* malformed, ignore *)
+          end handle _ => default (* bogus Holmakefile, ignore *)
+        else default
+    val heap = if OS.Path.isRelative heap
+               then OS.Path.concat(OS.FileSys.getDir(), heap)
+               else heap
+  in
+    heap
+  end
+
+val heapname = ref (SOME Systeml.DEFAULT_STATE)
+
+structure BuildHeap_CLINE =
+struct
+
+datatype option_record = OR of {
+  all_forced : bool,
+  bare : bool,
+  base_state : string option,
+  checkfors : string list,
+  (* LSP only: replay the proofs a compile pass cheated, on the worker
+     pool, instead of discarding them. *)
+  check_proofs : bool,
+  checkerr : string option,
+  debug : bool,
+  defaultout : string option,
+  exe : string option,
+  extra_data : string option,
+  forced_objs : string list,
+  help : bool,
+  multithread : int option,
+  output : string option,
+  quietp : bool,
+  thmsrc : string option,
+  z_repl : bool
+}
+
+local
+open TextIO
+in
+fun warn s = (output(stdErr, s ^ "\n"); flushOut stdErr)
+fun die (s:string) : 'a =
+  (flushOut stdOut;
+   (* try to give stdout a chance to clear so that dying message is last *)
+   OS.Process.sleep (Time.fromMilliseconds 300);
+   warn s; OS.Process.exit OS.Process.failure)
+end
+
+fun mk_quiet (OR r) = OR (updateT r (U #quietp true) $$);
+
+val keepGoingFlag = "keep-going-on-parse-errors"
+
+local
+  open GetOpt
+ fun mkBoolT sel = NoArg (fn () => fn (OR r) => OR (updateT r (U sel true) $$))
+ fun setStringOpt argnm sel =
+   ReqArg ((fn s => fn (OR r) => OR (updateT r (U sel (SOME s)) $$)), argnm)
+ val setBaseNone =
+     NoArg (fn () => fn (OR r) => OR (updateT r (U #base_state NONE) $$))
+ val setBaseMin =
+     NoArg (fn () => fn (OR r) =>
+       OR (updateT r (U #base_state
+             (SOME (OS.Path.concat(Systeml.HOLDIR, "bin/hol.state.min")))) $$))
+ val ConsForced =
+   ReqArg ((fn s => fn (OR r) =>
+               OR (updateT r (U #forced_objs (#forced_objs r @ [s])) $$)),
+           "file.uo")
+ fun addString argnm =
+   ReqArg((fn s => fn (OR r) =>
+              OR (updateT r (U #checkfors (#checkfors r @ [s])) $$)),
+          argnm)
+ fun set_threadcount sopt =
+   case sopt of
+       NONE => (fn (OR r) => OR (updateT r (U #multithread (SOME 0)) $$))
+     | SOME s =>
+       (case Int.fromString s of
+            NONE => (warn ("Ignoring malformed thread count"); fn x => x)
+          | SOME i =>
+            (fn (OR r) => OR (updateT r (U #multithread (SOME i)) $$)))
+in
+val cline_opts = [
+  {help = "use minimal (bare) heap without bossLib", long = ["bare"], short = "",
+   desc = mkBoolT #bare},
+  {help = "use min-only heap (just the kernel, no boolTheory)",
+   long = ["min"], short = "", desc = setBaseMin},
+  {help = "LSP: replay cheated proofs on the worker pool",
+   long = ["lsp-check-proofs"], short = "", desc = mkBoolT #check_proofs},
+  {help = "error if checked for file is absent", long = ["checkerr"],
+   short = "e", desc = setStringOpt "message" #checkerr},
+  {help = "check file exists afterwards (can repeat)", long = ["checkfor"],
+   short = "c", desc = addString "filename"},
+  {help = "provide debug output & preserve temp files",
+   long = ["dbg"], short = "", desc = mkBoolT #debug},
+  {help = "default outputname", long = ["defaultout"], short = "",
+   desc = setStringOpt "filename" #defaultout},
+  {help = "create executable with given main fn (buildheap only)",
+   long = ["exe"], short = "", desc = setStringOpt "fn-name" #exe},
+  {help = "pass 'extra data' to code", long = ["extra"], short = "",
+   desc = setStringOpt "data" #extra_data},
+  {help = "force all object files", long = [], short = "F",
+   desc = mkBoolT #all_forced},
+  {help = "force file (will load before others)", long = [], short = "f",
+   desc = ConsForced},
+  {help = "show this message", long = ["help"], short = "h?",
+   desc = mkBoolT #help},
+  {help = "load holstate as base", long = ["holstate"], short = "b",
+   desc = setStringOpt "filename" #base_state},
+  {help = "list every parse error rather than aborting on the first \
+          \(run only)",
+   long = [keepGoingFlag], short = "",
+   desc = NoArg (fn () => fn r => r)}, (* see RUN case *)
+  {help = "thread count", long = ["mt"], short = "",
+   desc = OptArg (set_threadcount, "c")},
+  {help = "Don't use user config file in HOL repl", long = ["noconfig"], short = "",
+   desc = NoArg (fn () => fn r => r)}, (* checked for and acted on by HOL repl *)
+  {help = "output heap/munger name", long = [], short = "o",
+   desc = setStringOpt "filename" #output},
+  {help = "use poly as base (no HOL state)", long = ["poly"], short = "",
+   desc = setBaseNone},
+  {help = "reduce verbosity", long = ["quiet"], short = "q",
+   desc = mkBoolT #quietp},
+  {help = "theorem source (dat or tr)", long = ["thmsrc"], short = "",
+   desc = setStringOpt "src" #thmsrc},
+  {help = "use zero-terminated REPL style", long = ["zero"], short = "z",
+   desc = mkBoolT #z_repl}
+]
+val initial_cline = OR {all_forced = false,
+                        bare = false,
+                        base_state = !heapname,
+                        check_proofs = false,
+                        checkerr = NONE,
+                        checkfors = [],
+                        debug = false,
+                        defaultout = NONE,
+                        exe = NONE,
+                        extra_data = NONE,
+                        forced_objs = [],
+                        help = false,
+                        multithread = NONE,
+                        output = NONE,
+                        quietp = false,
+                        thmsrc = NONE,
+                        z_repl = false}
+end
+
+fun member _ [] = false
+  | member s (h::t) = s = h orelse member s t
+
+fun fullPath ps = List.foldl (fn (p,acc) => OS.Path.concat(acc,p))
+                             (hd ps) (tl ps);
+
+
+fun mkAbs p = OS.Path.mkAbsolute {relativeTo = OS.FileSys.getDir(), path = p}
+
+fun findUo [] _ = NONE
+  | findUo (search::rest) modPath =
+      let val path =
+         OS.Path.mkAbsolute
+           {path = modPath, relativeTo = OS.Path.mkAbsolute
+                                           {path=search,
+                                            relativeTo = OS.FileSys.getDir ()}};
+      in
+        if HOLFileSys.access (path, []) then
+          SOME path
+        else
+          findUo rest modPath
+      end;
+
+fun absPath s =
+    OS.Path.mkAbsolute{path = s, relativeTo = OS.FileSys.getDir()}
+
+fun check_objpath die incs (p, b) =
+  if b then ()
+  else
+    if member (absPath (OS.Path.dir p)) (SIGOBJ::incs) then ()
+    else die ("Object file "^p^" has suspicious path; use -f to override")
+
+fun time_max (t1, t2) = if Time.<(t1,t2) then t2 else t1
+
+fun fix s =
+  let
+    open OS.Path
+    val {base,ext} = splitBaseExt s
+  in
+    case ext of
+        SOME "uo" => base
+      | _ => s
+  end
+
+fun create_heap diag qp findMod (objs, outputheap) = let
+  open Systeml TextIO
+  val p = if qp then fn _ => () else fn s => print (s ^ "\n")
+  fun hload obj = (p ("Loading "^obj); load (fix obj))
+                  handle e => die ("Loading "^obj^": "^General.exnMessage e)
+in
+  app hload objs;
+  p "Sharing common data";
+  PolyML.shareCommonData PolyML.rootFunction;
+  p ("Writing heap: "^outputheap);
+  PolyML.SaveState.saveChild
+    (outputheap, length (PolyML.SaveState.showHierarchy()));
+  p ("Exported "^outputheap^"\n");
+  (case OS.Process.getEnv Systeml.build_after_reloc_envvar of
+      NONE => ()
+    | SOME "1" =>
+      let
+        val getTime = HOLFileSys.modTime o findMod
+        fun foldthis (modname, t0) = time_max(t0, getTime modname)
+        val mtime = foldl foldthis Time.zeroTime objs
+      in
+        diag ("Setting mod-time of heap to "^
+              Date.toString (Date.fromTimeLocal mtime));
+        HOLFileSys.setTime (outputheap, SOME mtime)
+      end
+    | SOME s =>
+      warn ("Ignoring strange value (" ^ s ^ ") for " ^
+            Systeml.build_after_reloc_envvar));
+  diag "Having built-heap, now exiting successfully";
+  OS.Process.exit OS.Process.success
+end
+
+fun maybe_check_load diag (obj,_) =
+  let
+    open OS.Path
+    val {base,ext} = splitBaseExt obj
+  in
+    case ext of
+        SOME "sml" => (diag ("Using "^obj); QUse.use obj)
+      | SOME "sig" => (diag ("Using "^obj); QUse.use obj)
+      | SOME "ML" => (diag ("Using "^obj); QUse.use obj)
+      | SOME "uo" => (diag ("Loading "^obj); load (fix obj))
+      | NONE => (diag ("Loading "^obj); load obj)
+      | _ => die ("Not sure what to do with 'object file': "^obj)
+  end
+
+fun polyprettify s =
+  let
+    val ss = Substring.full s
+    val (pfx,sfx) = Substring.position "Debug options:\n" ss
+    fun isNewline c = c = #"\n"
+    fun indent ss = "  " ^ Substring.string ss ^ "\n"
+    val pfx_fields = Substring.fields isNewline pfx
+    val sfx_fields = Substring.fields isNewline sfx
+    val sfx_str =
+        case sfx_fields of
+            [] => ""
+          | h::t => Substring.string h ^ "\n" ^ String.concat (map indent t)
+  in
+    "\nPoly/ML options:\n" ^ String.concat (map indent pfx_fields) ^ sfx_str
+  end
+
+val buildheap_extra_data = ref (NONE : string option)
+
+end (* BuildHeap_CLINE struct *)
+
+val buildheap_cline_mt = ref (NONE : int option)
+
+fun main() = let
+  open BuildHeap_CLINE
+  val progname = CommandLine.name()
+  (* Parse subcommand first *)
+  val (subcmd, remaining_args) = parse_subcommand (CommandLine.arguments())
+  val usage_header =
+    "Usage:\n  " ^ progname ^ " [poly-options] [subcommand] [options] [files...]\n\n\
+    \Subcommands:\n\
+    \  repl       Start interactive REPL (default)\n\
+    \  lsp        Start LSP server\n\
+    \  buildheap  Build a heap or executable from object files\n\
+    \             Use -o to specify output. Add --exe=fnname to create a\n\
+    \             standalone executable instead of a heap.\n\
+    \  run        Run script files for side effects\n\
+    \  heapname   Print the heap path\n\n\
+    \NOTE: Poly/ML runtime options (e.g., --maxheap, --gcthreads) must appear\n\
+    \      BEFORE the subcommand to take effect.\n\n\
+    \Options:"
+  val usage =
+      GetOpt.usageInfo {header = usage_header,
+                        options = cline_opts} ^
+      polyprettify (PolyML.rtsArgumentHelp())
+  val (cline_upds, objs0) =
+      GetOpt.getOpt {argOrder = GetOpt.Permute, options = cline_opts,
+                     errFn = die}
+                    remaining_args
+  (* Check for unrecognized options - anything starting with - that isn't a file *)
+  fun check_unknown_opt s =
+    if String.isPrefix "-" s andalso not (OS.FileSys.access(s, [])) then
+      die ("Unrecognized option: " ^ s ^ "\nUse --help for usage information.")
+    else ()
+  val _ = List.app check_unknown_opt objs0
+  val OR options = List.foldl (fn (f, opts) => f opts) initial_cline cline_upds
+  val {quietp = qp, output, base_state, all_forced, forced_objs,
+       bare, z_repl, help, debug, extra_data, defaultout, exe, ...} = options
+  (* Determine base_state:
+     - --bare: use hol.state0
+     - --poly/--poly_not_hol: use no state (NONE)
+     - --holstate=X: use X
+     - REPL/LSP mode with default: auto-detect using get_heap_name()
+     - Other modes: use specified state or default *)
+  val base_state =
+      if bare then SOME (OS.Path.concat(Systeml.HOLDIR, "bin/hol.state0"))
+      else if (subcmd = REPL orelse subcmd = LSP)
+              andalso base_state = SOME Systeml.DEFAULT_STATE then
+        SOME (get_heap_name())
+      else
+        (* Use explicitly specified state (including NONE for --poly) *)
+        base_state
+  val diag = if debug then (fn s => warn ("DIAG: "^s)) else (fn _ => ())
+  val _ = not help orelse (print usage; OS.Process.exit OS.Process.success)
+  (* For HEAPNAME subcommand, just print and exit immediately *)
+  val _ = if subcmd = HEAPNAME then
+            (print (get_heap_name());
+             print "\n";
+             OS.Process.exit OS.Process.success)
+          else ()
+  fun force s = (s, true)
+  fun unforce s = (s, false)
+  val forced_objs = map force forced_objs
+  val objs = if all_forced then forced_objs @ map force objs0
+             else forced_objs @ map unforce objs0
+  val _ = diag ("#objs = "^Int.toString (length objs))
+  val warn = if qp then (fn _ => ()) else warn
+  val original_die = die
+  fun die s = if qp then OS.Process.exit OS.Process.failure else original_die s
+  val cwd_incs = ReadHMF.find_includes (OS.FileSys.getDir())
+  (* Under a `holproject.toml holmake = true` project, every
+     project_dir and every `external_includes` entry counts as
+     an implicit INCLUDES for the whole project.  buildheap's
+     .uo search (via `allincs`) and `Meta.loadPath` (used by
+     interactive `load`/`open`) both need these visible. *)
+  val project_incs =
+      case HMProject.find_root {start = OS.FileSys.getDir()} of
+          NONE => []
+        | SOME root =>
+            (let val cfg = HMProject.load {root = root}
+                 val dirs = if #holmake cfg then HMProject.discover_dirs cfg
+                            else []
+             in dirs @ #external_includes cfg end
+             handle Fail msg =>
+               (warn ("holproject.toml at " ^ root ^ " ignored: " ^ msg);
+                []))
+  val allincs = project_incs @ cwd_incs
+  val _ = diag ("allincs = ["^String.concatWith ", " allincs ^"]")
+  val base_state = Option.map mkAbs base_state
+  val output = Option.map mkAbs output
+  val output = case output of NONE => Option.map mkAbs defaultout | _ => output
+  val _ = case (subcmd, output, exe) of
+              (BUILDHEAP, NONE, _) => die "buildheap subcommand requires -o option"
+            | (_, NONE, SOME _) => die "Can't have exe without an output"
+            | _ => ()
+  (* Load base state if specified.
+
+     A heap a Holmakefile asks for can be missing or built by a
+     different executable, and for the LSP dying on that is invisible:
+     the server exits before answering `initialize', so the client can
+     only say the server died, and every channel we have for explaining
+     ourselves -- diagnostics, `$/compileBlocked', the status line -- is
+     unreachable.  So for `lsp' fall back to the default state and carry
+     a warning to show once the handshake is done.  Whatever the named
+     heap was providing then turns up as an unavailable ancestor, which
+     is a diagnostic the user can act on.
+
+     Every other subcommand still dies: they have a terminal to
+     complain to, and a build that quietly used a different heap from
+     the one it was told to use would be worse than a failure. *)
+  val startup_warnings : string list ref = ref []
+  (* Shown to the user after the handshake, and echoed to stderr so
+     the server's log says the same thing. *)
+  fun startupWarn msg =
+    (startup_warnings := !startup_warnings @ [msg];
+     warn ("[LSP-init] " ^ msg))
+  val _ =
+      case base_state of
+          NONE => (diag "Not loading a base state"; heapname := NONE)
+        | SOME f => let
+            fun load g = (heapname := SOME g; PolyML.SaveState.loadState g)
+            val fallback = mkAbs Systeml.DEFAULT_STATE
+            fun fatal g e = die ("Couldn't load HOL base-state "^g^": "^
+                                 General.exnMessage e)
+          in
+            diag ("About to load base-state "^f);
+            load f
+            handle e =>
+              if subcmd = LSP andalso f <> fallback then
+                (startupWarn
+                   ("cannot load the heap this directory asks for ("^f^"): "^
+                    General.exnMessage e^
+                    " -- falling back to "^fallback^
+                    ", so anything that heap supplied will be reported as \
+                    \an unavailable ancestor.  Rebuild it with `Holmake' \
+                    \in that directory.");
+                 diag ("falling back to "^fallback);
+                 load fallback handle e2 => fatal fallback e2)
+              else fatal f e
+          end
+  (* AFTER loadState — the saved state restores refs to their save-
+     time values and would otherwise wipe any earlier extension.
+     Owns Meta.loadPath extension so prelude.ML doesn't have to,
+     and every subcommand (REPL, LSP, BUILDHEAP, ...) sees the
+     same paths. *)
+  val _ = ReadHMF.extend_path_with_includes
+            {verbosity = 1 + (if debug then 1 else 0),
+             lpref = Meta.loadPath}
+  val _ = Meta.loadPath := project_incs @ !Meta.loadPath
+  val _ = buildheap_extra_data := extra_data
+  val _ = diag ("Buildheap extra now = " ^
+                (case !buildheap_extra_data of
+                     NONE => "NONE"
+                   | SOME s => "SOME(\"" ^ s ^"\")"))
+  val exts = holpathdb.search_for_extensions ReadHMF.find_includes
+               {skip = Binaryset.empty String.compare,
+                starter_dirs = [OS.FileSys.getDir()]}
+  fun print_ext{vname,path} = vname ^ " |-> " ^ path
+  val _ = diag ("holpathdb extensions: "^
+                String.concatWith ", " (map print_ext exts))
+  val _ = List.app holpathdb.extend_db exts
+  (* Initialize theorem source if --thmsrc was specified (via flag or env var) *)
+  val thmsrc = case #thmsrc options of
+                   SOME s => SOME s
+                 | NONE => OS.Process.getEnv "HOL_THMSRC"
+  val _ = case thmsrc of
+              SOME "tr" => (
+                if not Systeml.haveWord64 then
+                  die "--thmsrc tr requires Word64 support"
+                else (
+                  diag "Loading ThmSrc_tr for proof trace replay";
+                  Meta.load "ThmSrc_tr"
+                  handle e => die ("Failed to load ThmSrc_tr: " ^
+                                   General.exnMessage e ^
+                                   "\n(is src/postkernel/prooftrace built?)")
+                )
+              )
+            | SOME "dat" => ()  (* explicit dat is same as default *)
+            | SOME s => die ("Unknown --thmsrc value: " ^ s)
+            | NONE => ()   (* dat is the default, no action needed *)
+  (* Helper to load preludes for REPL mode.
+     Load Arbint and Arbrat first - they provide pp_int/pp_rat for the
+     pretty-printers registered in prelude.ML. *)
+  fun load_preludes () =
+    let
+      val prelude = OS.Path.concat(Systeml.HOLDIR, "tools-poly/prelude.ML")
+      val prelude2 = OS.Path.concat(Systeml.HOLDIR, "tools-poly/prelude2.ML")
+    in
+      diag "Loading Arbint";
+      Meta.load "Arbint";
+      diag "Loading Arbrat";
+      Meta.load "Arbrat";
+      diag ("Loading prelude: " ^ prelude);
+      QUse.use prelude;
+      if not bare then
+        (diag ("Loading prelude2: " ^ prelude2);
+         QUse.use prelude2)
+      else ()
+    end
+in
+  case subcmd of
+      BUILDHEAP =>
+      let
+        val s = valOf output
+        val search_these =
+            "." :: OS.Path.concat(Systeml.HOLDIR, "sigobj") :: allincs
+        fun findmod s =
+          case findUo search_these (s ^ ".uo") of
+              NONE => die ("In "^OS.FileSys.getDir()^": couldn't find "^s^
+                           ".uo\n\
+                           \After searching: " ^
+                           String.concatWith ", " search_these)
+            | SOME p => p
+      in
+        QUse.failOnError := true;
+        heapname := SOME s;
+        case exe of
+            NONE =>
+            (* No --exe: create heap, expects .uo files.
+               check_objpath validates paths are in sigobj or includes *)
+            (List.app (check_objpath die (absPath "." :: allincs)) objs;
+             create_heap diag qp findmod (map #1 objs, s))
+          | SOME fnname =>
+            (* --exe specified: use maybe_check_load for .sml/.ML support,
+               then export executable *)
+            (case #multithread options of
+                 NONE => ()
+               | SOME i => buildheap_cline_mt := SOME i;
+             List.app (maybe_check_load diag)
+               ((case #multithread options of
+                     NONE => []
+                   | SOME _ => [("poly_decide_threadcount.uo", false)]) @
+                objs);
+             BuildHeap_EXE_Compile.exe_compile
+               {fnname = fnname, output_exe = s, keep_temp_files = debug})
+      end
+    | LSP =>
+      let
+        (* One piece of startup that will not compile costs its own
+           feature, not the session.  Dying here is the one failure the
+           user cannot be told about: it happens before `initialize' is
+           answered, so the client can report only that the server
+           exited.  That is how a `DefnBase' reference in
+           `defnbase_init' -- a structure `hol.state0' does not have --
+           read from `src/num/theories': "exited abnormally with code
+           1", and nothing else.  The failure becomes a startup warning
+           the client shows once the handshake is done, and whatever
+           else loaded still serves. *)
+        fun initStep what f =
+          f ()
+          handle e =>
+            startupWarn ("LSP startup: " ^ what ^ " did not load (" ^
+                         General.exnMessage e ^
+                         ") -- what it provides is unavailable for \
+                         \this session")
+        (* Compile a source string through PolyML.compiler, looping
+           until the reader is exhausted (PolyML consumes one top-level
+           declaration per call). *)
+        fun evalString what s = let
+          val i = ref 0
+          fun read () = (SOME (String.sub (s, !i)) before i := !i + 1)
+                        handle Subscript => NONE
+          fun runall () =
+            if !i >= String.size s then ()
+            else (PolyML.compiler (read, []) (); runall ())
+        in initStep what runall end
+        fun useInit relpath =
+          initStep relpath
+            (fn () => QUse.use (OS.Path.concat (Systeml.HOLDIR, relpath)))
+      in
+        (* Before anything else: stdout is the JSON-RPC wire, and every
+           message below -- a compiler error, a HOL_MESG, a stray
+           `print' in a startup file -- would otherwise be written onto
+           it.  `LSPServer.start' claims it too, but only once all of
+           this has run. *)
+        ignore (LSPServer.claimStdout ());
+        QUse.failOnError := false; (* heap may carry true from BUILDHEAP *)
+        (* Setup that references hol.state bindings not in hol.ML's
+           compile-time namespace: Globals.interactive (so uncaught
+           HOL_ERRs don't call OS.Process.exit via Feedback.render_exn's
+           batch-mode branch), and the Feedback streams, which default
+           to stdout.  `claimStdout' has already sent stdout to stderr;
+           these are named anyway, since a stream the heap froze at
+           save time does not follow that. *)
+        evalString "the interactive-mode and output-stream setup"
+          "Globals.interactive := true; \
+          \Feedback.MESG_outstream := \
+          \  (fn s => (TextIO.output (TextIO.stdErr, s); \
+          \            TextIO.flushOut TextIO.stdErr)); \
+          \Feedback.WARNING_outstream := \
+          \  (fn s => (TextIO.output (TextIO.stdErr, s); \
+          \            TextIO.flushOut TextIO.stdErr)); \
+          \Feedback.INFO_outstream := \
+          \  (fn s => (TextIO.output (TextIO.stdErr, s); \
+          \            TextIO.flushOut TextIO.stdErr))";
+        (* Load HOL_Interactive so the parser's open-rewriting works
+           on Script.sml files (issue #1865). *)
+        useInit "tools-poly/holinteractive.ML";
+        (* CompilerSpecific is baked into hol.state via poly-init.ML;
+           the load system doesn't know that, so fake-load it to stop
+           holdep from complaining when it appears in Q-filter-expanded
+           Script.sml output. *)
+        Meta.fakeload "CompilerSpecific";
+        (* Snapshot the clean Context now and install a hook that
+           restores it before each LSP compile.  Without this, each
+           didChange inherits the previous compile's theory (new_theory
+           retires the constants but leaves stale theorems in DB),
+           producing a flood of "is out-of-date!" errors.
+
+           `captureCompileSnap` is the mid-compile companion used by
+           incremental resume: it captures Context + loaded modules +
+           the LSP namespace layer at a dec boundary; the returned
+           thunk restores each channel.  The parsers and printers
+           derived from the grammars live in the context alongside
+           them, so restoring it restores a consistent set and there
+           is nothing to invalidate. *)
+        evalString "the compile-snapshot hooks"
+          "let val snap = Context.snapshot () \
+          \    val restoreLoaded = Meta.snapshotLoaded () in \
+          \  LSPExtension.resetForCompile := \
+          \    (fn () => (Context.restore snap; restoreLoaded (); \
+          \               LSPNameSpace.clearFileLayer ())); \
+          \  LSPExtension.captureCompileSnap := \
+          \    (fn () => let val cSnap = Context.snapshot () \
+          \                  val loadedR = Meta.snapshotLoaded () \
+          \                  val nsR = LSPNameSpace.snapshotLayer () \
+          \              in fn () => (Context.restore cSnap; \
+          \                           loadedR (); nsR ()) end) \
+          \end";
+        (* Sealing lives in `KernelSig', outside the Context, because
+           it is a soundness gate rather than a cache -- so none of the
+           restores above take it back.  The compile asks about it to
+           tell a preload that has loaded the file's own theory from
+           what it is supposed to do, which is build it. *)
+        evalString "the sealed-theory predicate"
+          "LSPExtension.theorySealed := Thm.is_sealed";
+        (* The prover hook: don't run tactic proofs during elaboration,
+           return an oracle-tagged theorem instead (the same hook
+           fastbuild uses), and with LSPExtension.deferProofs set also
+           enqueue the proof so it can be replayed afterwards.  Ordinary
+           SML rather than an evalString, so it is type-checked at load
+           and can be read; see the file for why the replay guard is
+           per-thread. *)
+        (* Future (Isabelle's task framework), and `Timeout', which
+           bounds how long a replay may run.  `src/proofman' bakes
+           `Future' into `hol.state0', which every later heap is built
+           on, so that load costs nothing on any of them; the loads are
+           kept for a heap built some other way.
+
+           `Timeout' is in `sigobj' but in no heap's namespace, and a
+           structure the init names and cannot find takes the whole LSP
+           runtime down -- silently, since this runs before there is a
+           client to tell.  What that looks like from the outside is a
+           server that works except that no proof is ever checked,
+           `set_prover' never having been installed.  `Event_Timer' is
+           what `Timeout' schedules on, and is named directly from
+           `deferred_proofs.ML', so it is loaded rather than left to
+           arrive as a dependency. *)
+        initStep "Future" (fn () => Meta.load "Future");
+        initStep "Event_Timer" (fn () => Meta.load "Event_Timer");
+        initStep "Timeout" (fn () => Meta.load "Timeout");
+        useInit "tools-poly/lsp/deferred_proofs.ML";
+        (* Pretty printers for thm/term/hol_type, so hover can print a
+           value of one of those types instead of `?'.  Installed
+           before the DB fallback below, which is the weaker path: it
+           can only find a theorem by name. *)
+        useInit "tools-poly/lsp/pretty_printers_init.ML";
+        (* Wire LSPExtension.thmLookup to DB + Parse so the hover
+           handler can render a theorem's statement when the cursor
+           lands on a *dotted* identifier of type thm, which Poly/ML's
+           flat value tables cannot resolve.  A theorem the file has in
+           scope is printed from its value by the pretty printer above.
+           Handles bare names too, and dotted references like
+           arithmeticTheory.ADD_COMM (with the -Theory suffix stripped
+           for DB.fetch).  Hands back a pretty tree, which the server
+           lays out at the client's hover width; `raw_terminal' because
+           the session's backend emits ANSI escapes that would be
+           garbage in markdown. *)
+        evalString "the theorem-lookup hover fallback"
+          "LSPExtension.thmLookup := (fn id => \
+          \  let \
+          \    fun findLast i c = \
+          \      if i < 0 then ~1 \
+          \      else if String.sub (id, i) = c then i \
+          \      else findLast (i - 1) c \
+          \    val dot = findLast (String.size id - 1) #\".\" \
+          \    fun matchExact name = \
+          \      List.mapPartial \
+          \        (fn ((_, n), (th, _)) => \
+          \           if n = name then SOME th else NONE) \
+          \        (DB.find_all name) \
+          \    val thm_opt = \
+          \      if dot < 0 then \
+          \        (case matchExact id of th :: _ => SOME th | [] => NONE) \
+          \      else \
+          \        let val prefix = String.substring (id, 0, dot) \
+          \            val name = String.extract (id, dot + 1, NONE) \
+          \            val thy = \
+          \              if String.isSuffix \"Theory\" prefix \
+          \              then String.substring \
+          \                     (prefix, 0, String.size prefix - 6) \
+          \              else prefix \
+          \        in SOME (DB.fetch thy name) handle _ => \
+          \          (case matchExact name of \
+          \             th :: _ => SOME th | [] => NONE) \
+          \        end \
+          \    fun render th = \
+          \      Lib.with_flag (Parse.current_backend, \
+          \                     PPBackEnd.raw_terminal) Parse.pp_thm th \
+          \  in Option.map render thm_opt end \
+          \  handle _ => NONE)";
+        (* Go-to-definition, and the default hover. *)
+        useInit "tools-poly/lsp/defnbase_init.ML";
+        (* HOL-side hover for cursors inside quotations: parses the
+           captured quote to a resolved Preterm and walks it.  Reached
+           only when the default hover returns nothing. *)
+        useInit "tools-poly/lsp/hover_quote_init.ML";
+        (* Tactic-step compiler used by later slices to walk a Proof
+           body via goalFrag; also runs its selftest at load time.
+           Depends on TacticParse (tools/parsing/) for the surface-sugar
+           elaboration.  No load: `poly-init2' compiles TacticParse
+           into this executable, beside the source parser it reads. *)
+        useInit "tools-poly/lsp/tactic_steps.ML";
+        (* goalFrag-based interpreter for the step stream. *)
+        useInit "tools-poly/lsp/tactic_walker.ML";
+        (* Goal-state at cursor inside a Proof-QED body. *)
+        useInit "tools-poly/lsp/goal_state_init.ML";
+        (* And inside a `Resume thm[label]:' body, whose goal is not
+           in the file: it is the subgoal `thm' suspended under
+           `label'.  Found the way `markerLib.prim_set_suspended_goal'
+           finds it, rather than by some other route, so the goal the
+           cursor shows is the goal `Resume' is handed -- the parent
+           from the suspension store, the resumptions already recorded
+           for the same label folded in beside it (that list is what
+           makes a re-suspending `Resume' come out right), and the two
+           functions that turn those into a goal.
+
+           `evalString' because `markerLib' is absent from
+           `hol.state0', which is the heap every directory up to
+           `src/boss' asks for.  Asked for by name first rather than
+           compiled and allowed to fail: a failure here is a startup
+           warning the user sees, and "did not load" is the wrong
+           thing to say about a heap that was never going to have it.
+           Where it is missing the hook keeps its NONE default and
+           the goal-state handler reports `pending', which is the
+           truth -- no suspension store, no suspended subgoal. *)
+        if not (isSome (#lookupStruct PolyML.globalNameSpace "markerLib"))
+        then ()
+        else evalString "the suspended-goal lookup"
+          "LSPSuspendedGoal.lookup := \
+          \  (fn {suspension, label} => \
+          \     case markerLib.lookup_suspension suspension of \
+          \       NONE => NONE \
+          \     | SOME (thy, th) => \
+          \       let val sths = markerLib.lookup_resumption \
+          \             {parent_thy = thy, parent_name = suspension, \
+          \              label = label} \
+          \       in Lib.total (fn () => markerLib.resumption_to_goal \
+          \            (markerLib.extract_suspended_goal (th :: sths) \
+          \                                              label)) () \
+          \       end)";
+        (* And inside a `Definition foo: <eqns> Termination tac End'
+           body, whose goal is likewise not written in the file: it is
+           the termination obligation `Defn' derives from `<eqns>'.
+           Built the way `TotalDefn.located_tDefine' builds it --
+           `Hol_defn' then `tc_obligation' -- so the goal the cursor
+           shows is the goal the tactic is handed.  `tgoal' answers the
+           same question by parking a goalstack in the proof manager,
+           which a request thread must not touch.
+
+           Guarded on `TotalDefn' rather than `Defn': a directory whose
+           heap has neither cannot hold a working `Termination' block
+           at all, so the hook keeping its default -- which says so --
+           is the truth there.
+
+           `deferProofs' off for the duration: `Hol_defn' runs tactic
+           proofs of its own, and with deferral on the pool would take
+           them under whatever name the restored context happened to
+           carry, inventing entries the buffer has no declaration for.
+           `def_suffix'/`ind_suffix' empty mirrors `located_qDefine's
+           own `fmod', since they name the auxiliary constants a nested
+           or mutual recursion puts in the obligation.
+
+           `triv_defn' is asked first, as `located_tDefine' asks it,
+           and under `Lib.total': `tcs_of' raises outright on a
+           tail-recursive defn, which this route cannot reach but has
+           no business relying on. *)
+        if not (isSome (#lookupStruct PolyML.globalNameSpace "TotalDefn"))
+        then ()
+        else evalString "the termination-goal builder"
+          "LSPTerminationGoal.lookup := \
+          \  (fn {stem, quote} => \
+          \     let \
+          \       fun build () = \
+          \         Lib.with_flag (LSPExtension.deferProofs, false) \
+          \           (Lib.with_flag (Defn.def_suffix, \"\") \
+          \             (Lib.with_flag (Defn.ind_suffix, \"\") \
+          \               (fn () => \
+          \                   Defn.Hol_defn stem [HOLPP.QUOTE quote]))) () \
+          \       fun nothingToProve d = \
+          \           Defn.triv_defn d orelse List.null (Defn.tcs_of d) \
+          \       val broken = \
+          \         LSPTerminationGoal.Unavailable \
+          \           (\"no termination goal yet: \" ^ \
+          \            \"the definition does not build\") \
+          \       val automatic = \
+          \         LSPTerminationGoal.NoObligation \
+          \           (\"termination was proved automatically, \" ^ \
+          \            \"so this tactic is ignored\") \
+          \     in \
+          \       case Lib.total build () of \
+          \         NONE => broken \
+          \       | SOME d => \
+          \         case Lib.total nothingToProve d of \
+          \           NONE => broken \
+          \         | SOME true => automatic \
+          \         | SOME false => \
+          \           case Lib.total Defn.tc_obligation d of \
+          \             NONE => broken \
+          \           | SOME (_, ((asl, g), _)) => \
+          \             LSPTerminationGoal.Obligation (asl, g) \
+          \     end)";
+        (* Stored-theorem names for workspace/symbol and completion,
+           from DB and from built Theory.dat files. *)
+        useInit "tools-poly/lsp/db_symbols_init.ML";
+        (* Searching the theorem database by name, theory and term
+           pattern -- what `M-h M' asks for. *)
+        useInit "tools-poly/lsp/db_search_init.ML";
+        (* Entry documentation in hovers, from `help/HOL.Help' and the
+           processed Reference entries.  `Database' first, from source:
+           the index reader is in no heap, and `help_init' reads the
+           index through it.  Adding `Database' to the namespace user
+           files compile against is the cost; the alternative -- a
+           private namespace for it -- buys little, since the LSP boot
+           session `open's nothing and so the name cannot shadow
+           anything a file refers to unqualified. *)
+        useInit "help/src-sml/Database.sig";
+        useInit "help/src-sml/Database.sml";
+        useInit "tools-poly/lsp/help_init.ML";
+        (* --lsp-check-proofs: replay what the cheating pass deferred,
+           rather than discarding it.  Off by default, so an LSP session
+           costs elaboration only unless asked otherwise.  The pool is
+           given workers explicitly: Multithreading defaults to one, and
+           0 asks for one per processor, capped at 8. *)
+        (* Workers are configured whether or not checking is on at
+           startup: `$/setConfig' can switch it on mid-session, and the
+           pool then needs somewhere to run. *)
+        evalString "the proof-checking worker pool"
+                   "DeferredProofs.setWorkerCount 0";
+        if #check_proofs options then
+          evalString "proof checking" "LSPExtension.deferProofs := true"
+        else ();
+        case #multithread options of
+            NONE => ()
+          | SOME i => buildheap_cline_mt := SOME i;
+        List.app
+          (maybe_check_load diag)
+          ((case #multithread options of
+                NONE => []
+              | SOME _ => [("poly_decide_threadcount.uo", false)]) @
+           objs);
+        LSPServer.start {diag = diag, dbg = debug,
+                         warnings = !startup_warnings};
+        (* Explicit, as in the RUN branch.  Returning would do it -- the
+           `PolyML.export` wrapper exits for us -- but when the session
+           ends there can still be a compile thread inside the
+           elaborator, forked with interrupts deferred and cancelled
+           only cooperatively, and a debounce thread able to start
+           another.  `success`, because a client going away is the
+           normal end of a session and editors report a non-zero server
+           exit as a fault. *)
+        diag "LSP session ended";
+        OS.Process.exit OS.Process.success
+      end
+    | REPL =>
+      let in
+        QUse.failOnError := false; (* heap may carry true from BUILDHEAP *)
+        case #multithread options of
+            NONE => ()
+          | SOME i => buildheap_cline_mt := SOME i;
+        (* Load prelude files for interactive mode, unless using the
+           minimal (min-only) heap which has no boolTheory. *)
+        (case base_state of
+            SOME s => if String.isSuffix "hol.state.min" s then
+                        (* Even in --min mode, we need HOL_Interactive for
+                           the parser's open-rewriting (issue #1865) *)
+                        QUse.use (OS.Path.concat(Systeml.HOLDIR,
+                                                 "tools-poly/holinteractive.ML"))
+                      else load_preludes()
+          | NONE => ());
+        List.app
+          (maybe_check_load diag)
+          ((case #multithread options of
+                NONE => []
+              | SOME _ => [("poly_decide_threadcount.uo", false)]) @
+           objs);
+        diag "Starting REPL";
+        PolyML.print_depth 100;
+        HOL_REPL.sigint_handler();
+        if HOL_REPL.topLevel {diag = diag, zeroTerm = z_repl} then
+          (diag "Script stopped short of its end; exiting failure";
+           OS.Process.exit OS.Process.failure)
+        else ()
+      end
+    | RUN =>
+      let
+        (* The cline_opts NoArg writes a ref defined in this module,
+           but that ref lives inside the saved heap; loading
+           `--holstate=...` between option parsing and this point
+           resets it to false.  Check argv directly instead.
+           `CommandLine.arguments()` reads the real process argv
+           regardless of heap state. *)
+        val keep_going =
+            List.exists (fn s => s = "--" ^ keepGoingFlag)
+                        (CommandLine.arguments())
+      in
+        QUse.failOnError := not keep_going;
+        case #multithread options of
+            NONE => ()
+          | SOME i => buildheap_cline_mt := SOME i;
+        List.app
+          (maybe_check_load diag)
+          ((case #multithread options of
+                NONE => []
+              | SOME _ => [("poly_decide_threadcount.uo", false)]) @
+           objs);
+        (* Check for required output files *)
+        List.app (fn s => if HOLFileSys.access(s, [HOLFileSys.A_READ]) then ()
+                          else die ("Couldn't find required output file: "^s ^
+                                    (case #checkerr options of
+                                         NONE => ""
+                                       | SOME s => "\n" ^ s)))
+                 (#checkfors options);
+        if QUse.hadError () then (
+          diag "Parse errors during run; exiting failure";
+          OS.Process.exit OS.Process.failure)
+        else ();
+        diag "Run done; about to exit successfully";
+        OS.Process.exit OS.Process.success
+      end
+    | HEAPNAME => () (* Already handled above *)
+end handle e =>
+      BuildHeap_CLINE.die ("Uncaught exception" ^
+        (case PolyML.Exception.exceptionLocation e of
+            NONE => ""
+          | SOME {file, startLine, ...} => " at " ^ file ^ ":" ^ FixedInt.toString startLine) ^
+        ": " ^ General.exnMessage e)

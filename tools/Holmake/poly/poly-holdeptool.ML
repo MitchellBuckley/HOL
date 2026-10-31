@@ -1,0 +1,35 @@
+val _ = PolyML.Compiler.prompt1:="";
+val _ = PolyML.Compiler.prompt2:="";
+val _ = PolyML.print_depth 0;
+use "../../../src/portableML/DString.sig";
+use "../../../src/portableML/DString.sml";
+use "../../../src/portableML/DArray.sig";
+use "../../../src/portableML/DArray.sml";
+use "../../../tools-poly/poly/Binaryset.sig";
+use "../../../tools-poly/poly/Binaryset.sml";
+use "../../../tools-poly/poly/Binarymap.sig";
+use "../../../tools-poly/poly/Binarymap.sml";
+use "../hfs/HOLFS_dtype.sml";
+use "../hfs/HFS_NameMunge.sig";
+use "HFS_NameMunge.sml";
+use "../hfs/HOLFileSys.sig";
+use "../hfs/HOLFileSys.sml";
+use "../deps/Holdep_tokens.sig";
+use "../deps/Holdep_tokens.sml";
+use "../Systeml.sig";
+use "../Systeml.sml";
+use "../../parsing/AttributeSyntax.sig";
+use "../../parsing/AttributeSyntax.sml";
+use "../../parsing/HOLSourceAST.sig";
+use "../../parsing/HOLSourceAST.sml";
+use "../../parsing/HOLSourceParser.sig";
+use "../../parsing/HOLSourceParser.sml";
+use "../../parsing/HOLSourceExpand.sig";
+use "../../parsing/HOLSourceExpand.sml";
+use "../../parsing/HOLSourcePrinter.sig";
+use "../../parsing/HOLSourcePrinter.sml";
+use "../../parsing/HOLSource.sig";
+use "../../parsing/HOLSource.sml";
+use "../deps/holdeptool.sml";
+
+val main = holdeptool.main

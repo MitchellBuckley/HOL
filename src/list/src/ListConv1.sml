@@ -47,7 +47,8 @@ val ERR = mk_HOL_ERR "List_conv";
 structure Parse =
 struct
  open Parse
- val (Type,Term) = parse_from_grammars rich_listTheory.rich_list_grammars
+ val SOME rich_list_grammars = grammarDB {thyname="rich_list"}
+ val (Type,Term) = parse_from_grammars rich_list_grammars
  fun == q x = Type q
 end
 open Parse
@@ -280,11 +281,16 @@ end;
 (* ADDED: TFM 91.10.26                                                 *)
 (*---------------------------------------------------------------------*)
 
-local val (th1,th2) = CONJ_PAIR (listTheory.APPEND)
-      val th3 = SPECL [%`l1: 'a list`, %`l2: 'a list`] th2
-      val th4 = GENL  [%`l2: 'a list`,  %`l1: 'a list`] th3
+local
+  open Psyntax
+  val l1v = mk_var("l1", listSyntax.mk_list_type alpha)
+  val l2v = mk_var("l2", listSyntax.mk_list_type alpha)
+  val hv = mk_var("h", alpha)
+  val (th1,th2) = CONJ_PAIR (listTheory.APPEND)
+  val th3 = SPECL [l1v,l2v,hv] th2
+  val th4 = GENL  [l2v,l1v,hv] th3
       fun itfn (cns,ath) v th =
-        let val th1 = AP_TERM (mk_comb{Rator=cns,Rand=v}) th
+        let val th1 = AP_TERM (mk_comb(cns,v)) th
             val l = rand(rator(rand(rator(concl th))))
         in TRANS (SPEC v (SPEC l ath)) th1
         end
@@ -428,7 +434,7 @@ val FOLDR_CONV  =
   fn conv => fn tm =>
     let val (f,e,l) = listSyntax.dest_foldr tm
         val ithm' = ISPECL[f,e] ithm
-        val (els,lty) =  (dest_list l)
+        val (els,lty) = (dest_list l)
         fun itfn a th =
           let val l' = case snd(strip_comb(lhs(concl th)))
                        of [f',e',l'] => l'
@@ -735,7 +741,7 @@ val ELL_CONV =
     (let val (N,lst) = rich_listSyntax.dest_ell tm
          val ty = type_of lst
          val (lst',ety) = (dest_list lst)
-         val n =  int_of_term N
+         val n = int_of_term N
      in
          if not(n < (length lst'))
              then raise ERR "ELL_CONV" ("index too large: "^(int_to_string n))
@@ -795,28 +801,26 @@ fun thm_eq th1 th2 =
                (dest_thm th1, dest_thm th2) = EQUAL
 
 val ALL_EL_CONV =
-    let val (bth,ith) = CONJ_PAIR (rich_listTheory.ALL_EL)
-        val AND_THM = op_mk_set thm_eq (flatten(map (CONJ_LIST 5)
-            [(SPEC (“T”) AND_CLAUSES),(SPEC (“F”) AND_CLAUSES)]))
+    let val (bth,ith) = CONJ_PAIR rich_listTheory.ALL_EL
+        val and_cls = CONJ_LIST 5 (SPEC_ALL AND_CLAUSES)
+        val T_and = List.nth(and_cls, 0)  (* |- T /\ t = t *)
+        val F_and = List.nth(and_cls, 2)  (* |- F /\ t = F *)
     in
-  fn conv => fn tm =>
-    (let val (P,l) = listSyntax.dest_every tm
-         val bth' = ISPEC P bth and ith' = ISPEC P ith
-         val lis = #1(dest_list l)
-         fun ffn x th =
-             let val {lhs=left,rhs=right} = dest_eq(concl th)
-                 val (p,ls) = case strip_comb left
-                              of (_,[p,ls]) => (p,ls)
-                               | _ => raise ERR "ALL_EL_CONV" ""
-                 val fthm = SPECL [x,ls] ith'
-                 and cthm = conv (mk_comb{Rator=P,Rand=x})
-             in
-                 SUBS AND_THM (SUBS[cthm,th]fthm)
-             end
-     in
-         (itlist ffn lis bth')
-     end)
-         handle e => raise wrap_exn "List_conv" "ALL_EL_CONV" e
+      fn conv =>
+        let
+          fun walk tm =
+            let val (_,l) = listSyntax.dest_every tm
+            in
+              if listSyntax.is_nil l then REWR_CONV bth tm
+              else (REWR_CONV ith THENC
+                    LAND_CONV conv THENC
+                    (REWR_CONV F_and ORELSEC
+                     (REWR_CONV T_and THENC walk))) tm
+            end
+        in
+          fn tm => walk tm
+                   handle e => raise wrap_exn "List_conv" "ALL_EL_CONV" e
+        end
     end;
 
 (* --------------------------------------------------------------------- *)

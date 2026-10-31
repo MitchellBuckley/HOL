@@ -1,0 +1,94 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+CLINE_OPTIONS = -r
+DIRNAMES = \
+  altquote1 \
+  brokenstrings \
+  clinevars \
+  cross_dir_expansion \
+  cross_dir_rule \
+  depchainloop \
+  dirs \
+  dupcommands \
+  projfile_nested \
+  varextension \
+  wildcard \
+  holpathdb/proj2 \
+  holpathdb/proj2/proj2A \
+  depchain1/dir3 \
+  depchain2/dir1 \
+  holdep \
+  longcmdlock \
+  nullary_tgt \
+  phony_tgt \
+  quote-filter \
+  cachekey \
+  rebuild_cachekey \
+  theorytarget \
+  commandmacros \
+  condifeq \
+  doublecrnl \
+  projclean_loop \
+  h4pedant_config \
+  projfile_basic \
+  projfile_holmake_false \
+  projfile_holpath_override \
+  projfile_open_resolution \
+  projfile_name_clash \
+  projfile_undeclared_parent \
+  projfile_synthetic \
+  pathsquash \
+  patrule_parse \
+  patrule_match \
+  patrule_e2e \
+  coproduct \
+  noprereqs/dir1 \
+  noprereqs/dir2 \
+  noprereqs/dir3 \
+  noprereqs/dir4 \
+  indepchildren \
+  empty_script \
+  deps_of_depthys \
+  gh569_info \
+  missing_output \
+  gh569_error \
+  gh604 \
+  gh679 \
+  gh1353 \
+  gh1993 \
+  gh1993-lib \
+  ignore_errors/j1 \
+  qfreadTheoremsyntax \
+  use-fnf \
+  time-logging \
+  dashC_works \
+  dashC_lastmaker \
+  lastmaker_propagation
+
+ifdef POLY
+DIRNAMES += cache_reflink \
+            dircolumn \
+            cachefetch \
+            cachekey_transitive_parent \
+            cheatspotting \
+            depchain_heap/ \
+            depchain_heap/dir2 \
+            dirlock \
+            dumpheap \
+            errorbudget \
+            gh1979 \
+            heap-size \
+            hollogs \
+            ignore_errors/j4 \
+            issue1903 \
+            json-strings \
+            local_parallelism_limit \
+            placeholder_regroup \
+            projfile_cross_dir_deps \
+            projfile_module \
+            retry_oos \
+            scan_order_staleness \
+	    target_times
+endif
+
+
+INCLUDES = $(patsubst %,../%,$(DIRNAMES))

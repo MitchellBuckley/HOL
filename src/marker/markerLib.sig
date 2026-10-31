@@ -37,6 +37,28 @@ sig
   val dest_ReqD : thm -> thm option
   val mk_require_tac : (thm list -> tactic) -> (thm list -> tactic)
 
+  (* The theorem-list directive vocabulary: theorems that control the
+     tactic or simpset they are passed to instead of being used as facts.
+     Every consumer of a theorem list must classify through
+     dest_directive, dropping or rejecting a directive it cannot honour
+     rather than using it as a rewrite.  Hypothesis-carried wrappers
+     (Req0, ReqD, bounds) are reported before the payload's own head. *)
+  datatype directive =
+      DAC of thm * thm
+    | DCong of thm
+    | DExcl of string
+    | DExclSF of string
+    | DFRAG of string
+    | DReq0 of thm
+    | DReqD of thm
+    | DBounded of thm * int
+    | DNoAsms
+    | DIgnAsm of string
+    | DAbbr of string
+    | DLabel of string
+  val dest_directive : thm -> directive option
+  val is_directive   : thm -> bool
+
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic
   val ABBREV_TAC          : term -> tactic
@@ -71,8 +93,14 @@ sig
   val find_labelled_assumption : thm -> term list -> thm
 
   val ASSUME_NAMED_TAC : string -> thm -> tactic
+  val assume_named_tac : string -> thm -> tactic
+  val mk_asm           : string -> thm -> tactic
   val LABEL_ASSUM      : string -> thm_tactic -> tactic
+  val label_assum      : string -> thm_tactic -> tactic
+  val asm              : string -> thm_tactic -> tactic
   val LABEL_X_ASSUM    : string -> thm_tactic -> tactic
+  val label_x_assum    : string -> thm_tactic -> tactic
+  val asm_x            : string -> thm_tactic -> tactic
   val LLABEL_RESOLVE   : thm list -> term list -> thm list
   val LLABEL_RES_THEN  : (thm list -> tactic) -> thm list -> tactic
 
@@ -85,7 +113,7 @@ sig
   val dest_hide : term -> string * term
   val install_hidepp : unit -> unit (* it starts installed *)
   val remove_hidepp : unit -> unit
-  val unignoring_hide : ('a -> 'b) -> ('a -> 'b)
+  val unignoring_hide : tactic -> tactic
 
   val MK_HIDE : string -> thm -> thm
   val UNHIDE : thm -> thm
@@ -96,7 +124,36 @@ sig
   val unhide_x_assum : string -> thm_tactic -> tactic
   val use_hidden_assum : string -> thm_tactic -> tactic
 
-end
+  val IgnAsm : 'a quotation -> thm
+  val NoAsms : thm
+
+  val process_taclist_then : {arg: thm list} -> (thm list -> tactic) -> tactic
+
+  val suspend : string -> tactic
+  val prim_resume : (thm * string * tactic) -> {updated_main: thm, subresult:thm}
+  val resume : {suspension_name:string, label_name:string} -> tactic ->
+               Context.t -> thm
+  val prim_set_suspended_goal :
+      Manager.tacmodifier -> {suspension_name:string, label_name:string} ->
+      proofManagerLib.proofs
+  val set_suspended_goal :
+      {suspension_name:string, label_name:string} -> proofManagerLib.proofs
+      (* provides id_tacm for the tactic modifier value *)
+  val finalise_suspended_thm : DB.thm_src_location -> string -> thm
+
+  (* Look up a suspended parent theorem or a resumption proof in the
+     suspension AncestryData stores (current theory merged with
+     ancestors).  Exposed mainly for selftests. *)
+  val lookup_suspension : string -> (string * thm) option
+  val lookup_resumption :
+      {parent_thy:string, parent_name:string, label:string} -> thm list
+
+  val add_suspension_label : string -> thm -> thm
+  val resumption_to_goal : (int * term) list -> (term list * term)
+  val extract_suspended_goal : thm list -> string -> (int * term) list
+  val RESUME_TAC : tactic
+
+end (* sig *)
 
 (*
    [stmark_term t] wraps term t in a "short term marker".

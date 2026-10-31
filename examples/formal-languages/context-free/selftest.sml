@@ -1,4 +1,6 @@
 open HolKernel Parse boolLib simpLib bossLib
+
+val _ = new_theory "scratch"
 open testutils
 
 local
@@ -10,9 +12,9 @@ local
   val _ = let
     open computeLib
   in
-    set_skip the_compset ``evalcase_CASE`` (SOME 1);
-    set_skip the_compset ``option_CASE`` (SOME 1);
-    set_skip the_compset ``COND`` (SOME 1)
+    set_EVAL_skip ``evalcase_CASE`` (SOME 1);
+    set_EVAL_skip ``option_CASE`` (SOME 1);
+    set_EVAL_skip ``COND`` (SOME 1)
   end
 in
 fun test0 nt s = let
@@ -93,7 +95,7 @@ val _ = app failtest [
     ]
 
 
-val _ = app tpp ["⟪2; 3⟫", "⟪ ⟫", "⟪SX_SYM \"foo\"⟫", "⟪ ⟪3 • 4⟫; ⟪3; 4⟫ ⟫"]
+val _ = app tpp ["⟪2; 3⟫", "⟪⟫", "⟪SX_SYM \"foo\"⟫", "⟪⟪3 • 4⟫; ⟪3; 4⟫⟫"]
 
 local
   val t = “TOK 1n”

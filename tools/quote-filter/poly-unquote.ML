@@ -2,43 +2,76 @@ val _ = PolyML.Compiler.prompt1:="";
 val _ = PolyML.Compiler.prompt2:="";
 val _ = PolyML.print_depth 0;
 
+use "../../src/portableML/DString.sig";
+use "../../src/portableML/DString.sml";
+use "../../src/portableML/DArray.sig";
+use "../../src/portableML/DArray.sml";
 use "../Holmake/Systeml.sig";
-use "../../tools-poly/Holmake/Systeml.sml";
-use "../Holmake/QuoteFilter.sml";
-open OS.Process
-
-fun read_from_stream is n = TextIO.input is;
-
+use "../Holmake/Systeml.sml";
+use "../parsing/AttributeSyntax.sig";
+use "../parsing/AttributeSyntax.sml";
+use "../parsing/HolLex.sml";
+use "../util/SimpleBuffer.sig";
+use "../util/SimpleBuffer.sml";
+use "../Holmake/hfs/HOLFS_dtype.sml";
+use "../Holmake/hfs/HFS_NameMunge.sig";
+use "../Holmake/poly/HFS_NameMunge.sml";
+use "../Holmake/hfs/HOLFileSys.sig";
+use "../Holmake/hfs/HOLFileSys.sml";
+use "../../tools-poly/poly/Binarymap.sig";
+use "../../tools-poly/poly/Binarymap.sml";
+use "../parsing/HOLSourceAST.sig";
+use "../parsing/HOLSourceAST.sml";
+use "../parsing/HOLSourceParser.sig";
+use "../parsing/HOLSourceParser.sml";
+use "../parsing/HOLSourceExpand.sig";
+use "../parsing/HOLSourceExpand.sml";
+use "../parsing/HOLSourcePrinter.sig";
+use "../parsing/HOLSourcePrinter.sml";
+use "../parsing/HOLSource.sig";
+use "../parsing/HOLSource.sml";
+use "quotefix.sig";
+use "quotefix.sml";
 use "qfilter_util.sig";
 use "qfilter_util.sml";
+
+open OS.Process
 
 fun main() = let
   (* magic to ensure that interruptions (SIGINTs) are actually seen by the
      linked executable as Interrupt exceptions *)
   val _ = Signal.signal(2, Signal.SIG_HANDLE
                                (fn _ => Thread.Thread.broadcastInterrupt()))
-  val (instream, outstream, intp, qfixp, cb) =
-      qfilter_util.processArgs(false,false,false) (CommandLine.arguments())
+  val {instrm, outstrm, interactive, quotefixp, quietOpen, closefn, infilename} =
+      qfilter_util.processArgs(false,false,false,false) (CommandLine.arguments())
 
 (* with many thanks to Ken Friis Larsen, Peter Sestoft, Claudio Russo and
    Kenn Heinrich who helped me see the light with respect to this code *)
 
-  open QuoteFilter.UserDeclarations
-  val state as QFS args = newstate {inscriptp = intp, quotefixp = qfixp}
-
-  fun loop() =
-    let
-      val lexer = #2 o QuoteFilter.makeLexer (read_from_stream instream) state
-      fun coreloop () =
-        case lexer() of
-            "" => ()
-          | s => (TextIO.output(outstream, s); coreloop())
-    in
-      coreloop() handle Interrupt => (resetstate state; loop())
-    end
+  fun read _ = TextIO.input instrm
+  fun write s = TextIO.output (outstrm, s)
+  val {print = errPrint, hadError} =
+      HOLSourceParser.trackingPrint
+        (fn s => TextIO.output (TextIO.stdErr, s))
+  val _ = if quotefixp then
+    quotefix.run read write
+  else let
+    open HOLSource.ToSML
+    val {read, ...} = mkPullTranslator {
+      read = read,
+      filename = infilename,
+      parseError = HOLSourceParser.filelineParseError errPrint,
+      quietOpen = quietOpen }
+    fun loop () = case read () of "" => () | s => (write s; loop ())
+    in loop () end
 in
-  loop();
-  TextIO.closeOut outstream;
-  cb();
-  exit success
-end;
+  closefn ();
+  exit (if hadError () then failure else success)
+end handle e => (
+  TextIO.output (TextIO.stdErr, "Uncaught exception" ^
+    (case PolyML.Exception.exceptionLocation e of
+        NONE => ""
+      | SOME {file, startLine, ...} => " at " ^ file ^ ":" ^ FixedInt.toString startLine) ^
+    ": " ^ General.exnMessage e);
+  PolyML.Exception.reraise e
+);

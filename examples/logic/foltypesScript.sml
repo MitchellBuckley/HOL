@@ -1,30 +1,28 @@
-open HolKernel boolLib Parse bossLib
+Theory foltypes
+Ancestors
+  nomset pred_set list
+Libs
+  binderLib nomdatatype boolSimps quotientLib
 
-open binderLib nomdatatype nomsetTheory boolSimps
-     pred_setTheory listTheory quotientLib
-
-val _ = new_theory "foltypes"
-
-val _ = Datatype‘foterm = V string | TFn string (foterm list)’;
+Datatype:
+  foterm = V string
+         | TFn string (foterm list)
+End
 
 Theorem foterm_induct:
   ∀P. (∀s. P (V s)) ∧ (∀f ts. (∀t. MEM t ts ⇒ P t) ⇒ P(TFn f ts)) ⇒
       ∀t. P t
 Proof
-  rpt strip_tac >>
-  qspecl_then [‘P’, ‘λts. ∀t. MEM t ts ⇒ P t’]
-    (assume_tac o SIMP_RULE bool_ss [])
-    (TypeBase.induction_of “:foterm”) >> fs[DISJ_IMP_THM, FORALL_AND_THM]
+  (* the package proves this shape itself, and quantifies a
+     constructor's other arguments inside the implication *)
+  gen_tac >> strip_tac >> ho_match_mp_tac (TypeBase.induction_of “:foterm”) >>
+  simp[]
 QED
 
 val _ = TypeBase.update_induction foterm_induct
 
-val foterm_size_def = DB.fetch "-" "foterm_size_def"
-val _ = export_rewrites ["foterm_size_def"]
-
-
 Theorem foterm_size_lemma[simp]:
-  ∀x l a. MEM a l ⇒ foterm_size a < foterm1_size l + (x + 1)
+  ∀x l a. MEM a l ⇒ foterm_size a < list_size foterm_size l + (x + 1)
 Proof
   rpt gen_tac >> Induct_on ‘l’ >> simp[] >> rw[] >> simp[] >>
   res_tac >> simp[]
@@ -33,14 +31,13 @@ QED
 Definition raw_tpm_def:
   (raw_tpm π (V s) = V (lswapstr π s)) ∧
   (raw_tpm π (TFn f ts) = TFn f (MAP (raw_tpm π) ts))
-Termination
-  WF_REL_TAC ‘measure (foterm_size o SND)’ >> simp[]
 End
 
-Theorem raw_tpm_def = SIMP_RULE (srw_ss() ++ ETA_ss) [] raw_tpm_def
+Theorem raw_tpm_def[allow_rebind] =
+        SIMP_RULE (srw_ss() ++ ETA_ss) [] raw_tpm_def
 
-val _ = overload_on ("tpm", “pmact (mk_pmact raw_tpm)”)
-val _ = overload_on ("tlpm", “listpm (mk_pmact raw_tpm)”)
+Overload tpm = “pmact (mk_pmact raw_tpm)”
+Overload tlpm = “listpm (mk_pmact raw_tpm)”
 val MAP_CONG' = REWRITE_RULE [GSYM AND_IMP_INTRO] listTheory.MAP_CONG
 
 val tpm_raw = Q.prove(
@@ -82,22 +79,12 @@ QED
 Definition tfv_def[simp]:
   (tfv (V s) = {s}) ∧
   (tfv (TFn f ts) = LIST_UNION (MAP tfv ts))
-Termination
-  WF_REL_TAC ‘measure foterm_size’ >> simp[]
 End
 
 Theorem FINITE_tfv[simp]:
   ∀t. FINITE (tfv t)
 Proof
   Induct >> simp[MEM_MAP, PULL_EXISTS, DISJ_IMP_THM]
-QED
-
-Theorem tfv_tpm:
-  ∀t. tfv (tpm pi t) = ssetpm pi (tfv t)
-Proof
-  Induct >>
-  simp[pmact_INSERT, pmact_LIST_UNION, listpm_MAP, MAP_MAP_o,
-       Cong MAP_CONG']
 QED
 
 val OR_LEFT_FORALL_THM = Q.prove(
@@ -129,7 +116,8 @@ Proof
   ‘∃y. y ∉ tfv t ∧ y ∉ s’
      by (Q.SPEC_THEN `tfv t UNION s` MP_TAC basic_swapTheory.NEW_def >>
          simp[] THEN METIS_TAC []) >>
-  METIS_TAC [tfv_apart]);
+  METIS_TAC [tfv_apart]
+QED
 
 Theorem ssetpm_LIST_UNION[simp]:
   ssetpm π (LIST_UNION l) = LIST_UNION (MAP (ssetpm π) l)
@@ -145,10 +133,10 @@ Proof
        listpm_MAP]
 QED
 
-val _ = Datatype‘
+Datatype:
   raw_fof = imp0 raw_fof raw_fof | raw_falsity | rawP string (foterm list)
           | rawALL string raw_fof
-’;
+End
 
 Definition rawfpm_def[simp]:
   (rawfpm pi (imp0 rf1 rf2) = imp0 (rawfpm pi rf1) (rawfpm pi rf2)) ∧
@@ -207,7 +195,6 @@ Proof
 QED
 
 val _ = augment_srw_ss [rewrites [FINITE_raw_atoms]]
-
 
 Theorem raw_atoms_apart:
   ∀rf x y. x ∈ raw_atoms rf ∧ y ∉ raw_atoms rf ⇒ rawfpm [(x,y)] rf ≠ rf
@@ -389,6 +376,7 @@ Theorem rawfpm_xx_id[simp]:
 Proof
   Induct_on ‘f’ >> simp[]
 QED
+
 (*
 Theorem raw_fresh:
   ∀x y. x ∉ rawfv rf ∧ y ∉ rawfv rf ⇒ faeq (rawfpm [(x,y)] rf) rf
@@ -460,9 +448,3 @@ val lifted_results = define_equivalence_type
                faeq_ALL_respects, faeq_rawfv]
   };
 
-
-
-
-
-
-val _ = export_theory();

@@ -2,13 +2,17 @@ structure boolSimps :> boolSimps =
 struct
 
 open HolKernel boolLib liteLib simpLib pureSimps
-     Ho_Rewrite tautLib Parse;
+     Ho_Rewrite tautLib Parse boolSimpsContextTheory;
+
+structure Parse = struct
+  open Parse
+  (* markerTheory is explicitly referenced/included in simpLib; so the
+     valOf below should never fail *)
+  val (Type,Term) = parse_from_grammars(valOf $ grammarDB {thyname="marker"})
+end
+open Parse
 
 infix THENQC
-
-(* Fix the grammar used by this file *)
-val ambient_grammars = Parse.current_grammars();
-val _ = Parse.temp_set_grammars combinTheory.combin_grammars
 
 fun BETA_CONVS tm = (RATOR_CONV BETA_CONVS THENQC BETA_CONV) tm
 
@@ -41,13 +45,7 @@ val ETA_ss = SSFRAG {name = SOME "ETA",
     literal_case_ss
    ---------------------------------------------------------------------- *)
 
- val literal_cong = prove(
-   ``(v:'a = v') ==> (literal_case (f:'a -> 'b) v = literal_case f (I v'))``,
-   DISCH_THEN SUBST_ALL_TAC THEN REWRITE_TAC [literal_case_THM, combinTheory.I_THM])
-
-val literal_I_thm = prove(
-  ``literal_case (f : 'a -> 'b) (I x) = f x``,
-  REWRITE_TAC [combinTheory.I_THM, literal_case_THM]);
+(* literal_cong, literal_I_thm from boolSimpsContextTheory *)
 
 val literal_case_ss =
     SSFRAG {
@@ -96,18 +94,17 @@ val BOOL_ss = SSFRAG
      "EXISTS_SIMP",  "COND_ID", "EXISTS_REFL", "EXISTS_UNIQUE_REFL",
      "EXCLUDED_MIDDLE", "bool_case_thm", "NOT_AND",
      "SELECT_REFL", "SELECT_REFL_2", "RES_FORALL_TRUE",
-     "RES_EXISTS_FALSE", "EXISTS_UNIQUE_FALSE"
+     "RES_EXISTS_FALSE", "EXISTS_UNIQUE_FALSE", "COND_BOOL_CLAUSES"
    ] @ map (fn (s,th) => (SOME {Thy = "", Name = s}, th)) [
      ("EXISTS_REFL'", GSYM EXISTS_REFL),
      ("EXISTS_UNIQUE_REFL'", GSYM EXISTS_UNIQUE_REFL),
      ("EXCLUDED_MIDDLE'", ONCE_REWRITE_RULE [DISJ_COMM] EXCLUDED_MIDDLE),
+     ("NOT_AND'",         ONCE_REWRITE_RULE [CONJ_COMM] NOT_AND),
      ("literal_I_thm", literal_I_thm),
-     ("COND_BOOL_CLAUSES", COND_BOOL_CLAUSES),
      ("lift_disj_eq", lift_disj_eq),
      ("lift_imp_disj", lift_imp_disj)
    ],
    congs = [literal_cong], filter = NONE, ac = [], dprocs = []};
-
 
 (*---------------------------------------------------------------------------
    Need to rewrite cong. rules to the iterated implication format assumed
@@ -178,13 +175,7 @@ val UNWIND_ss = SSFRAG
     LET_ss
    ---------------------------------------------------------------------- *)
 
- val let_cong = prove(
-   ``(v:'a = v') ==> (LET (f:'a -> 'b) v = LET f (I v'))``,
-   DISCH_THEN SUBST_ALL_TAC THEN REWRITE_TAC [LET_THM, combinTheory.I_THM])
-
-val let_I_thm = prove(
-  ``LET (f : 'a -> 'b) (I x) = f x``,
-  REWRITE_TAC [combinTheory.I_THM, LET_THM]);
+(* let_cong, let_I_thm from boolSimpsContextTheory *)
 
 val LET_ss =
     SSFRAG {name = SOME"LET",
@@ -231,13 +222,7 @@ val bool_ss = pure_ss ++ BOOL_ss ++ NOT_ss ++ CONG_ss ++ UNWIND_ss
  * ---------------------------------------------------------------------- *)
 
 
-val NESTED_COND = prove(
-  ``!p (q:'a) (r:'a) s.
-          (COND p (COND p q r) s = COND p q s) /\
-          (COND p q (COND p r s) = COND p q s) /\
-          (COND p (COND (~p) q r) s = COND p r s) /\
-          (COND p q (COND (~p) r s) = COND p q r)``,
-  REPEAT GEN_TAC THEN COND_CASES_TAC THEN REWRITE_TAC []);
+(* NESTED_COND from boolSimpsContextTheory *)
 
 fun celim_rand_CONV tm = let
   val (Rator, Rand) = Term.dest_comb tm
@@ -267,7 +252,7 @@ fun COND_ABS_CONV tm = let
   infix |-> THENC
   val {Bvar=v,Body=bdy} = dest_abs tm
   val {cond,larm=x,rarm=y} = Rsyntax.dest_cond bdy
-  val b = assert (not o op_mem aconv v o free_vars) cond
+  val b = assert (not o var_occurs v) cond
   val xf = mk_abs{Bvar=v,Body=x}
   val yf = mk_abs{Bvar=v,Body=y}
   val th1 = INST_TYPE [alpha |-> type_of v, beta |-> type_of x] COND_ABS
@@ -311,7 +296,7 @@ val LIFT_COND_ss = SSFRAG
              key = SOME([], Term`\x:'a. COND p (q x:'b) (r x)`),
              trace = 2}],
    dprocs = [], filter = NONE,
-   rewrs = [(SOME {Thy = "bool", Name =  "COND_RATOR"}, boolTheory.COND_RATOR),
+   rewrs = [(SOME {Thy = "bool", Name = "COND_RATOR"}, boolTheory.COND_RATOR),
             (SOME {Thy = "", Name = "NESTED_COND"}, NESTED_COND)]
   }
 
@@ -416,7 +401,6 @@ val SimpRHS = SimpR boolSyntax.equality
 
 
 
-val _ = Parse.temp_set_grammars ambient_grammars;
 
 end (* struct *)
 

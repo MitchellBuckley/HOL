@@ -12,7 +12,7 @@
 structure Term :> Term =
 struct
 
-open Feedback Lib Subst KernelTypes
+open Feedback Lib Subst Type_dtype KernelTypes
 
 val kernelid = "stdknl"
 
@@ -29,16 +29,39 @@ infix |-> ##;
                Create the signature for HOL terms
  ---------------------------------------------------------------------------*)
 
+fun termsig() = Context.termsig (Context.live())
+fun upd_termsig f = Context.update (Context.map_termsig f)
+fun genupd_termsig f =
+    Context.gen_update (fn c =>
+      let val (new, r) = f (Context.termsig c)
+      in (Context.map_termsig (fn _ => new) c, r) end)
 
-val termsig = KernelSig.new_table()
-fun prim_delete_const kn = ignore (KernelSig.retire_name(termsig, kn))
+fun term_epoch () = KernelSig.symtab_epoch (termsig())
+fun display_name_of_id id = KernelSig.display_name_of_id (termsig()) id
+
+fun prim_delete_const (kn as {Thy, Name}) =
+    if KernelSig.is_sealed_thy Thy then
+      raise ERR "prim_delete_const"
+            ("target theory \"" ^ Thy ^
+             "\" is sealed; cross-theory deletes are refused")
+    else
+      upd_termsig (#1 o KernelSig.retire_name kn)
 fun prim_new_const (k as {Thy,Name}) ty = let
+  val _ = not (KernelSig.is_sealed_thy Thy) orelse
+          raise ERR "prim_new_const"
+                ("target theory \"" ^ Thy ^
+                 "\" is sealed; cross-theory mints are refused")
   val hty = if Type.polymorphic ty then POLY ty else GRND ty
-  val id = KernelSig.insert(termsig, k, hty)
+  val id = genupd_termsig (KernelSig.insert(k, hty))
 in
   Const(id, hty)
 end
-fun del_segment s = KernelSig.del_segment(termsig, s)
+fun del_segment s =
+    if KernelSig.is_sealed_thy s then
+      raise ERR "del_segment"
+            ("theory \"" ^ s ^ "\" is sealed; segment delete refused")
+    else
+      upd_termsig (KernelSig.del_segment s)
 
 (*---------------------------------------------------------------------------*
  * Builtin constants. These are in every HOL signature, and it is            *
@@ -51,15 +74,20 @@ local
   val hil_ty = POLY ((alpha --> bool) --> alpha)
   val imp_ty = GRND (bool --> bool --> bool)
 in
-  val eq_id = insert(termsig,{Name = "=", Thy = "min"}, eq_ty)
-  val hil_id = insert(termsig,{Name = "@", Thy = "min"}, hil_ty)
-  val imp_id = insert(termsig,{Name = "==>", Thy = "min"}, imp_ty)
+  val eq_id = genupd_termsig (insert({Name = "=", Thy = "min"}, eq_ty))
+  val hil_id = genupd_termsig(insert({Name = "@", Thy = "min"}, hil_ty))
+  val imp_id = genupd_termsig(insert({Name = "==>", Thy = "min"}, imp_ty))
 
   val eqc = Const (eq_id,eq_ty)
   val equality = eqc
   val hil = Const (hil_id,hil_ty)
   val imp = Const (imp_id,imp_ty)
 end
+
+(* Seal "min" once its builtin types (fun, bool, ind) and constants
+   (=, @, ==>) are in place: nothing legitimate mints or retires
+   min-owned entries after this point. *)
+val _ = KernelSig.mark_sealed_thy "min"
 
 (*---------------------------------------------------------------------------*
     Useful functions to hide explicit substitutions
@@ -121,33 +149,32 @@ fun is_abs(Abs _) = true | is_abs(Clos(_,Abs _)) = true | is_abs _ = false;
 
 
 (*---------------------------------------------------------------------------*
- * The type variables of a lambda term. Tail recursive (from Ken Larsen).    *
+ * The type variables of a lambda term.                                      *
  *---------------------------------------------------------------------------*)
 
-local fun tyV (Fv(_,Ty)) k         = k (Type.type_vars Ty)
-        | tyV (Bv _) k             = k []
-        | tyV (Const(_,GRND _)) k  = k []
-        | tyV (Const(_,POLY Ty)) k = k (Type.type_vars Ty)
-        | tyV (Comb(Rator,Rand)) k = tyV Rand (fn q1 =>
-                                     tyV Rator(fn q2 => k (union q2 q1)))
-        | tyV (Abs(Bvar,Body)) k   = tyV Body (fn q1 =>
-                                     tyV Bvar (fn q2 => k (union q2 q1)))
-        | tyV (t as Clos _) k      = tyV (push_clos t) k
+local fun tyV (Fv(_,Ty)) A         = Type.type_vars_acc Ty A
+        | tyV (Bv _) A             = A
+        | tyV (Const(_,GRND _)) A  = A
+        | tyV (Const(_,POLY Ty)) A = Type.type_vars_acc Ty A
+        | tyV (Comb(Rator,Rand)) A = tyV Rand (tyV Rator A)
+        | tyV (Abs(Bvar,Body)) A   = tyV Body (tyV Bvar A)
+        | tyV (t as Clos _) A      = tyV (push_clos t) A
 in
-fun type_vars_in_term tm = tyV tm Lib.I
+fun type_vars_in_term tm = tyV tm []
 end;
 
 (*---------------------------------------------------------------------------*
  * The free variables of a lambda term. Tail recursive (from Ken Larsen).    *
  *---------------------------------------------------------------------------*)
 
-local fun FV (v as Fv _) A k   = k (Lib.insert v A)
-        | FV (Comb(f,x)) A k   = FV f A (fn q => FV x q k)
-        | FV (Abs(_,Body)) A k = FV Body A k
-        | FV (t as Clos _) A k = FV (push_clos t) A k
-        | FV _ A k = k A
+local fun FV ((v as Fv _)::t) A = FV t (Lib.insert v A)
+        | FV ((Comb(f,x))::t) A = FV (f::x::t) A
+        | FV ((Abs(_,Body))::t) A = FV (Body::t) A
+        | FV ((M as Clos _)::t) A = FV (push_clos M::t) A
+        | FV (_::t) A = FV t A
+        | FV [] A = A
 in
-fun free_vars tm = FV tm [] Lib.I
+fun free_vars tm = FV [tm] []
 end;
 
 (*---------------------------------------------------------------------------*
@@ -201,9 +228,9 @@ val empty_varset = HOLset.empty var_compare
 
 fun fast_term_eq (t1:term) (t2:term) = Portable.pointer_eq (t1,t2)
 
-fun compare (p as (t1,t2)) =
+fun compare (t1,t2) =
     if fast_term_eq t1 t2 then EQUAL else
-    case p of
+    case (t1,t2) of
       (t1 as Clos _, t2)     => compare (push_clos t1, t2)
     | (t1, t2 as Clos _)     => compare (t1, push_clos t2)
     | (u as Fv _, v as Fv _) => var_compare (u,v)
@@ -304,7 +331,7 @@ fun var_occurs M =
 
 val mk_var = Fv
 
-fun inST s = not(null(KernelSig.listName termsig s))
+fun inST s = KernelSig.nameExists (termsig()) s
 
 (*---------------------------------------------------------------------------*
  *   "genvars" are a Lisp-style "gensym" for HOL variables.                  *
@@ -392,11 +419,11 @@ fun decls nm =
             Const info :: A
           else A
     in
-      KernelSig.foldl f [] termsig
+      KernelSig.foldl f [] (termsig())
     end
 
 fun prim_mk_const (knm as {Name,Thy}) =
- case KernelSig.peek(termsig, knm) of
+ case KernelSig.peek(termsig(), knm) of
      KernelSig.Success c => Const c
    | KernelSig.Failure (KernelSig.NoSuchThy _) =>
      raise ERR "prim_mk_const"
@@ -423,14 +450,14 @@ fun mk_thy_const {Thy,Name,Ty} = let
   val knm = {Thy=Thy,Name=Name}
   open KernelSig
 in
-  case peek(termsig, knm) of
+  case peek(termsig(), knm) of
       Failure(NoSuchThy _) =>raise ERR "mk_thy_const" ("No such theory: " ^ Thy)
     | Success c => create_const "mk_thy_const" c Ty
     | _ => raise ERR "mk_thy_const" (KernelSig.name_toString knm^" not found")
 end
 
 fun first_decl fname Name =
-  case KernelSig.listName termsig Name
+  case KernelSig.listName (termsig()) Name
    of []             => raise ERR fname (Name^" not found")
     | [(_, const)]  => const
     | (_, const) :: _ =>
@@ -445,7 +472,7 @@ fun all_consts() =
       fun buildAll (_, cinfo as (_,v), A) =
           if Type.uptodate_type (to_hol_type v) then Const cinfo :: A else A
     in
-      KernelSig.foldl buildAll [] termsig
+      KernelSig.foldl buildAll [] (termsig())
     end
 fun thy_consts s =
     let
@@ -454,7 +481,7 @@ fun thy_consts s =
             Const cinfo :: A
           else A
     in
-      KernelSig.foldl buildthy [] termsig
+      KernelSig.foldl buildthy [] (termsig())
     end
 
 fun same_const (Const(id1,_)) (Const(id2,_)) = id1 = id2
@@ -683,7 +710,7 @@ fun list_mk_binder opt =
     if null vlist then
        tm
     else
-    if not (all is_var vlist) then
+    if not (List.all is_var vlist) then
        raise ERR "list_mk_binder" "expected list of variables"
     else
      (let val (vMap, rvlist) = enum vlist (length vlist-1) (mkDict compare, [])
@@ -758,7 +785,8 @@ fun strip_binder opt =
    let
      open Uref
      val (prefixl,body) = peel f tm []
-     val AV = Uref.new (Redblackmap.mkDict String.compare) : ((string,occtype)Redblackmap.dict) Uref.t
+     val AV = Uref.new (Redblackmap.mkDict String.compare)
+              : ((string,occtype)Redblackmap.dict) Uref.t
      fun peekInsert (key,data) =
         let open Redblackmap
         in case peek (!AV,key)
@@ -841,16 +869,27 @@ fun break_abs(Abs(_,Body)) = Body
   | break_abs(t as Clos _) = break_abs (push_clos t)
   | break_abs _ = raise ERR "break_abs" "not an abstraction";
 
+(* Deliberately skips the uptodate/display check: dest_thy_const is on
+   HOL's hot path (BloomApprox term hashing, sdest_monop / sdest_binop,
+   Term.dest_const, is_zero and friends).  Retired same-named constants
+   are returned with the plain Name here; the pretty-printer applies the
+   Globals.oldify decoration via display_name_of_id when it matters. *)
 fun dest_thy_const (Const(id,ty)) =
-      let val {Name,Thy} = name_of_id id
-      in {Thy=Thy, Name=Name, Ty=to_hol_type ty}
-      end
+      {Thy = seg_of id, Name = name_of id, Ty = to_hol_type ty}
   | dest_thy_const _ = raise ERR"dest_thy_const" "not a const"
+
+fun dest_thy_constid (Const(id,ty)) =
+      {Thy = seg_of id, Name = id, Ty = to_hol_type ty}
+  | dest_thy_constid _ = raise ERR"dest_thy_constid" "not a const"
 
 fun break_const (Const p) = (I##to_hol_type) p
   | break_const _ = raise ERR "break_const" "not a const"
 
-fun dest_const (Const(id,ty)) = (name_of id, to_hol_type ty)
+fun dest_const (c as Const _) =
+    let val {Name,Ty,...} = dest_thy_const c
+    in
+      (Name,Ty)
+    end
   | dest_const _ = raise ERR "dest_const" "not a const"
 end
 
@@ -961,13 +1000,19 @@ fun prim_mk_imp tm1 tm2  = Comb(Comb(imp, tm1),tm2);
       Take an equality apart, and return the type of the operands
  ---------------------------------------------------------------------------*)
 
-local val err = ERR "dest_eq_ty" ""
+local val tyerr = ERR "dest_eq_ty" "Term not an equality"
+      val err = ERR "dest_eq" "Term not an equality"
 in
 fun dest_eq_ty t =
- let val ((c,M),N) = with_exn ((dest_comb##I) o dest_comb) t err
+ let val ((c,M),N) = with_exn ((dest_comb##I) o dest_comb) t tyerr
  in if same_const c eqc
        then (M,N,fst(Type.dom_rng (type_of c)))
        else raise err
+ end
+fun dest_eq t =
+ let val ((c,M),N) = with_exn ((dest_comb##I) o dest_comb) t err
+ in
+   if same_const c eqc then (M,N) else raise err
  end
 end;
 
@@ -1005,21 +1050,6 @@ fun size acc tlist =
         | _ => size (1 + acc) ts
       end
 fun term_size t = size 0 [t]
-
-(*---------------------------------------------------------------------------*
- * Traverse a term, performing a given (side-effecting) operation at the     *
- * leaves. For our purposes, bound variables can be ignored.                 *
- *---------------------------------------------------------------------------*)
-
-fun trav f =
-  let fun trv (a as Fv _) = f a
-        | trv (a as Const _) = f a
-        | trv (Comb(Rator,Rand)) = (trv Rator; trv Rand)
-        | trv (Abs(Bvar,Body))   = (trv Bvar; trv Body)
-        | trv _ = ()
-  in
-    trv o norm_clos
-  end;
 
 (*---------------------------------------------------------------------------*
  *  Raw syntax prettyprinter for terms.                                      *
@@ -1099,6 +1129,37 @@ datatype lexeme
    | I1 of int
    | I2 of int
 
+fun wfCheck t =
+    let
+      val WFERR = ERR "read_raw"
+      fun bvType (Fv(_, ty)) = ty
+        | bvType _           = raise WFERR "Malformed abs"
+      fun synth bv_env tm =
+          case tm of
+              Clos _      => raise WFERR "Malformed: no Clos allowed"
+            | Bv i        => (List.nth(bv_env, i)
+                              handle Subscript =>
+                                    raise WFERR "Malformed: dangling BV")
+            | Fv(_, ty)   => ty
+            | Const(_,ty) => to_hol_type ty
+            | Comb(f, x)  => let val (d, r) = Type.dom_rng (synth bv_env f)
+                             in check bv_env x d; r end
+            | Abs(bv,bod) => let val bvty = bvType bv
+                             in bvty --> synth (bvty::bv_env) bod end
+      and check bv_env (Abs(bv, bod)) exp =
+            let val bvty  = bvType bv
+                val (d,r) = Type.dom_rng exp
+            in if Type.compare(d,bvty) = EQUAL then check (bvty::bv_env) bod r
+               else raise WFERR "Ill-typed: bound-variable annotation"
+            end
+        | check bv_env tm exp =
+            if Type.compare(synth bv_env tm, exp) = EQUAL then ()
+            else raise WFERR "Ill-typed"
+      val _ = synth [] t
+    in
+      t
+    end
+
 local val numeric = Char.contains "0123456789"
 in
 fun take_numb ss0 =
@@ -1155,7 +1216,7 @@ fun read_raw tmv = let
           | _ =>  raise ERR "read_raw" "app: small stack"
 
 in
-fn s => parse ([], Substring.full s)
+  fn s => wfCheck (parse ([], Substring.full s))
 end
 end (* local *)
 
@@ -1172,7 +1233,7 @@ fun uptodate_term t = let
         in
           case t of
             Fv(_, ty) => Type.uptodate_type ty andalso recurse rest
-          | Const(info, ty) => KernelSig.uptodate_id info andalso
+          | Const(info, ty) => KernelSig.uptodate_id (termsig()) info andalso
                                uptodate_type (to_hol_type ty) andalso
                                recurse rest
           | Comb(f,x) => recurse (f::x::rest)

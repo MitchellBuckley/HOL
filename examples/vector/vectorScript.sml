@@ -9,17 +9,14 @@
 (*                                                                           *)
 (*   NOTE (TODO): "Linear algebra works over any field." [2]                 *)
 (* ========================================================================= *)
+Theory vector
+Ancestors
+  arithmetic combin pred_set pair fcp list rich_list topology
+  real iterate real_sigma cardinal permutes
+Libs
+  PairedLambda pred_setLib fcpLib tautLib numLib
+  InductiveDefinition realLib RealArith mesonLib hurdUtils
 
-open HolKernel Parse boolLib bossLib;
-
-open arithmeticTheory combinTheory pred_setTheory pairTheory PairedLambda
-     pred_setLib fcpTheory fcpLib tautLib numLib listTheory rich_listTheory
-     topologyTheory InductiveDefinition;
-
-open realTheory realLib iterateTheory real_sigmaTheory RealArith mesonLib;
-open hurdUtils cardinalTheory permutationTheory;
-
-val _ = new_theory "vector";
 
 val bool_ss' = bool_ss -* ["lift_disj_eq", "lift_imp_disj"];
 
@@ -113,7 +110,7 @@ val _ = prefer_real();
 (* Infixl 600 is the same as "*", "INTER" and "*_c", etc. *)
 val _ = set_fixity "dot"  (Infixl 600); (* was: Infixr 20 (HOL-Light) *)
 
-Overload SUM[local] = “iterate$Sum”; (* see iterateTheory.sum_def *)
+Overload SUM[local] = “real_sigma$Sum”; (* see iterateTheory.sum_def *)
 
 (* NOTE: The original definition of ‘dot’ in HOL-Light is
 
@@ -140,7 +137,7 @@ QED
 (* A naive proof procedure to lift really trivial arithmetic stuff from R.   *)
 (* ------------------------------------------------------------------------- *)
 
-Theorem SUM_EQ[local] = iterateTheory.SUM_EQ'
+Theorem SUM_EQ[local] = real_sigmaTheory.SUM_EQ'
 
 val VECTOR_ARITH_TAC =
     rpt GEN_TAC
@@ -169,6 +166,8 @@ Theorem VEC_COMPONENT :
 Proof
    SRW_TAC [FCP_ss][vec_def]
 QED
+
+Theorem VEC_0_COMPONENT = Q.SPEC ‘0’ VEC_COMPONENT
 
 Theorem VECTOR_ADD_COMPONENT :
    !x:real['N] y i. i < dimindex (:'N) ==> ((x + y) ' i = (x ' i) + (y ' i))
@@ -2334,7 +2333,7 @@ Proof
   PROVE_TAC[]
 QED
 
-val _ = export_theory ();
+
 val _ = html_theory "vector";
 
 (* References:

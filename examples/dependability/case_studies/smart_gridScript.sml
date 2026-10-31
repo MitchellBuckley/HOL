@@ -1,6 +1,4 @@
 (* ========================================================================= *)
-(* File Name: smart_gridScript.sml                                           *)
-(*---------------------------------------------------------------------------*)
 (* Description: Formal Dependability Analysis of Smart Grids                 *)
 (*                 using Theorem Proving                                     *)
 (*                                                                           *)
@@ -10,46 +8,37 @@
 (*                                                                           *)
 (*          School of Electrical Engineering and Computer Sciences (SEECS)   *)
 (*          National University of Sciences and Technology (NUST), PAKISTAN  *)
-(*                                                                           *)
-(*                                                                           *)
 (* ========================================================================= *)
+Theory smart_grid
+Ancestors
+  lim arithmetic real prim_rec real_probability seq pred_set
+  res_quan sorting list transc rich_list pair combin option
+  extreal real_measure real_lebesgue real_sigma sat num RBD
+  FT_deep VDC ASN_gateway
+Libs
+  res_quanTools realLib dep_rewrite extra_pred_setTools
 
-(*app load ["arithmeticTheory", "realTheory", "prim_recTheory", "seqTheory",
-          "pred_setTheory","res_quanTheory", "res_quanTools", "listTheory", "real_probabilityTheory", "numTheory", "dep_rewrite",
-          "transcTheory", "rich_listTheory", "pairTheory", "extra_pred_setTools",
-          "combinTheory","limTheory","sortingTheory", "realLib", "optionTheory","satTheory",
-          "util_probTheory", "extrealTheory", "real_measureTheory", "real_lebesgueTheory","real_sigmaTheory",
-          "RBDTheory","FT_deepTheory","VDCTheory","ASN_gatewayTheory"];*)
 
-open HolKernel Parse boolLib bossLib limTheory arithmeticTheory realTheory prim_recTheory real_probabilityTheory
-     seqTheory pred_setTheory res_quanTheory sortingTheory res_quanTools listTheory transcTheory
-     rich_listTheory pairTheory combinTheory realLib  optionTheory dep_rewrite extra_pred_setTools
-      util_probTheory extrealTheory real_measureTheory real_lebesgueTheory real_sigmaTheory satTheory numTheory
-      RBDTheory FT_deepTheory VDCTheory ASN_gatewayTheory;
-open HolKernel boolLib bossLib Parse;
-val _ = new_theory "smart_grid";
-(*--------------------*)
 val op by = BasicProvers.byA;
 val POP_ORW = POP_ASSUM (fn thm => ONCE_REWRITE_TAC [thm]);
-(*---------------------------*)
 
-(*------------------------------------------------------*)
 Definition in_events_def :
 in_events p L = (!x. MEM x L ==>  x IN events p)
 End
-(*------------------------------------------------------*)
+
 Definition not_null_def :
 not_null L = (!x. MEM x L ==> ~NULL x)
 End
-(*------------------------------------------------------*)
+
 Definition in_events_k_out_n_def :
-in_events_k_out_n p X n = ((\x. PREIMAGE X {Normal(&x)}) IN ((count (SUC n)) -> events p))
+    in_events_k_out_n p X n =
+      ((\x. PREIMAGE X {Normal(&x)}) IN ((count (SUC n)) -> events p))
 End
-(*------------------------------------------------------*)
+
 Definition k_out_n_event_def :
 k_out_n_event p X k n = PREIMAGE X (BIGUNION {{Normal (&x)} | k <= x /\ x < SUC n})
 End
-(*------------------------------------------------------*)
+
 Definition binomial_distr_def :
 binomial_distr p X n pr = (!x. distribution p X {Normal (&x)} =
         &binomial n x * pr pow x * (1 - pr) pow (n - x))
@@ -933,8 +922,7 @@ RW_TAC std_ss[]
 >> `Reliability p ESWs t = exp (-C_ESWs * t)` by RW_TAC std_ss[Reliability_def]
 >- (FULL_SIMP_TAC real_ss[exp_distribution_def])
 >> POP_ORW
->> REAL_ARITH_TAC
+>> rw [REAL_NEG_LMUL]
 QED
 
 (*----------------------------------------------*)
-val _ = export_theory();

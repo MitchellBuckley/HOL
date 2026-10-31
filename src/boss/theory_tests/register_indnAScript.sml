@@ -1,6 +1,5 @@
-open HolKernel Parse boolLib bossLib;
+Theory register_indnA
 
-val _ = new_theory "register_indnA";
 val _ = add_ML_dependency "Werror"
 
 Definition foo_def:
@@ -8,7 +7,7 @@ Definition foo_def:
   foo (h::t) = (h + 1) :: foo t
 End
 
-Definition foo_def:
+Definition foo_def[allow_rebind]:
   foo x 0 = x /\
   foo x (SUC n) = SUC (foo x n)
 End
@@ -30,4 +29,3 @@ Definition baz_def[notuserdef]:
 End
 
 
-val _ = export_theory();

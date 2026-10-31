@@ -1,14 +1,11 @@
-open HolKernel Parse boolLib bossLib
-
-open arithmeticTheory whileTheory logrootTheory pred_setTheory listTheory
-open reductionEval;
-open churchoptionTheory churchlistTheory recfunsTheory numsAsCompStatesTheory
-     kolmogorov_complexityTheory invarianceResultsTheory boolListsTheory
-open churchDBTheory
-open recursivefnsTheory primrecfnsTheory prtermTheory
-open unary_recfnsTheory
-
-val _ = new_theory "kolmog_incomputable"
+Theory kolmog_incomputable
+Ancestors
+  arithmetic While logroot pred_set list churchoption churchlist
+  recfuns numsAsCompStates kolmogorov_complexity
+  invarianceResults boolLists churchDB recursivefns primrecfns
+  prterm unary_recfns
+Libs
+  reductionEval
 
 (*  Proving kolmog is not computable  *)
 
@@ -22,11 +19,11 @@ Proof
   simp[Once num_to_bool_list_def] >> rw[]
 QED
 
-Triviality BIT1_smaller: x ≠ 0 ⇒ (x - 1) DIV 2 < x
+Theorem BIT1_smaller[local]: x ≠ 0 ⇒ (x - 1) DIV 2 < x
 Proof Cases_on ‘x’ >> simp[ADD1, DIV_LT_X]
 QED
 
-Triviality BIT2_smaller:
+Theorem BIT2_smaller[local]:
   x ≠ 0 ∧ EVEN x ⇒ (x - 2) DIV 2 < x
 Proof
   Cases_on ‘x’ >> simp[EVEN] >> rename [‘EVEN m’] >> Cases_on ‘m’ >>
@@ -372,13 +369,13 @@ Proof
      ) >>
   completeInduct_on ‘j’ >>
   simp[Once num_to_bool_list_def] >> rw[] >> fs[]
-  >- (Cases_on ‘i’ >> fs[EXP] >> fs[DECIDE “x ≤ 1n ⇔ x = 0 ∨ x = 1”]) >>
-  simp[DECIDE “SUC x = y ⇔ y ≠ 0 ∧ x = y - 1”] >>
-  simp[BIT1_smaller, BIT2_smaller] >> csimp[] >>
-  Cases_on ‘i’ >> simp[]
-  >- (fs[EVEN_EXISTS] >> rw[] >> fs[] >> rename [‘j0 ≠ 0’] >> Cases_on ‘j0’ >>
+  >- (Cases_on ‘i’ >> fs[EXP] >> fs[DECIDE “x ≤ 1n ⇔ x = 0 ∨ x = 1”] >>
+      fs[EVEN_EXISTS] >> rw[] >> fs[] >> rename [‘j0 ≠ 0’] >> Cases_on ‘j0’ >>
       simp[ADD1, LEFT_ADD_DISTRIB] >> rename [‘2 ** n ≤ m + 1 /\ m + 1 < _’] >>
       simp[EXP_ADD]) >>
+  simp[DECIDE “SUC x = y ⇔ y ≠ 0 ∧ x = y - 1”] >>
+  simp[BIT1_smaller, BIT2_smaller] >> csimp[] >>
+  Cases_on ‘i’ >> simp[] >>
   fs[GSYM ODD_EVEN, ODD_EXISTS, ADD1, EXP_ADD]
 QED
 
@@ -525,4 +522,3 @@ Proof
   metis_tac[part_hutter_UKC]
 QED
 
-val _ = export_theory()

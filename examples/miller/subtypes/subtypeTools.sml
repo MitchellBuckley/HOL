@@ -1,38 +1,16 @@
-(* non-interactive mode
-*)
 structure subtypeTools :> subtypeTools =
 struct
-open HolKernel Parse boolLib;
 
-(* interactive mode
-val () = loadPath := "../ho_prover" :: !loadPath;
-val () = app load
-  ["Susp",
-   "combinTheory",
-   "pred_setTheory",
-   "prob_extraTheory",
-   "BasicProvers",
-   "HurdUseful",
-   "ho_basicTools",
-   "ho_discrimTools",
-   "ho_proverTools",
-   "subtypeTheory"];
-val () = show_assums := true;
-*)
+open HolKernel Parse boolLib BasicProvers;
 
-open Susp combinTheory pred_setTheory BasicProvers
-     hurdUtils subtypeTheory ho_discrimTools
+open Susp combinTheory pred_setTheory hurdUtils subtypeTheory ho_discrimTools
      ho_proverTools ho_basicTools;
 
-infixr 0 oo ## ++ << || THENC ORELSEC THENR ORELSER -->;
-infix 1 >> |->;
+infixr 0 oo ## THENC ORELSEC THENR ORELSER -->;
+infix 1 |->;
 infix thenf orelsef then_frule orelse_frule join_frule;
 
-val op++ = op THEN;
-val op<< = op THENL;
-val op|| = op ORELSE;
-val op>> = op THEN1;
-val !! = REPEAT;
+val assert = simple_assert;
 
 (* ------------------------------------------------------------------------- *)
 (* Debugging.                                                                *)
@@ -332,7 +310,8 @@ fun subtype_check ccache congs stricttypechecking depth =
           assert (not stricttypechecking orelse not (null cond_results))
           (ERR "subtypecheck"
            ("no basic type for subterm:\n" ^ term_to_string tm))
-        fun process_result ((vars', sub'), th') = (vars', MP (PINST sub' th) th')
+        fun process_result ((vars', sub'), th') =
+            (vars', MP (PINST sub' th) th')
       in
         partial_map (total process_result) cond_results
       end
@@ -693,7 +672,8 @@ local
       val l_body = N n rator l
       val tm_pretty_abs = alpha_align l_body tm_abs
       val tm' = fold (C (curry mk_comb)) tm_pretty_abs bvars
-      val tm_th = QCONV (N n (fn c => RATOR_CONV c THENC BETA_CONV) ALL_CONV) tm'
+      val tm_th =
+          QCONV (N n (fn c => RATOR_CONV c THENC BETA_CONV) ALL_CONV) tm'
       val (r_var, r_bvs) = list_dest_comb r
       val _ = assert (tml_eq bvars (rev r_bvs)) (BUG "match_align" "bvar panic")
       val res = (([r_var |-> tm_pretty_abs], []), SYM tm_th)
@@ -806,8 +786,8 @@ fun SIMPLIFY_TAC_X conv ctext ths =
   end;
 
 fun PRESIMPLIFY_TAC ctext ths =
-  EVERY (map (ASSUME_TAC o GEN_ALL) ths)
-  ++ ASM_MATCH_MP_TAC (ths @ context_forwards ctext);
+    EVERY (map (ASSUME_TAC o GEN_ALL) ths)
+ >> ASM_MATCH_MP_TAC (ths @ context_forwards ctext);
 
 val SIMPLIFY_TAC' = SIMPLIFY_TAC_X SIMPLIFY_CONV';
 val SIMPLIFY_TAC = SIMPLIFY_TAC_X SIMPLIFY_CONV;

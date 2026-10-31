@@ -16,12 +16,11 @@ open HolKernel Parse boolLib bossLib computeLib combinTheory prob_pseudoTheory
      miller_rabin_mlTheory miller_rabinTheory hurdUtils reduceLib;
 
 local
-  val compset = num_compset ();
-  val _ = add_thms [BIND_ML, FACTOR_TWOS_ML, LOG2_ML, MANY_ML,
+  val compset = add_thms [BIND_ML, FACTOR_TWOS_ML, LOG2_ML, MANY_ML,
                     MILLER_RABIN_1_ML, MILLER_RABIN_ML, MODEXP_ML,
                     PROB_UNIFORM_CUT_ML, PROB_UNIF_ML, UNCURRY_ML,
                     UNIT_ML, WITNESS_ML, WITNESS_TAIL_ML, o_THM,
-                    SHD_PROB_PSEUDO, STL_PROB_PSEUDO] compset;
+                    SHD_PROB_PSEUDO, STL_PROB_PSEUDO] (num_compset);
 in
   val EVAL = CBV_CONV compset;
 end;
@@ -84,7 +83,8 @@ HOL primitive inference steps: 8652867.
 Total: 8652867.
 > val it = |- ~prime (2 EXP 2 EXP 6 + 1) : thm
 
-- > val it = |- 2 EXP 2 EXP 7 + 1 = 340282366920938463463374607431768211457 : thm
+> val it =
+  |- 2 EXP 2 EXP 7 + 1 = 340282366920938463463374607431768211457 : thm
 - runtime: 2842.920s,    gctime: 409.620s,     systime: 12.210s.
 Axioms asserted: 0.
 Definitions made: 0.
@@ -94,10 +94,10 @@ HOL primitive inference steps: 65736911.
 Total: 65736911.
 > val it = |- ~prime (2 EXP 2 EXP 7 + 1) : thm
 
-- - > val it =
-    |- 2 EXP 2 EXP 8 + 1 =
-       115792089237316195423570985008687907853269984665640564039457584007913129639937
-     : thm
+> val it =
+|- 2 EXP 2 EXP 8 + 1 =
+  115792089237316195423570985008687907853269984665640564039457584007913129639937
+ : thm
 - - - runtime: 22095.770s,    gctime: 3170.780s,     systime: 12.570s.
 Axioms asserted: 0.
 Definitions made: 0.

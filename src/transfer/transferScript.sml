@@ -1,6 +1,4 @@
-open HolKernel Parse boolLib bossLib;
-
-val _ = new_theory "transfer";
+Theory transfer
 
 Overload flip[local] = “combin$C”
 
@@ -75,27 +73,30 @@ Theorem equalityp_applied:   equalityp A ==> A x x
 Proof simp[equalityp_def]
 QED
 
-Definition FUN_REL_def:
-  FUN_REL AB CD (f : 'a -> 'c) (g : 'b -> 'd) <=>
-    !a:'a b:'b. AB a b ==> CD (f a) (g b)
-End
+Theorem FUN_REL_def =
+        quotientTheory.FUN_REL
+          |> CONV_RULE $ STRIP_QUANT_CONV $ RAND_CONV
+                       $ RENAME_VARS_CONV ["a", "b"]
 
-val _ = set_fixity "|==>" (Infixr 490)
-Overload "|==>" = “FUN_REL”  (* co-existing with quotientTheory$|==> *)
+val _ = set_mapped_fixity {
+  tok = "|==>", fixity = Infixr 490, term_name = "===>"
+ };
 
 Theorem FUN_REL_COMB:
   (AB |==> CD) f g /\ AB a b ==> CD (f a) (g b)
 Proof simp[FUN_REL_def]
 QED
 
+Theorem FUN_REL_COMB_EQ:
+  (AB1 ===> CD) f g /\ AB2 a b ==> AB1 = AB2 ==> CD (f a) (g b)
+Proof
+  rpt strip_tac >> gvs[] >> irule FUN_REL_COMB >> metis_tac[]
+QED
+
 Theorem FUN_REL_IFF_IMP:
   (AB |==> (=)) P Q ==> (AB |==> (==>)) P Q /\ (AB |==> combin$C (==>)) P Q
 Proof
   simp[FUN_REL_def] >> metis_tac[]
-QED
-
-Theorem FUN_REL_EQ2[simp]:   ((=) |==> (=)) = (=)
-Proof simp[FUN_REL_def, FUN_EQ_THM]
 QED
 
 Theorem equalityp_FUN_REL:
@@ -111,6 +112,29 @@ Proof
   metis_tac[]
 QED
 
+Theorem surj_eqeq:
+  surj ($= ===> $=)
+Proof
+  simp[quotientTheory.FUN_REL_EQ]
+QED
+
+(* ----------------------------------------------------------------------
+    FUN_REL strengthen to iff
+   ---------------------------------------------------------------------- *)
+
+Theorem FUN_REL_iff_imp_strengthen:
+  (AB |==> (=)) P Q ==> (AB |==> (==>)) P Q
+Proof
+  simp[FUN_REL_def] >> metis_tac[]
+QED
+
+Theorem FUN_REL_iff_cimp_strengthen:
+  (AB |==> (=)) P Q ==> (AB |==> flip (==>)) P Q
+Proof
+  simp[FUN_REL_def] >> metis_tac[]
+QED
+
+
 (* ----------------------------------------------------------------------
     forall
    ---------------------------------------------------------------------- *)
@@ -119,6 +143,7 @@ Theorem ALL_IFF:
   bitotal AB ==> ((AB |==> (=)) |==> (=)) (!) (!)
 Proof
   simp[bitotal_def, FUN_REL_def, total_def, surj_def] >> rpt strip_tac >>
+  rename [‘$! a = $! b’] >>
   ‘a = (\x. a x) /\ b = (\y. b y)’ by simp[FUN_EQ_THM] >>
   ntac 2 (pop_assum SUBST1_TAC) >> metis_tac[]
 QED
@@ -126,7 +151,7 @@ QED
 Theorem ALL_surj_RDOM:
   surj AB ==> ((AB |==> (=)) |==> (=)) (RES_FORALL (RDOM AB)) (!)
 Proof
-  simp[FUN_REL_def, surj_def] >> rpt strip_tac >>
+  simp[FUN_REL_def, surj_def] >> rpt strip_tac >> rename [‘_ a = $! b’] >>
   ‘b = (\y. b y)’ by simp[FUN_EQ_THM] >>
   simp[RES_FORALL_THM, relationTheory.RDOM_DEF, IN_DEF] >>
   pop_assum SUBST1_TAC >> metis_tac[]
@@ -166,6 +191,16 @@ Theorem ALL_total_RRANGE:
 Proof
   simp[total_def, FUN_REL_def, RES_FORALL_THM, IN_DEF,
        relationTheory.RRANGE] >> strip_tac >> qx_gen_tac ‘a’ >>
+  ‘a = (\x. a x)’ by simp[FUN_EQ_THM] >> pop_assum SUBST1_TAC >>
+  metis_tac[]
+QED
+
+Theorem ALL_total_iff_imp_RRANGE:
+  total AB ==> ((AB |==> (=)) |==> (==>)) (!) (RES_FORALL (RRANGE AB))
+Proof
+  simp[total_def, FUN_REL_def, RES_FORALL_THM, IN_DEF,
+       relationTheory.RRANGE] >>
+  strip_tac >> qx_gen_tac ‘a’ >>
   ‘a = (\x. a x)’ by simp[FUN_EQ_THM] >> pop_assum SUBST1_TAC >>
   metis_tac[]
 QED
@@ -271,6 +306,10 @@ Proof
   metis_tac[]
 QED
 
+(* ----------------------------------------------------------------------
+    Implications
+   ---------------------------------------------------------------------- *)
+
 Theorem cimp_imp:
   ((==>) |==> flip (==>) |==> flip (==>)) (==>) (==>)
 Proof
@@ -301,16 +340,40 @@ Proof
   simp[FUN_REL_def] >> metis_tac[]
 QED
 
+(* ----------------------------------------------------------------------
+    COND
+   ---------------------------------------------------------------------- *)
+
+Theorem COND_rule:
+  ((=) |==> AB |==> AB |==> AB) COND COND
+Proof
+  simp[FUN_REL_def] >> rw[] >> rw[]
+QED
+
+(* ----------------------------------------------------------------------
+    Combinators: LET, FUNPOW, ...
+   ---------------------------------------------------------------------- *)
+
+Theorem LET_rule:
+  ((AB |==> CD) |==> (AB |==> CD)) LET LET
+Proof
+  simp[FUN_REL_def]
+QED
+
+Theorem FUNPOW_rule:
+  ((AB |==> AB) |==> (=) |==> AB |==> AB) FUNPOW FUNPOW
+Proof
+  simp[FUN_REL_def] >> rw[] >> rename [‘AB (FUNPOW f n a) (FUNPOW g n b)’] >>
+  qpat_x_assum ‘AB a b’ mp_tac >>
+  map_every qid_spec_tac [‘a’, ‘b’, ‘n’] >> Induct >>
+  simp[arithmeticTheory.FUNPOW_SUC]
+QED
 
 (* ----------------------------------------------------------------------
     Pairs
    ---------------------------------------------------------------------- *)
 
-Definition PAIR_REL_def:     PAIR_REL AB CD (a,c) (b,d) <=> AB a b /\ CD c d
-End
-val _ =
-    set_mapped_fixity {fixity = Infixr 601, term_name = "PAIR_REL", tok = "###"}
-
+Theorem PAIR_REL_def = pairTheory.PAIR_REL
 Theorem equalityp_PAIR_REL:
   equalityp AB /\ equalityp CD ==> equalityp (AB ### CD)
 Proof
@@ -355,6 +418,12 @@ Proof
   simp[UPAIR_def, pairTheory.FORALL_PROD, FUN_REL_def]
 QED
 
+Theorem pair_CASE_CONG:
+  ((AB ### CD) |==> (AB |==> CD |==> EF) |==> EF) pair_CASE pair_CASE
+Proof
+  simp[FUN_REL_def, pairTheory.FORALL_PROD]
+QED
+
 (* ----------------------------------------------------------------------
     Unit
    ---------------------------------------------------------------------- *)
@@ -363,6 +432,74 @@ Theorem UREL_EQ:
   () = ()
 Proof simp[]
 QED
+
+(* ----------------------------------------------------------------------
+    Options
+   ---------------------------------------------------------------------- *)
+
+Theorem OPTREL_MAP:
+  ((AB |==> CD) |==> OPTREL AB |==> OPTREL CD) OPTION_MAP OPTION_MAP
+Proof
+  simp[FUN_REL_def] >> simp[optionTheory.FORALL_OPTION]
+QED
+
+Theorem OPTREL_total:
+  total AB ==> total (OPTREL AB)
+Proof
+  simp[optionTheory.OPTREL_def, total_def, EXISTS_OR_THM] >> strip_tac >>
+  Cases >> simp[]
+QED
+
+Theorem OPTREL_surj:
+  surj AB ==> surj (OPTREL AB)
+Proof
+  simp[optionTheory.OPTREL_def, surj_def, EXISTS_OR_THM] >> strip_tac >>
+  Cases >> simp[]
+QED
+
+Theorem OPTREL_left_unique:
+  left_unique AB ==> left_unique (OPTREL AB)
+Proof
+  simp[left_unique_def, optionTheory.OPTREL_def, optionTheory.FORALL_OPTION]
+QED
+
+Theorem OPTREL_right_unique:
+  right_unique AB ==> right_unique (OPTREL AB)
+Proof
+  simp[right_unique_def, optionTheory.OPTREL_def, optionTheory.FORALL_OPTION]
+QED
+
+Theorem equalityp_OPTREL:
+  equalityp AB ==> equalityp (OPTREL AB)
+Proof
+  simp[equalityp_def]
+QED
+
+Theorem option_CASE_CONG:
+  (OPTREL AB |==> CD |==> (AB |==> CD) |==> CD) option_CASE option_CASE
+Proof
+  simp[FUN_REL_def, optionTheory.FORALL_OPTION]
+QED
+
+Theorem OPTION_BIND_rule:
+  (OPTREL AB |==> (AB |==> OPTREL CD) |==> OPTREL CD) OPTION_BIND OPTION_BIND
+Proof
+  simp[FUN_REL_def] >> rw[optionTheory.OPTREL_def]
+QED
+
+Theorem NONE_rule:
+  OPTREL AB NONE NONE
+Proof
+  simp[]
+QED
+
+Theorem SOME_rule:
+  (AB |==> OPTREL AB) SOME SOME
+Proof
+  simp[FUN_REL_def]
+QED
+
+
 
 (* ----------------------------------------------------------------------
     Lists
@@ -381,6 +518,13 @@ Proof
   metis_tac[]
 QED
 
+Theorem LIST_REL_left_unique:
+  left_unique AB ==> left_unique (LIST_REL AB)
+Proof
+  simp[left_unique_def] >> strip_tac >> Induct_on ‘LIST_REL’ >>
+  simp[PULL_EXISTS] >> metis_tac[]
+QED
+
 Theorem LIST_REL_surj:
   surj AB ==> surj (LIST_REL AB)
 Proof
@@ -393,4 +537,71 @@ Proof
   simp[total_def] >> strip_tac >> Induct >> simp[] >> metis_tac[]
 QED
 
-val _ = export_theory();
+Theorem list_CASE_CONG:
+  (LIST_REL AB |==> CD |==> (AB |==> LIST_REL AB |==> CD) |==> CD)
+    list_CASE
+    list_CASE
+Proof
+  simp[FUN_REL_def, Once listTheory.FORALL_LIST, PULL_EXISTS]
+QED
+
+Theorem NIL_rule:
+  LIST_REL AB [] []
+Proof
+  simp[]
+QED
+
+Theorem CONS_rule:
+  (AB |==> LIST_REL AB |==> LIST_REL AB) CONS CONS
+Proof
+  simp[FUN_REL_def]
+QED
+
+Theorem TL_rule:
+  (LIST_REL AB |==> LIST_REL AB) TL TL
+Proof
+  simp[FUN_REL_def] >> Cases >> Cases >> simp[]
+QED
+
+Theorem LENGTH_rule:
+  (LIST_REL AB |==> (=)) LENGTH LENGTH
+Proof
+  simp[FUN_REL_def, SF SFY_ss, listTheory.EVERY2_LENGTH]
+QED
+
+Theorem FOLDL_rule:
+  ((CD |==> AB |==> CD) |==> CD |==> LIST_REL AB |==> CD) FOLDL FOLDL
+Proof
+  simp[FUN_REL_def] >> rw[] >> rename [‘CD (FOLDL f A xs) (FOLDL g B ys)’] >>
+  map_every (C qpat_x_assum mp_tac) [‘CD A B’, ‘LIST_REL _ _ _’] >>
+  map_every qid_spec_tac [‘xs’, ‘ys’, ‘A’, ‘B’] >>
+  Induct_on ‘LIST_REL’ >> simp[]
+QED
+
+Theorem FOLDR_rule:
+  ((AB |==> CD |==> CD) |==> CD |==> LIST_REL AB |==> CD) FOLDR FOLDR
+Proof
+  simp[FUN_REL_def] >> rw[] >> rename [‘CD (FOLDR f A xs) (FOLDR g B ys)’] >>
+  map_every (C qpat_x_assum mp_tac) [‘CD A B’, ‘LIST_REL _ _ _’] >>
+  map_every qid_spec_tac [‘xs’, ‘ys’, ‘A’, ‘B’] >>
+  Induct_on ‘LIST_REL’ >> simp[]
+QED
+
+Theorem MAP_rule:
+  ((AB |==> CD) |==> LIST_REL AB |==> LIST_REL CD) MAP MAP
+Proof
+  simp[FUN_REL_def] >> rw[] >> rename [‘LIST_REL CD (MAP f xs) (MAP g ys)’] >>
+  qpat_x_assum ‘LIST_REL _ _ _ ’ mp_tac >>
+  Induct_on ‘LIST_REL’ >> simp[]
+QED
+
+Theorem ALL_DISTINCT_rule:
+  left_unique AB ==> right_unique AB ==>
+  (LIST_REL AB |==> (=)) ALL_DISTINCT ALL_DISTINCT
+Proof
+  rw[left_unique_def, right_unique_def, FUN_REL_def] >>
+  qpat_x_assum ‘LIST_REL _ _ _ ’ mp_tac >> Induct_on ‘LIST_REL’ >>
+  simp[] >> rw[] >> iff_tac >> rw[] >>
+  metis_tac[listTheory.LIST_REL_MEM_IMP_R, listTheory.LIST_REL_MEM_IMP]
+QED
+

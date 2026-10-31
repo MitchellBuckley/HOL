@@ -1,7 +1,10 @@
-(*
- * Copyright 1991-1995  University of Cambridge (Author: Monica Nesi)
- * Copyright 2016-2017  University of Bologna   (Author: Chun Tian)
- *)
+(* ========================================================================== *)
+(* FILE          : StrongLawsScript.sml                                       *)
+(* DESCRIPTION   : Laws of strong equivalence (STRONG_EQUIV)                  *)
+(*                                                                            *)
+(* COPYRIGHTS    : 1991-1995 University of Cambridge, UK (Monica Nesi)        *)
+(*                 2016-2017 University of Bologna, Italy (Chun Tian)         *)
+(******************************************************************************)
 
 structure CCSConv :> CCSConv =
 struct
@@ -11,7 +14,7 @@ open CCSLib CCSTheory CCSSyntax stringTheory;
 
 structure Parse = struct
   open Parse
-  val (Type, Term) = parse_from_grammars CCSTheory.CCS_grammars
+  val (Type, Term) = parse_from_grammars $ valOf $ grammarDB{thyname="CCS"}
 end
 open Parse
 
@@ -559,5 +562,3 @@ end; (* local *)
 (* moved to selftest.sml *)
 
 end (* struct *)
-
-(* last updated: May 15, 2017 *)

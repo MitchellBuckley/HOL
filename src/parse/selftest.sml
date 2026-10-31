@@ -1,5 +1,8 @@
 open Lib Type PP smpp PPBackEnd testutils
 
+val failcount = ref 0
+val _ = diemode := Remember failcount
+
 (* -------------------------------------------------------------------------- *)
 (* Test code for terminal styles                                              *)
 (* -------------------------------------------------------------------------- *)
@@ -133,6 +136,58 @@ val _ = test_terminal false (PPBackEnd.emacs_terminal);
 val _ = print "vt100 terminal\n";
 val _ = print "==============\n\n";
 val _ = test_terminal false (PPBackEnd.vt100_terminal);
+
+(* `lsp_terminal` says in data what the others say in colour, for a
+   consumer that wants to act on it rather than look at it.  Two things
+   have to hold: the annotations come back intact, and the text does
+   too -- the markers carrying them are added at zero width, so the
+   layout must be the one `raw_terminal` would have produced. *)
+local
+  (* the printing functions belong to the backend, so the value has to
+     be built with the one it is going to be rendered by *)
+  fun build (terminal : t) = let
+    val {add_string, add_xstring, ublock, ...} = terminal
+    fun ann (s, a) = add_xstring {s = s, ann = SOME a, sz = NONE}
+  in
+    ublock PP.INCONSISTENT 0 (
+      add_string "a " >>
+      ann ("x", FV (Type.bool, fn () => "x :bool")) >>
+      add_string " " >>
+      ann ("/\\", Const {Name = "/\\", Thy = "bool",
+                         Ty = (Type.bool, fn () => "bool -> bool")}) >>
+      add_string " b")
+  end
+  fun render t = Lib.with_flag (Parse.current_backend, t)
+                   (HOLPP.pp_to_string 70 (fn () => Parse.mlower (build t))) ()
+in
+val _ = tprint "lsp_terminal segments carry the annotations"
+val _ =
+    let
+      val segs = PPBackEnd.lsp_segments (render PPBackEnd.lsp_terminal)
+      fun find k = List.find (fn {kind, ...} => kind = k) segs
+    in
+      case (find "fv", find "const") of
+          (SOME fv, SOME co) =>
+            if #text fv = "x" andalso #ty fv = "x :bool" andalso
+               #text co = "/\\" andalso #name co = "bool$/\\" andalso
+               #ty co = "bool -> bool"
+            then OK()
+            else die ("got " ^ #ty fv ^ " / " ^ #name co ^ " : " ^ #ty co)
+        | _ => die "no annotated segments"
+    end
+
+val _ = tprint "lsp_terminal leaves the text alone"
+val _ =
+    let
+      val segs = PPBackEnd.lsp_segments (render PPBackEnd.lsp_terminal)
+      val rejoined = String.concat (List.map #text segs)
+      val plain = render PPBackEnd.raw_terminal
+    in
+      if rejoined = plain then OK()
+      else die ("rejoined " ^ String.toString rejoined ^
+                " but raw gives " ^ String.toString plain)
+    end
+end
 
 
 
@@ -592,12 +647,36 @@ val _ = tpp "Printing empty list form (var)" "[]" lf_g NIL_t
 val _ = tpp "Printing CONS-list form [x] (var)" "[x]" lf_g (mk_list "x")
 val _ = tpp "Printing CONS-list form [x;y] (var)" "[x; y]" lf_g (mk_list "xy")
 
+(* ParoundPrec parenthesises a suffix whose argument is printed by a rule
+   at the *same* precedence level (HOL issue #486).  Two distinct suffixes
+   at one level show the discriminator is precedence, not name -- the case
+   ParoundName cannot express. *)
+local
+  open term_grammar term_grammar_dtype
+  fun suffix_rule (nm, tok) =
+      add_rule {term_name = nm, fixity = Suffix 920,
+                pp_elements = [mTOK tok], paren_style = ParoundPrec,
+                block_style = (AroundEachPhrase, (CONSISTENT, 0))}
+  val pp_g = g0 |> suffix_rule ("sufA", "@") |> suffix_rule ("sufB", "#")
+  val b2b = bool --> bool
+  val xt = mk_var("x", bool)
+  fun sufA t = mk_comb(mk_var("sufA", b2b), t)
+  fun sufB t = mk_comb(mk_var("sufB", b2b), t)
+in
+val _ = tpp "ParoundPrec: lone suffix is unparenthesised at top"
+            "x@" pp_g (sufA xt)
+val _ = tpp "ParoundPrec: stacked same-name suffix parenthesises inner"
+            "(x@)@" pp_g (sufA (sufA xt))
+val _ = tpp "ParoundPrec: stacked same-prec suffixes parenthesise inner"
+            "(x@)#" pp_g (sufB (sufA xt))
+end
+
 val cCONS_t =
-    Term.prim_new_const {Thy = "min", Name = "CONS"} (bool --> (bool --> bool))
-val cNIL_t = Term.prim_new_const {Thy = "min", Name = "NIL"} bool
+    Term.prim_new_const {Thy = "parseSelftest", Name = "CONS"} (bool --> (bool --> bool))
+val cNIL_t = Term.prim_new_const {Thy = "parseSelftest", Name = "NIL"} bool
 val cmk_list = mk_list0 bool cNIL_t cCONS_t
 
-val _ = tpp "Printing nil (const, no overload)" "min$NIL" lf_g cNIL_t
+val _ = tpp "Printing nil (const, no overload)" "parseSelftest$NIL" lf_g cNIL_t
 
 val lfco_g = lf_g |> term_grammar.fupdate_overload_info
                        (Overload.add_overloading ("NIL", cNIL_t))
@@ -616,9 +695,9 @@ val lfcono_g =
 val _ = tpp "Printing nil (const, double-overload)" "[x]" lfcono_g
             (cmk_list "x")
 
-val cINS_t = Term.prim_new_const{Thy = "min", Name = "INS"}
+val cINS_t = Term.prim_new_const{Thy = "parseSelftest", Name = "INS"}
                        (alpha --> (alpha --> bool) --> (alpha --> bool))
-val cEMP_t = Term.prim_new_const{Thy = "min", Name = "EMP"} (alpha --> bool)
+val cEMP_t = Term.prim_new_const{Thy = "parseSelftest", Name = "EMP"} (alpha --> bool)
 fun add_setlistform g =
   term_grammar.add_listform g {
       block_info = (CONSISTENT, 0),
@@ -789,6 +868,65 @@ val _ = List.app pdtest [
 
 val _ = List.app (ignore o pdfail) [("h", "C = foo bool->bool")]
 
+(* A type the declaration is introducing has no parameters of its own
+   to be applied to, so arguments written on an occurrence of one say
+   nothing.  Deciding that is the datatype package's business and not
+   the parser's -- the parser reports what was written, arguments and
+   all, and src/datatype/selftest.sml has the rejection.  Other readers
+   of this AST want those arguments: EmitTeX prints them. *)
+fun applied s = [("ty", Constructors [("N", []), ("C", [s])])]
+val _ = List.app pdtest [
+  ("h", "ty = N | C (bool ty)",
+   applied (dTyop{Thy = NONE, Tyop = "ty", Args = [vbool]})),
+  ("p", "ty = N | C of bool ty",
+   applied (dTyop{Thy = NONE, Tyop = "ty", Args = [vbool]})),
+  (* and what is not an application: juxtaposition is argument
+     sequencing, and a bare occurrence nested inside another operator
+     carries no arguments of its own *)
+  ("h", "ty = N | C (ty -> ty)",
+   applied (recop "ty" -=> recop "ty"))
+]
+
+(* the attributes a declaration may carry, which say what the datatype
+   package should call the constants it generates *)
+fun adparse s = hparse_annotated mintyg [QUOTE s]
+fun adtest (s, expected) =
+  let
+    val _ = tprint ("attrs: " ^ s)
+  in
+    timed adparse
+          (exncheck (fn r =>
+             if map #attrs r = expected then OK()
+             else die ("FAILED:\n  " ^
+                       String.concatWith "\n  "
+                         (map ParseDatatype_dtype.annotated_toString r))))
+          s
+  end
+fun A nm = (nm, [] : string list)
+val _ = List.app adtest [
+  ("ty = N | C 'a ty", [[]]),
+  ("ty[] = N | C 'a ty", [[]]),
+  ("ty[map=tyMAP] = N | C 'a ty", [[("map", [A"tyMAP"])]]),
+  ("ty[map=tyMAP,set=LIST_TO_SET] = N | C 'a ty",
+   [[("map", [A"tyMAP"]), ("set", [A"LIST_TO_SET"])]]),
+  ("ty[set=fsts snds] = N | C 'a ty", [[("set", [A"fsts", A"snds"])]]),
+  ("ty [ map = tyMAP , nocompute ] = N | C 'a ty",
+   [[("map", [A"tyMAP"]), ("nocompute", [])]]),
+  ("ty[map=tyMAP] = <| fld1 : bool |>", [[("map", [A"tyMAP"])]]),
+  ("ty[map=tyMAP] = N | C 'a ty; ty2 = D bool",
+   [[("map", [A"tyMAP"])], []]),
+  (* an argument may say something about itself *)
+  ("ty[set=tySET[nocompute]] = N | C 'a ty",
+   [[("set", [("tySET", ["nocompute"])])]]),
+  ("ty[set=tySET[]] = N | C 'a ty", [[("set", [A"tySET"])]]),
+  ("ty[map=tyMAP[a,b],set=s1 s2[c]] = N | C 'a ty",
+   [[("map", [("tyMAP", ["a", "b"])]),
+     ("set", [A"s1", ("s2", ["c"])])]])
+]
+
+(* and the plain entry points say so rather than dropping them *)
+val _ = List.app (ignore o pdfail) [("h", "ty[map=tyMAP] = N | C 'a ty")]
+
 
 (* string find-replace *)
 local
@@ -926,3 +1064,114 @@ in
     ("x {}", "(top x inil)")
   ]
 end;
+
+(* DBSearchParser tests *)
+local val dbsptests = [
+        ("", "", true),
+        ("", "ab", true),
+        ("ab", "", false),
+        ("a*", "", true),
+        ("abc", "ffgabchh", true),
+        ("abc", "ffgabhch", false),
+        ("left~or", "xor_exists_left_thm", true),
+        ("(left~or)_", "xor_exists_left_thm", true),
+        ("left|or", "exists_left_thm_or", true),
+        ("ab(ab)*", "abababc", true),
+        ("abab*", "aba", true),
+        ("ab(ab)?", "aba", true),
+        ("abab*", "ababb", true),
+        ("ababb*", "abab", true),
+        ("ababb*", "aba", false),
+        ("ab~cd~ef", "efabxcd", true)
+]
+
+fun test(p,s,r) =
+  (tprint (Lib.quote (String.toString p) ^ "  w/in  " ^
+           Lib.quote (String.toString s) ^ " = " ^ Bool.toString r);
+   require_msg (check_result (equal r))
+               Bool.toString
+               (fn (p,s) => DBSearchParser.contains_regexp p s)
+               (p,s))
+in
+  val _ = List.app (with_flag(Feedback.emit_WARNING, false) test) dbsptests
+end
+
+(* ----------------------------------------------------------------------
+    A grammar carries the precedence matrix built from its rules and its
+    specials, so the matrix has to be shared exactly as far as those two
+    fields are --- and a matrix that is reused rather than built must
+    still be complained about as the "ambiguous grammar warning" trace
+    asks, and still count as an unambiguous use when it is one.
+   ---------------------------------------------------------------------- *)
+
+local
+  open term_grammar term_grammar_dtype
+  val mx = parse_term.mk_prec_matrix
+  fun infixrule nm tok prec =
+    {term_name = nm, fixity = Infix(LEFT, prec),
+     pp_elements = [mTOK tok], paren_style = OnlyIfNecessary,
+     block_style = (AroundEachPhrase, (HOLPP.CONSISTENT, 0))}
+  fun shares s (g1, g2) =
+    (tprint ("prec matrix kept: " ^ s);
+     if Portable.pointer_eq (mx g1, mx g2) then OK() else die "\nrebuilt")
+  fun rebuilds s (g1, g2) =
+    (tprint ("prec matrix rebuilt: " ^ s);
+     if Portable.pointer_eq (mx g1, mx g2) then die "\nreused" else OK())
+  (* one token as an infix at two levels gives ((tok,true),tok) both
+     PM_GREATER Ifx and PM_LESS Ifx, which is what insert_bail reports *)
+  fun ambiguous tok =
+      g0 |> add_rule (infixrule (tok ^ "1") tok 500)
+         |> add_rule (infixrule (tok ^ "2") tok 400)
+  fun at_level n = Feedback.set_trace "ambiguous grammar warning" n
+  fun raises g = (ignore (mx g); false) handle Feedback.HOL_ERR _ => true
+  (* run f with Globals.interactive set to i, warnings silenced, and the
+     trace put back to its default of 1 afterwards *)
+  fun in_mode i f =
+      let
+        val oldi = !Globals.interactive
+        val () = Globals.interactive := i
+        val r = Exn.capture (with_flag (Feedback.emit_WARNING, false) f) ()
+      in
+        Globals.interactive := oldi;
+        at_level 1;
+        Exn.release r
+      end
+in
+val _ = shares "same grammar" (g0, g0)
+val _ = shares "overloads cleared" (g0, clear_overloads g0)
+val _ = shares "string literal injector"
+               (g0, add_strlit_injector {ldelim = "strlitL",
+                                         tmnm = "strlitT"} g0)
+val _ = rebuilds "rule added" (g0, add_rule (infixrule "SHR" "&&&" 500) g0)
+val _ = rebuilds "specials changed"
+                 (g0, fupdate_specials (fupd_lambda (cons "LAM")) g0)
+
+val _ = tprint "prec matrix kept: level 2 still raises"
+val _ =
+    let
+      val g = ambiguous "@@"
+      (* non-interactive, so level 1 is silent and the matrix is simply
+         built and kept *)
+      val raised = in_mode false (fn () => (at_level 1; ignore (mx g);
+                                            at_level 2; raises g))
+    in
+      if raised then OK() else die "\nno exception raised"
+    end
+
+val _ = tprint "prec matrix kept: unambiguous reuse resets the complaint"
+val _ =
+    let
+      val g1 = ambiguous "@1@"
+      val g2 = ambiguous "@2@"
+      val () = ignore (mx g0)  (* so that the use below is a reuse *)
+      (* interactive, so level 1 warns about g1 and so holds off further
+         complaints; the reuse of g0's matrix has to lift that again *)
+      val raised = in_mode true (fn () => (at_level 1; ignore (mx g1);
+                                           ignore (mx g0);
+                                           at_level 2; raises g2))
+    in
+      if raised then OK() else die "\nno exception raised"
+    end
+end (* local *)
+
+val _ = exit_count0 failcount

@@ -5,12 +5,10 @@
    for inspiration
 
 *)
+Theory tableauK
+Ancestors
+  pair pred_set list sorting relation modalBasics tableauBasics
 
-open HolKernel Parse boolLib bossLib;
-open pairTheory pred_setTheory listTheory;
-open sortingTheory;
-open relationTheory modalBasicsTheory tableauBasicsTheory
-val _ = new_theory "tableauK";
 
 Definition sat_def:
   sat (tyit : α itself) Γ ⇔
@@ -200,13 +198,13 @@ Inductive tableauR:
 [~conj:]
   (∀p s f1 f2.
       tableauR (p ++ [f1;f2] ++ s) r ⇒
-      tableauR (p ++ [Conj f1 f2] ++ s) r) ∧
+      tableauR (p ++ [Conj f1 f2] ++ s) r)
 [~disj1:]
   (∀p s f1 f2.
-      tableauR (p ++ [f1] ++ s) r ⇒ tableauR (p ++ [Disj f1 f2] ++ s) r) ∧
+      tableauR (p ++ [f1] ++ s) r ⇒ tableauR (p ++ [Disj f1 f2] ++ s) r)
 [~disj2:]
   (∀p s f1 f2.
-      tableauR (p ++ [f2] ++ s) r ⇒ tableauR (p ++ [Disj f1 f2] ++ s) r) ∧
+      tableauR (p ++ [f2] ++ s) r ⇒ tableauR (p ++ [Disj f1 f2] ++ s) r)
 [~diam:]
   (∀G.
       (∀f. MEM f G ⇒ ¬is_conj f ∧ ¬is_disj f) ∧ (∃f. MEM f G ∧ is_dia f) ∧
@@ -215,7 +213,7 @@ Inductive tableauR:
                (FILTER is_dia G)
                rs
      ⇒
-      tableauR G (Nd (unvar G) rs)) ∧
+      tableauR G (Nd (unvar G) rs))
 [~open:]
   (∀G. (∀f. MEM f G ⇒ is_literal f ∨ is_box f) ∧ contradiction G = NONE ⇒
        tableauR G (Nd (unvar G) []))
@@ -245,7 +243,7 @@ Proof
   Induct_on ‘l’ >> simp[]
 QED
 
-Triviality FORALL_NUM:
+Theorem FORALL_NUM[local]:
   (∀n. P n) ⇔ P 0 ∧ ∀n. P (SUC n)
 Proof
   eq_tac >> simp[] >> rw[] >> Cases_on ‘n’ >> simp[]
@@ -612,4 +610,3 @@ Proof
   gs[]
 QED
 
-val _ = export_theory();

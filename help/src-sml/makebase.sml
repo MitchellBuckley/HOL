@@ -57,8 +57,11 @@ val libdirDef = normPath[HOLpath,"sigobj"]
 (* Default filename for the resulting help database: *)
 val helpfileDef = normPath[HOLpath, "help","HOL.Help"]
 
-(* Default filename for the HOL reference page: *)
-val HOLpageDef = normPath[HOLpath, "help","index.html"] (* was: HOLindex.html *)
+(* Default filename for the HOL reference fragment.  This is HTML body
+ * content (no <html>/<head>/<body> wrapper) intended to be embedded
+ * into the manual lander page (Manual/book/index.html) by gen_lander. *)
+val landerFragmentDef =
+    normPath[HOLpath, "help", "HOL.LanderFragment.html"]
 
 (* Default filename for the ASCII format database: *)
 val txtIndexDef = "index.txt"
@@ -66,15 +69,23 @@ val txtIndexDef = "index.txt"
 (* Default filename for the LaTeX format database: *)
 val texIndexDef = "index.tex"
 
-(* Default directory for signatures in HTML format: *)
-val htmlDirDef = "htmlsigs"
+(* Default directory for signatures in HTML format.  The htmlsigs sit
+   alongside the per-manual mdbook output under Manual/book/, so the
+   built tree is a single deployable snapshot. *)
+val htmlDirDef = normPath[HOLpath,"Manual","book","htmlsigs"]
 
 (* Default filename for the HTML format database for identifiers: *)
-val htmlIndexDef = normPath[HOLpath,"help","src-sml",htmlDirDef,"idIndex.html"]
+val htmlIndexDef = normPath[htmlDirDef,"idIndex.html"]
 
 (* Default filename for the HTML format database for theories: *)
-val htmlTheoryIndexDef =
-   normPath[HOLpath,"help","src-sml",htmlDirDef,"TheoryIndex.html"]
+val htmlTheoryIndexDef = normPath[htmlDirDef,"TheoryIndex.html"]
+
+(* Recursive mkdir -- htmlDirDef sits under Manual/book/ which may not
+   exist yet on a fresh checkout. *)
+fun mkdir_p dir =
+    if dir = "" orelse dir = "." orelse OS.FileSys.access(dir, []) then ()
+    else (mkdir_p (OS.Path.dir dir);
+          OS.FileSys.mkDir dir handle OS.SysErr _ => ())
 
 (* Default filename for the LaTeX signatures: *)
 val texSigs = "texsigsigs.tex"
@@ -149,18 +160,14 @@ fun mkbase (entries : Database.entry list) =
 (*---------------------------------------------------------------------------*)
 
 fun mk_HOLdocfile_entry (dir,s) =
- let val content =String.substring(s,0,size s - 4)
+ let val content = OS.Path.base s (* drop .md suffix *)
+     val comp = ParseDoc.decode_stem content
  in
-    {comp=Database.Term(ParseDoc.decode_stem content, SOME"HOL"),
+    {comp=Database.Term(comp, SOME"HOL"),
      file=normPath[dir,s], line=0}
  end
 
-local fun is_adocfile s =
-         String.size s>5 andalso
-         String.extract(s, String.size s - 4, NONE) = ".txt"
-      fun is_docfile s =
-         String.size s>4 andalso
-         String.extract(s, String.size s - 4, NONE) = ".doc"
+local fun is_adocfile s = OS.Path.ext s = SOME "txt"
 in
 fun docdir_to_entries path (endpath, entries) =
   let val L1 = List.filter is_adocfile
@@ -175,15 +182,16 @@ fun okay_sig s =
 
 fun dirToBase (sigdir, docdirs, filename) =
     let
-       val doc_entryl = List.foldl (docdir_to_entries HOLpath) [] docdirs
-       val ok_sigs = List.filter okay_sig (Htmlsigs.listDir sigdir)
-       val res = List.foldl (Parsspec.processfile stoplist sigdir)
-                             doc_entryl ok_sigs
-       val _ = print ("\nProcessed " ^ Int.toString (length res)
-                      ^ " entries in total.\n");
-       val _ = print ("Building database...\n");
-       val db = mkbase res
-       val _ = print ("Writing database to file " ^ filename ^ "\n");
+      val _ = print ("docdirs = " ^ String.concatWith ", " docdirs ^ "\n")
+      val doc_entryl = List.foldl (docdir_to_entries HOLpath) [] docdirs
+      val ok_sigs = List.filter okay_sig (Htmlsigs.listDir sigdir)
+      val res = List.foldl (Parsspec.processfile stoplist sigdir)
+                           doc_entryl ok_sigs
+      val _ = print ("\nProcessed " ^ Int.toString (length res)
+                     ^ " entries in total.\n");
+      val _ = print ("Building database...\n");
+      val db = mkbase res
+      val _ = print ("Writing database to file " ^ filename ^ "\n");
     in
        Database.writebase(filename, db)
     end
@@ -224,9 +232,10 @@ val SRCFILES =
  end
 
 fun process (libdir, helpfile, txtIndex,
-             texIndex, htmldir, htmlIndex, htmlTheoryIndex, HOLpage)
+             texIndex, htmldir, htmlIndex, htmlTheoryIndex, landerFragment)
  =
- (print ("Reading signatures in directory " ^ libdir ^
+ (mkdir_p htmldir
+ ; print ("Reading signatures in directory " ^ libdir ^
         "\nand writing help database in file " ^ helpfile ^ "\n")
  ; dirToBase (libdir, docdirs, helpfile)
 
@@ -249,24 +258,56 @@ fun process (libdir, helpfile, txtIndex,
  ; Htmlsigs.printHTMLBase version bgcolor HOLpath
          isTheory "HOL THEORY BINDINGS" (helpfile, htmlTheoryIndex)
 
- ; print ("\nWriting HOLPage\n")
- ; HOLPage.printHOLPage version bgcolor HOLpath
-                        htmlIndex htmlTheoryIndex (helpfile, HOLpage)
+ ; print ("\nWriting lander fragment to " ^ landerFragment ^ "\n")
+ ; HOLPage.emitLanderFragment HOLpath (helpfile, landerFragment)
  )
 
 in
-    case CommandLine.arguments () of
-        []       =>
-            process (libdirDef, helpfileDef,
-                     txtIndexDef, texIndexDef,
-                     htmlDirDef, htmlIndexDef,
-                     htmlTheoryIndexDef, HOLpageDef)
-      | [libdir] =>
-            process (libdir, helpfileDef,
-                     txtIndexDef, texIndexDef,
-                     htmlDirDef, htmlIndexDef,
-                     htmlTheoryIndexDef, HOLpageDef)
-      | _ => print "Usage: makebase\n"
+    let
+      (* Peel `--entry-url-base=<prefix>` and `--theory-url-base=<prefix>`
+         off the argv before positional dispatch.  These set
+         Htmlsigs.entry_url_base / Htmlsigs.theory_url_base so that
+         per-entry and per-theory hyperlinks in the generated htmlsigs
+         pages resolve via the chosen URL bases (the mdbook layout, or
+         the legacy Docfiles/HTML / source-tree layouts). *)
+      fun stripPrefix p s =
+          if String.isPrefix p s
+          then SOME (String.extract(s, String.size p, NONE))
+          else NONE
+      fun extract prefix acc [] = (NONE, List.rev acc)
+        | extract prefix acc (a :: rest) =
+            (case stripPrefix prefix a of
+                 SOME v => (SOME v, List.revAppend(acc, rest))
+               | NONE => extract prefix (a :: acc) rest)
+      val (entryBase, args) =
+            extract "--entry-url-base=" [] (CommandLine.arguments ())
+      val (theoryBase, args) = extract "--theory-url-base=" [] args
+      val (sourceBase, args) = extract "--source-url-base=" [] args
+      val () = case entryBase of
+                   NONE => ()
+                 | SOME b => Htmlsigs.entry_url_base := b
+      val () = case theoryBase of
+                   NONE => ()
+                 | SOME b => Htmlsigs.theory_url_base := b
+      val () = case sourceBase of
+                   NONE => ()
+                 | SOME b => Htmlsigs.source_url_base := b
+    in
+      case args of
+          []       =>
+              process (libdirDef, helpfileDef,
+                       txtIndexDef, texIndexDef,
+                       htmlDirDef, htmlIndexDef,
+                       htmlTheoryIndexDef, landerFragmentDef)
+        | [libdir] =>
+              process (libdir, helpfileDef,
+                       txtIndexDef, texIndexDef,
+                       htmlDirDef, htmlIndexDef,
+                       htmlTheoryIndexDef, landerFragmentDef)
+        | _ => print "Usage: makebase [--entry-url-base=<prefix>] \
+                     \[--theory-url-base=<prefix>] \
+                     \[--source-url-base=<prefix>] [<libdir>]\n"
+    end
 end  (* main *)
 
 end;

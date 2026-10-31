@@ -27,7 +27,8 @@ val ERR = mk_HOL_ERR "numLib";
 
 (* Fix the grammar used by this file *)
 val ambient_grammars = Parse.current_grammars();
-val _ = Parse.temp_set_grammars arithmeticTheory.arithmetic_grammars
+val SOME arithmetic_grammars = grammarDB {thyname="arithmetic"}
+val _ = Parse.temp_set_grammars arithmetic_grammars
 
 val N = numSyntax.num;
 
@@ -161,18 +162,18 @@ end;
 (*   [A] t[0]  ,  [A,t[n]] t[SUC x]                                      *)
 (* --------------------------------------------------------------------- *)
 
-fun INDUCT_TAC g =
-  INDUCT_THEN numTheory.INDUCTION ASSUME_TAC g
+fun INDUCT_TAC g ctxt =
+  INDUCT_THEN numTheory.INDUCTION ASSUME_TAC g ctxt
   handle HOL_ERR _ => raise ERR "INDUCT_TAC" "";
 
 
-fun completeInduct_on qtm g =
+fun completeInduct_on qtm g ctxt =
  let open BasicProvers
      val st = find_subterm qtm g
      val ind_tac = Prim_rec.INDUCT_THEN
                      arithmeticTheory.COMPLETE_INDUCTION ASSUME_TAC
  in
-    primInduct st ind_tac g
+    primInduct st ind_tac g ctxt
  end
  handle e => raise wrap_exn "numLib" "completeInduct_on" e
 
@@ -273,7 +274,7 @@ fun BOUNDED_EXISTS_CONV cnv M =
     Picks an arbitrary LEAST-subterm if there are multiple such.
    ---------------------------------------------------------------------- *)
 
-val LEAST_ELIM_TAC = DEEP_INTRO_TAC whileTheory.LEAST_ELIM
+val LEAST_ELIM_TAC = DEEP_INTRO_TAC WhileTheory.LEAST_ELIM
 
 (*---------------------------------------------------------------------------
     Simplification set for numbers (and booleans).
@@ -388,17 +389,50 @@ val operators = [("+", ``$+``),
                  ("<=", ``$<=``),
                  (">", ``$>``),
                  (">=", ``$>=``),
+                 ("**", “$EXP”),
                  (GrammarSpecials.fromNum_str, magic_injn)];
 
-fun deprecate_num () = let
+fun prim_deprecate_num f = let
   fun losety {Name,Thy,Ty} = {Name = Name, Thy = Thy}
-  fun doit (s, t) = Parse.temp_remove_ovl_mapping s (losety (dest_thy_const t))
+  fun doit (s, t) = f s (losety (dest_thy_const t))
 in
   app (ignore o doit) operators
 end
+fun deprecate_num() = prim_deprecate_num Parse.remove_ovl_mapping
+fun temp_deprecate_num() = prim_deprecate_num Parse.temp_remove_ovl_mapping
 
-fun prefer_num () = app temp_overload_on operators
+fun prim_prefer_num f = app f operators
+fun prefer_num() = prim_prefer_num overload_on
+fun temp_prefer_num() = prim_prefer_num temp_overload_on
+
 
 val _ = Parse.temp_set_grammars ambient_grammars;
+
+fun mkc nm = prim_mk_const{Thy = "arithmetic", Name = nm}
+val internal_numcomp_consts = [mkc "BIT1", mkc "BIT2"]
+val numeral_tm = mkc "NUMERAL"
+
+fun pprint_numcomputations gs backend printer ppfns (pgr,lgr,rgr) depth tm =
+    let
+      open term_pp_utils term_pp_types smpp
+      val (f, _) = strip_comb tm
+      val {Name,Thy,...} = dest_thy_const f handle HOL_ERR _ =>
+                                                   raise UserPP_Failed
+      val _ = Thy = "numeral" orelse
+              List.exists (same_const f) internal_numcomp_consts orelse
+              (same_const numeral_tm f andalso
+               not (numSyntax.is_numeral tm)) orelse
+              raise UserPP_Failed
+      val {add_string,...} = ppfns : term_pp_types.ppstream_funs
+    in
+      add_string "<..num comp'n..>"
+    end
+
+val _ = term_grammar.userSyntaxFns.register_userPP
+          {name = "num.numeral_computations", code = pprint_numcomputations}
+
+val _ = temp_add_user_printer("num.numeral_computations",
+                              mk_var("n", numSyntax.num),
+                              pprint_numcomputations)
 
 end (* numLib *)

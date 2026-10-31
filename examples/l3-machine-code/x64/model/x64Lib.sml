@@ -5,9 +5,9 @@ struct
 open HolKernel boolLib bossLib
 open utilsLib x64Theory
 
-val () = (numLib.prefer_num (); wordsLib.prefer_word ())
+val () = (numLib.temp_prefer_num (); wordsLib.prefer_word ())
 
 fun x64_compset thms =
-   utilsLib.theory_compset (thms, x64Theory.inventory)
+   utilsLib.theory_compset (thms, Import.gen_inventory{thyname="x64"})
 
 end

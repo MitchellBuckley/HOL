@@ -24,14 +24,11 @@ struct
 
 open HolKernel boolLib Rsyntax reduceLib Arith_cons;
 open Term_coeffs;
-open RJBConv; infix THENC;
 open Norm_arith;
 open Norm_ineqs;
 open Sol_ranges;
 
-fun failwith function = raise HOL_ERR{origin_structure = "Exists_arith",
-                                      origin_function = function,
-                                      message = ""};
+fun failwith function = raise mk_HOL_ERR "Exists_arith" function ""
 
 
 (*---------------------------------------------------------------------------*)
@@ -40,8 +37,8 @@ fun failwith function = raise HOL_ERR{origin_structure = "Exists_arith",
 
 fun NUM_REDUCE_CONV tm =
    if (is_suc tm) then ((RAND_CONV NUM_REDUCE_CONV) THENC SUC_CONV) tm
-   else if (is_plus tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC ADD_CONV) tm
-   else if (is_mult tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC MUL_CONV) tm
+   else if (is_plus tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC ADD_CONV) tm
+   else if (is_mult tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC MUL_CONV) tm
    else ALL_CONV tm;
 
 (*---------------------------------------------------------------------------*)
@@ -49,11 +46,11 @@ fun NUM_REDUCE_CONV tm =
 (*---------------------------------------------------------------------------*)
 
 fun INEQ_REDUCE_CONV tm =
-   if (is_eq tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC NEQ_CONV) tm
-   else if (is_leq tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC LE_CONV) tm
-   else if (is_less tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC LT_CONV) tm
-   else if (is_geq tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC GE_CONV) tm
-   else if (is_greater tm) then ((ARGS_CONV NUM_REDUCE_CONV) THENC GT_CONV) tm
+   if (is_eq tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC NEQ_CONV) tm
+   else if (is_leq tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC LE_CONV) tm
+   else if (is_less tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC LT_CONV) tm
+   else if (is_geq tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC GE_CONV) tm
+   else if (is_greater tm) then ((BINOP_CONV NUM_REDUCE_CONV) THENC GT_CONV) tm
    else ALL_CONV tm;
 
 (*---------------------------------------------------------------------------*)
@@ -63,10 +60,10 @@ fun INEQ_REDUCE_CONV tm =
 fun BOOL_REDUCE_CONV tm =
    if (is_num_reln tm) then INEQ_REDUCE_CONV tm
    else if (is_neg tm) then ((RAND_CONV BOOL_REDUCE_CONV) THENC NOT_CONV) tm
-   else if (is_conj tm) then ((ARGS_CONV BOOL_REDUCE_CONV) THENC AND_CONV) tm
-   else if (is_disj tm) then ((ARGS_CONV BOOL_REDUCE_CONV) THENC OR_CONV) tm
-   else if (is_imp tm) then ((ARGS_CONV BOOL_REDUCE_CONV) THENC IMP_CONV) tm
-   else if (is_eq tm) then ((ARGS_CONV BOOL_REDUCE_CONV) THENC BEQ_CONV) tm
+   else if (is_conj tm) then ((BINOP_CONV BOOL_REDUCE_CONV) THENC AND_CONV) tm
+   else if (is_disj tm) then ((BINOP_CONV BOOL_REDUCE_CONV) THENC OR_CONV) tm
+   else if (is_imp tm) then ((BINOP_CONV BOOL_REDUCE_CONV) THENC IMP_CONV) tm
+   else if (is_eq tm) then ((BINOP_CONV BOOL_REDUCE_CONV) THENC BEQ_CONV) tm
    else INEQ_REDUCE_CONV tm;
 
 (*---------------------------------------------------------------------------*)
@@ -83,7 +80,7 @@ fun WITNESS binding tm =
   in  EXISTS (tm,num)
          (WITNESS binding (subst [{residue = num,redex = Bvar}] Body))
   end
- ) handle _ => EQT_ELIM (RULE_OF_CONV BOOL_REDUCE_CONV tm);
+ ) handle _ => EQT_ELIM (QCONV BOOL_REDUCE_CONV tm);
 
 (*---------------------------------------------------------------------------*)
 (* witness : term list -> (string * int) list                                *)
@@ -113,19 +110,17 @@ fun witness tml =
 
 fun EXISTS_ARITH_CONV tm =
  (reset_multiplication_theorems ();
-  let val th = RULE_OF_CONV ARITH_FORM_NORM_CONV
+  let val th = QCONV ARITH_FORM_NORM_CONV
                   (snd (strip_exists (assert (null o free_vars) tm)))
                handle (HOL_ERR _) =>
-               raise HOL_ERR{origin_structure = "Exists_arith",
-                             origin_function = "EXISTS_ARITH_CONV",
-                             message = "formula not in the allowed subset"}
+               raise mk_HOL_ERR "Exists_arith" "EXISTS_ARITH_CONV"
+                 "formula not in the allowed subset"
   in  (let val binding = witness (strip_disj (rhs (concl th)))
        in  EQT_INTRO (WITNESS binding tm)
        end
       ) handle (HOL_ERR _) =>
-        raise HOL_ERR{origin_structure = "Exists_arith",
-                      origin_function = "EXISTS_ARITH_CONV",
-                      message = "cannot prove formula"}
+        raise mk_HOL_ERR "Exists_arith" "EXISTS_ARITH_CONV"
+                "cannot prove formula"
   end
  );
 

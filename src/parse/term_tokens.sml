@@ -30,7 +30,7 @@ fun repc i c = CharVector.tabulate(i, fn _ => c)
 val non_aggregating_chars =
     foldl (fn (c, cs) => HOLset.add(cs,c))
           (HOLset.empty Int.compare)
-          (UTF8.explodei "()[]{}~.,;-¬⟨⟩⦇⦈⟦⟧⦃⦄⌈⌉⌊⌋") (* UOK *)
+          (UTF8.explodei "()[]{}~.,;-¬⟨⟩⦇⦈⟦⟧⦃⦄⌈⌉⌊⌋❲❳⟪⟫❬❭❰❱❨❩❴❵⏴⏵")
 fun cpt_is_nonagg_char i = HOLset.member(non_aggregating_chars, i)
 val cpts_have_nonagg_char = List.exists cpt_is_nonagg_char
 
@@ -436,7 +436,15 @@ fun split_ident mixedset octalok s locn qb = let
       in
         if 0 < sz then
           let
-            val (locn1,locn2) = locn.split_at (length cpts - UTF8.size sfx) locn
+            (* `locn` uses byte-based columns (from base_lexer.getLoc);
+               split it by byte count, not codepoint count.  For a
+               lexeme like ``∀p`` (∀ = 3 bytes, p = 1 byte), the old
+               codepoint-based split gave ∀ a 1-byte Locn (`(c, c)`)
+               and p a 3-byte Locn — visible in LSP hovers as a
+               binder-symbol Locn that doesn't cover the symbol's
+               own bytes. *)
+            val prefix_bytes = String.size s - String.size sfx
+            val (locn1,locn2) = locn.split_at prefix_bytes locn
           in
             pushstring (sfx, locn2);
             (tok, locn1)
@@ -556,10 +564,10 @@ fn qb => let
 end
 
 fun user_split_ident keywords = let
-  val kwd_is = map (fn s => (s, UTF8.explodei s)) keywords
-  fun test (s, is) = mixed is orelse cpts_have_nonagg_char is
-  val mixedkws = List.filter test kwd_is
-  val mixedset = UTF8Set.addList(UTF8Set.empty, map #1 mixedkws)
+  fun test s = let val is = UTF8.explodei s
+               in mixed is orelse cpts_have_nonagg_char is end
+  val mixedkws = List.filter test keywords
+  val mixedset = UTF8Set.addList(UTF8Set.empty, mixedkws)
   val split = split_ident mixedset (!base_tokens.allow_octal_input)
 in
   fn s => let

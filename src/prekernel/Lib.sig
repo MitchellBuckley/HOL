@@ -8,6 +8,7 @@ sig
    type ('a, 'b) istream
    type ('a, 'b) subst = {redex: 'a, residue: 'b} list
    type 'a set = 'a HOLset.set
+   type ('a, 'b) dict = ('a, 'b) Redblackmap.dict
    val $  : ('a -> 'b) * 'a -> 'b
    val ## : ('a -> 'b) * ('c -> 'd) -> 'a * 'c -> 'b * 'd
    val ?> : ('a, 'c)verdict * ('a -> ('b, 'c)verdict) -> ('b, 'c)verdict
@@ -54,7 +55,7 @@ sig
    val delta_map : ('a -> 'a delta) -> 'a list -> 'a list delta
    val delta_pair :
       ('a -> 'a delta) -> ('b -> 'b delta) -> 'a * 'b -> ('a * 'b) delta
-   val dict_topsort : ('a, 'a list) Redblackmap.dict -> 'a list
+   val dict_topsort : ('a, 'a list) dict -> 'a list
    val el : int -> 'a list -> 'a
    val end_itlist : ('a -> 'a -> 'a) -> 'a list -> 'a
    val end_real_time : Timer.real_timer -> unit
@@ -108,7 +109,8 @@ sig
    val next : ('a, 'b) istream -> ('a, 'b) istream
    val null_intersection : ''a list -> ''a list -> bool
    val op_U : ('a -> 'a -> bool) -> 'a list list -> 'a list
-   val op_allpairs : ('a -> 'a -> bool) -> ('b -> 'c -> 'a) -> 'b list -> 'c list -> 'a list
+   val op_allpairs : ('a -> 'a -> bool) -> ('b -> 'c -> 'a) -> 'b list ->
+                     'c list -> 'a list
    val op_assoc : ('a -> 'a -> bool) -> 'a -> ('a * 'b) list -> 'b
    val op_assoc1 : ('a -> 'a -> bool) -> 'a -> ('a * 'b) list -> 'b option
    val op_insert : ('a -> 'a -> bool) -> 'a -> 'a list -> 'a list
@@ -123,6 +125,7 @@ sig
    val pair : 'a -> 'b -> 'a * 'b
    val pair_compare : ('a cmp * 'b cmp) -> ('a * 'b) cmp
    val pair_eq : 'a eqf -> 'b eqf -> ('a * 'b) eqf
+   val pair_map : ('a -> 'b) -> 'a * 'a -> 'b * 'b
    val pair_of_list : 'a list -> 'a * 'a
    val partial : exn -> ('a -> 'b option) -> 'a -> 'b
    val partition : ('a -> bool) -> 'a list -> 'a list * 'a list
@@ -146,6 +149,7 @@ sig
    val set_diff : ''a list -> ''a list -> ''a list
    val set_eq : ''a list -> ''a list -> bool
    val setify : (''a -> ''a -> bool) -> ''a list -> ''a list
+   val simple_assert : bool -> exn -> unit
    val single : 'a -> 'a list
    val singleton_of_list : 'a list -> 'a
    val snd : 'a * 'b -> 'b

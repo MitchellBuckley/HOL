@@ -137,7 +137,7 @@ fun cleanup_data_store (sds_thm, sds_term, sds_type) =
 let
     fun cleanup_subdata_store sds =
     let
-        val sdsL = Redblackmap.listItems sds
+        val sdsL = Symtab.dest sds
         val sdsL' = List.filter (data_entry_is_used o snd) sdsL;
     in
         sdsL'
@@ -197,7 +197,7 @@ let
            val (ty, tm) = destruct_theory_thm (valOf content);
            val _ = DB.fetch ty tm
                    handle HOL_ERR e =>
-                       (report_error (#message e);Feedback.fail());
+                       (report_error (message_of e);Feedback.fail());
         in
            ()
         end else ();
@@ -277,11 +277,7 @@ let
    val thmDefL = process_thm_defs os thmL;
 
    fun list2map l =
-   let
-      val emptyMap = Redblackmap.mkDict String.compare;
-   in
-      List.foldr (fn ((id,d),m) => Redblackmap.insert(m,id,d)) emptyMap l
-   end
+      List.foldr (fn ((id,d),m) => Symtab.update (id, d) m) Symtab.empty l
 in
    (list2map thmDefL,list2map termDefL,list2map typeDefL)
 end;
@@ -427,7 +423,7 @@ let
    val _ = Portable.output (os, if isSome comment_opt then valOf comment_opt
                                 else "")
    val _ = Portable.output (os, "}{");
-   val _ = Portable.output (os, Redblackmap.find (d,id));
+   val _ = Portable.output (os, valOf (Symtab.lookup d id));
    val _ = Portable.output (os, "}\n");
 in
   ()

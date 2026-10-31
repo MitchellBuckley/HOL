@@ -7,16 +7,8 @@
 structure InductiveDefinition :> InductiveDefinition =
 struct
 
-open HolKernel boolLib liteLib refuteLib AC Ho_Rewrite;
-
-(* Fix the grammar used by this file *)
-structure Parse =
-struct
-  open Parse
-  val (Type,Term) = Parse.parse_from_grammars boolTheory.bool_grammars
-  fun == q x = Type q
-end
-open Parse
+open HolKernel boolLib liteLib refuteLib AC Ho_Rewrite
+     InductiveDefinitionContextTheory;
 
 (*---------------------------------------------------------------------------
     Variants. We re-define the kernel "variant" function here because
@@ -148,7 +140,7 @@ fun AND_IMPS_CONV tm =
       val th2 = GENL avs (DISCH tm1 (UNDISCH th1))
       val tm2 = concl th2
       val th3 = DISCH tm2 (UNDISCH (SPEC_ALL (ASSUME tm2)))
-      val (thts,tht) =  nsplit SIMPLE_DISJ_PAIR (tl ths) th3
+      val (thts,tht) = nsplit SIMPLE_DISJ_PAIR (tl ths) th3
       fun proc_fn th =
           let val t = hd(hyp th) in GENL avs (DISCH t (UNDISCH th))
           end
@@ -437,7 +429,7 @@ end
 
 fun BACKCHAIN_TAC th =
     let val match_fn = HO_PART_MATCH (snd o dest_imp) th
-    in fn (asl,w) =>
+    in fn (asl,w) => fn _ (* ctxt *) =>
         let val th1 = match_fn w
             val (ant,con) = dest_imp(concl th1)
         in ([(asl,ant)],fn [t] => HO_MATCH_MP th1 t | _ => raise Match)
@@ -457,28 +449,6 @@ type monoset = (string * thm) list;
  *---------------------------------------------------------------------------*)
 
 
-val MONO_EXISTS = prove (
-  ``(!x:'a. P x ==> Q x) ==> ($? P ==> $? Q)``,
-  DISCH_THEN(MP_TAC o HO_MATCH_MP MONO_EXISTS) THEN
-  CONV_TAC(ONCE_DEPTH_CONV ETA_CONV) THEN REWRITE_TAC[])
-
-val MONO_FORALL = prove (
-  ``(!x:'a. P x ==> Q x) ==> ($! P ==> $! Q)``,
-  DISCH_THEN(MP_TAC o HO_MATCH_MP MONO_ALL) THEN
-  CONV_TAC(ONCE_DEPTH_CONV ETA_CONV) THEN REWRITE_TAC[])
-
-val MONO_RESFORALL = prove(
-  ``(!x:'a. P' x ==> P x) /\ (!x. Q x ==> Q' x) ==>
-    (RES_FORALL P Q ==> RES_FORALL P' Q')``,
-  REWRITE_TAC [RES_FORALL_THM, IN_DEF] THEN BETA_TAC THEN REPEAT STRIP_TAC THEN
-  REPEAT (FIRST_X_ASSUM MATCH_MP_TAC) THEN ASM_REWRITE_TAC [])
-
-val MONO_RESEXISTS = prove(
-  ``(!x:'a. P x ==> P' x) /\ (!x. Q x ==> Q' x) ==>
-    (RES_EXISTS P Q ==> RES_EXISTS P' Q')``,
-  REWRITE_TAC [RES_EXISTS_THM, IN_DEF] THEN BETA_TAC THEN REPEAT STRIP_TAC THEN
-  EXISTS_TAC ``x:'a`` THEN RES_TAC THEN ASM_REWRITE_TAC [])
-
 val MONO_COND = let open Rewrite boolTheory in
   ONCE_REWRITE_RULE[AND_IMP_INTRO]MONO_COND
 end
@@ -497,20 +467,21 @@ val bool_monoset =
 
 val IMP_REFL = let val p = mk_var("p", bool) in ASSUME p |> DISCH p |> GEN p end
 
-fun APPLY_MONOTAC monoset (asl, w) = let
+fun APPLY_MONOTAC monoset (asl, w) ctxt = let
   val (a,c) = dest_imp w
 in
-  if aconv a c then ACCEPT_TAC (SPEC a IMP_REFL) (asl,w)
+  if aconv a c then ACCEPT_TAC (SPEC a IMP_REFL) (asl,w) ctxt
   else let
       val {Thy,Name,...} = dest_thy_const(repeat rator c)
                            handle HOL_ERR _ => {Thy = "", Name = "",
                                                 Ty = Type.alpha}
     in
       case (Thy,Name) of
-        ("","") => MONO_ABS_TAC (asl, w)
-      | ("pair", "UNCURRY") => MONO_UNCURRY_TAC (asl, w)
-      | _ => tryfind (fn (k,t) => if k = Name then BACKCHAIN_TAC t (asl,w)
-                                  else fail())
+        ("","") => MONO_ABS_TAC (asl, w) ctxt
+      | ("pair", "UNCURRY") => MONO_UNCURRY_TAC (asl, w) ctxt
+      | _ => tryfind (fn (k,t) =>
+                         if k = Name then BACKCHAIN_TAC t (asl,w) ctxt
+                         else fail())
                      monoset
     end
 end
@@ -610,10 +581,10 @@ fun derive_existence th = itlist EXISTS_EQUATION (filter is_eq (hyp th)) th
 
 fun make_definitions stem th = let
   val defs = filter is_eq (hyp th)
-  fun mkdef i tm =
-      new_definition(stem ^ Int.toString i ^ !boolLib.def_suffix, tm)
+  fun def(s,t) = new_definition(Theory.temp_binding s, t)
+  fun mkdef i tm = def(stem ^ Int.toString i ^ !boolLib.def_suffix, tm)
   val dths = if length defs = 1 then
-               [new_definition(stem ^ !boolLib.def_suffix, hd defs)]
+               [def(stem ^ !boolLib.def_suffix, hd defs)]
              else
                mapi mkdef defs
   val insts = map2 (curry op |->) (map lhs defs) (map (lhs o concl) dths)
@@ -673,22 +644,28 @@ local
         end
   fun lcommon_prefix [] = []
     | lcommon_prefix (h::t) = lcommon_prefix0 h t
-
+  fun takeWhile P [] = []
+    | takeWhile P (x::xs) = if P x then x :: takeWhile P xs
+                            else []
 in
 fun unschematize_clauses clauses = let
   val schem = map schem_head clauses
   val schems = op_mk_set aconv schem
-  fun insert_list l s = foldl (fn (t,s) => HOLset.add(s,t)) s l
   val hdops = op_mk_set aconv (map (#1 o strip_comb) schems)
-  val schemv_extent = length (#2 (strip_comb (hd schems)))
-  fun is_hdop_instance t = let
-    val (f,args) = strip_comb t
-  in
-    op_mem aconv f hdops andalso length args = schemv_extent
-  end
   val all_instances =
-      foldl (fn (t, s) => insert_list (find_terms is_hdop_instance t) s)
-            empty_tmset clauses
+      let
+        fun ftfn (bvs, t) =
+            let val (f, xs) = strip_comb t
+                fun goodarg x = is_var x andalso not (op_mem aconv x bvs)
+            in
+              if type_of t = bool andalso op_mem aconv f hdops then
+                SOME (list_mk_comb(f, takeWhile goodarg xs))
+              else NONE
+            end
+      in
+        foldl (fn (t, A) => HOLset.addList (A, gen_find_terms ftfn t))
+              empty_tmset clauses
+      end
   fun do_substitution schems = let
     val avoids = all_vars (list_mk_conj clauses)
     fun hack_fn tm = mk_var(fst(dest_var(repeat rator tm)),type_of tm)
@@ -713,8 +690,8 @@ in
     else
       do_substitution schems
   else (* liberal definitions *) let
-      val prefix_vars = HOLset.foldr (fn (t,l) => #2 (strip_comb t)::l)
-                                     [] all_instances
+      val prefix_vars =
+          HOLset.foldl (fn (t,A) => #2 (strip_comb t) :: A) [] all_instances
       val prefix = lcommon_prefix prefix_vars
     in
       if null prefix then (clauses, [])

@@ -1,22 +1,35 @@
 
-use "../tools/Holmake/GetOpt.sig";
-use "../tools/Holmake/GetOpt.sml";
+use "../tools/Holmake/hfs/HOLFS_dtype.sml";
+use "../tools/Holmake/hfs/HFS_NameMunge.sig";
+use "../tools/Holmake/poly/HFS_NameMunge.sml";
+use "../tools/Holmake/hfs/HOLFileSys.sig";
+use "../tools/Holmake/hfs/HOLFileSys.sml";
+use "../tools/parsing/AttributeSyntax.sig";
+use "../tools/parsing/AttributeSyntax.sml";
+use "../tools/util/GetOpt.sig";
+use "../tools/util/GetOpt.sml";
 use "../tools-poly/poly/Binaryset.sig";
 use "../tools-poly/poly/Binaryset.sml";
 use "../tools-poly/poly/Binarymap.sig";
 use "../tools-poly/poly/Binarymap.sml";
+use "../src/portableML/DString.sig";
+use "../src/portableML/DString.sml";
+use "../src/portableML/DArray.sig";
+use "../src/portableML/DArray.sml";
 use "../tools/Holmake/Systeml.sig";
 use "../tools-poly/Holmake/Systeml.sml";
-use "../tools/Holmake/holpathdb.sig";
-use "../tools/Holmake/holpathdb.sml";
+use "../tools/Holmake/hfs/holpathdb.sig";
+use "../tools/Holmake/hfs/holpathdb.sml";
 
 val _ = holpathdb.extend_db {vname = "HOLDIR", path = Systeml.HOLDIR}
 
 infix |>
 fun x |> f = f x
 
-fun die s = (TextIO.output(TextIO.stdErr, s ^ "\n");
-             OS.Process.exit OS.Process.failure)
+val debug = ref false
+fun errLn s = TextIO.output(TextIO.stdErr, s ^ "\n")
+fun debugOut s = if !debug then errLn s else ()
+fun die s = (errLn s; OS.Process.exit OS.Process.failure)
 
 fun mkBuffer () = let
   val buf = ref ([] : string list)
@@ -32,19 +45,27 @@ in
   (push, read, reset)
 end;
 
-val _ = use "../tools/Holmake/QuoteFilter.sml";
-val _ = use "../tools/Holmake/QFRead.sig";
-val _ = use "../tools/Holmake/QFRead.sml";
-val _ = use "../tools/Holmake/Holdep_tokens.sig"
-val _ = use "../tools/Holmake/Holdep_tokens.sml";
+val _ = use "../tools/parsing/HOLSourceAST.sig";
+val _ = use "../tools/parsing/HOLSourceAST.sml";
+val _ = use "../tools/parsing/HOLSourceParser.sig";
+val _ = use "../tools/parsing/HOLSourceParser.sml";
+val _ = use "../tools/parsing/HOLSourceExpand.sig";
+val _ = use "../tools/parsing/HOLSourceExpand.sml";
+val _ = use "../tools/parsing/HOLSourcePrinter.sig";
+val _ = use "../tools/parsing/HOLSourcePrinter.sml";
+val _ = use "../tools/parsing/HolLex.sml";
+val _ = use "../tools/parsing/HOLSource.sig";
+val _ = use "../tools/parsing/HOLSource.sml";
 
 
 infix ^^
 val op^^ = OS.Path.concat
 
 fun addIfReadable src fname rest =
-  if OS.FileSys.access(fname, [OS.FileSys.A_READ]) then (src,fname)::rest
+  if HOLFileSys.access(fname, [OS.FileSys.A_READ]) then (src,fname)::rest
   else rest
+
+fun normName s = s |> OS.Path.file
 
 fun ToplevelLoad {worklist, alreadySeen, acc} (src,s) =
   let
@@ -52,24 +73,29 @@ fun ToplevelLoad {worklist, alreadySeen, acc} (src,s) =
                     else s
     val uo = basefname ^ ".uo"
     val ui = basefname ^ ".ui"
+    val _ = debugOut ("Top level load of: " ^ s)
   in
     {worklist = worklist |> addIfReadable src uo |> addIfReadable src ui,
-     alreadySeen = Binaryset.add(alreadySeen, s),
+     alreadySeen = Binaryset.add(alreadySeen, normName s),
      acc = acc}
   end
 
 fun load1 (S as {worklist, alreadySeen, acc}) (src,s) =
   let
-    fun doSource () =
+    fun doSource () = let
+      val _ = debugOut ("Source load of: " ^ s)
+    in
       {worklist = worklist,
-       alreadySeen = Binaryset.add(alreadySeen, s),
+       alreadySeen = Binaryset.add(alreadySeen, normName s),
        acc = s::acc}
+    end
     fun doUOI () =
       let
-        val instrm = TextIO.openIn s
+        val _ = debugOut ("UOI load of: " ^ s)
+        val instrm = HOLFileSys.openIn s
         fun recurse acc lnum =
-          case TextIO.inputLine instrm of
-              NONE => (TextIO.closeIn instrm ; acc)
+          case HOLFileSys.inputLine instrm of
+              NONE => (HOLFileSys.closeIn instrm ; acc)
             | SOME line =>
               let
                 val newfile = String.substring(line, 0, size line - 1)
@@ -80,11 +106,11 @@ fun load1 (S as {worklist, alreadySeen, acc}) (src,s) =
               end
       in
         {worklist = List.rev (recurse [] 1) @ worklist,
-         alreadySeen = Binaryset.add(alreadySeen, s),
+         alreadySeen = Binaryset.add(alreadySeen, normName s),
          acc = acc}
       end
   in
-    if Binaryset.member(alreadySeen, s) then S
+    if Binaryset.member(alreadySeen, normName s) then S
     else
       case OS.Path.ext s of
           SOME "sig" => doSource()
@@ -118,6 +144,8 @@ fun turnOnHelp _ = {dohelp = true, prefix = "", prelude = "", suffix = ""}
 fun turnOnHOL {dohelp,...} = {dohelp = dohelp, prefix = "use \"",
                               suffix = "\";",
                               prelude = HOLprelude}
+
+fun turnOnDebug x = (debug := true; x)
 fun setPrefix s {prefix,dohelp,suffix,prelude} =
   {prefix = s, dohelp = dohelp, suffix = suffix, prelude = prelude}
 fun setSuffix s {prefix,dohelp,suffix,prelude} =
@@ -129,6 +157,9 @@ in
   [{short = "h", long = ["help"],
     help = "Show some help information",
     desc = NoArg (fn () => turnOnHelp)},
+   {short = "d", long = [],
+    help = "Turn on debug info",
+    desc = NoArg (fn () => turnOnDebug)},
    {short = "", long = ["hol"],
     help = "Generate a poly-usable source file",
     desc = NoArg (fn () => turnOnHOL)},
@@ -167,13 +198,17 @@ fun main () =
           let
             val deps = Holdep_tokens.file_deps fname
                        handle e => die (General.exnMessage e)
-            val result =
-                dowork {worklist =
-                        Binarymap.foldr
+            val worklist0 =
+                Binarymap.foldr
                           (fn (s,_,acc) => ("toplevel", s) :: acc)
                           []
-                          deps,
+                          deps
+            val _ = debugOut "Initial worklist:"
+            val _ = List.app (fn (_, s) => debugOut s) worklist0
+            val result =
+                dowork {worklist = worklist0,
                         acc = [], alreadySeen = Binaryset.empty String.compare}
+                handle e => die ("Exception raised: " ^ General.exnMessage e)
           in
             print (#prelude config) ;
             List.app

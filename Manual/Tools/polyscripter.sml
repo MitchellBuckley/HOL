@@ -9,19 +9,53 @@ fun exnMessage (e:exn) =
     PP.pp_to_string 75 p e
   end
 
-fun die s = (TextIO.output(TextIO.stdErr, s ^ "\n");
-             OS.Process.exit OS.Process.failure)
+(* External drivers (e.g. help/src-sml/process_docfiles) that loop
+   over many .smd inputs can set this to the current entry's name
+   so that die-style diagnostics name the source.  Default empty
+   keeps stand-alone CLI output unchanged. *)
+val currentSource : string ref = ref ""
+
+fun die s =
+  let val pfx = case !currentSource of "" => "" | s => "[" ^ s ^ "] "
+  in
+    TextIO.output(TextIO.stdErr, pfx ^ s ^ "\n");
+    OS.Process.exit OS.Process.failure
+  end
 fun lnumdie linenum extra exn =
   die ("Exception raised on line " ^ Int.toString linenum ^ ": "^
-       extra ^ exnMessage exn)
+       extra ^ "\n" ^ exnMessage exn)
 
 val outputPrompt = ref "> "
 
-val quote = QFRead.fromString
+(* Global outstream for user scripts.  In CLI mode this points at
+   `print` (so user output goes to stdout, joining polyscripter's own
+   emission); when polyscripter is driven as a library (e.g., from the
+   smdpp mdbook preprocessor), processStream rebinds it to the
+   caller-supplied `output` callback so that user-script writes land
+   in the same captured stream as polyscripter's emission. *)
+val scriptPrint : (string -> unit) ref = ref print
+
+(* HOLSource (the unquote pre-processor) reports parse errors --
+   unclosed quotations, stray punctuation, etc. -- by calling
+   `args.print`.  Track whether any such report happened during the
+   current chunk so external drivers (e.g. help/src-sml/process_docfiles)
+   that loop over many .smd inputs can detect a malformed `>>` block
+   even when the exception-tolerant `>>+` would otherwise swallow
+   the resulting Fail "Static Errors".  CLI behaviour is unchanged
+   -- the stderr output still happens; we just also raise a flag. *)
+val parseErrorFlag = ref false
+fun resetParseError () = parseErrorFlag := false
+fun hadParseError () = !parseErrorFlag
+
+val args =
+    {quietOpen = true,
+     print = fn s => (parseErrorFlag := true;
+                      TextIO.output(TextIO.stdErr, s))}
+val quote = HOLSource.fromString args
 val default_linewidth = 77
 
 fun quoteFile lnum fname =
-  QFRead.inputFile fname handle e => lnumdie lnum "" e
+  HOLSource.inputFile args fname handle e => lnumdie lnum "" e
 
 datatype lbuf =
          LB of {
@@ -79,7 +113,7 @@ fun compiler {push = obufPush, read = obufRD, reset = obufRST} handler infn =
 fun silentUse lnum s =
   let
     val filecontents = quoteFile lnum s
-    val buf = HM_SimpleBuffer.mkBuffer()
+    val buf = SimpleBuffer.mkBuffer()
   in
     compiler buf (lnumdie 1) (mkLex filecontents)
   end
@@ -101,6 +135,14 @@ fun umunge umap s =
 val elision_string1 =
     ref "\\quad\\textit{\\small\\dots{}output elided\\dots{}}\n"
 
+(* Plain-text alternative used when -md is passed.  The LaTeX form
+   above relied on the surrounding alltt environment to interpret
+   \textit etc.; .smd output ends up inside a fenced code block, which
+   pandoc lowers to verbatim, so the LaTeX would leak through as
+   literal characters. *)
+val elision_string1_plain =
+    "   ... output elided ...\n"
+
 fun deleteTrailingWhiteSpace s =
   let
     open Substring
@@ -118,7 +160,7 @@ fun remove_multi_goalproved s =
     fun recurse ss =
       let
         val ss' = Substring.slice(ss, 1, NONE)
-        val (l,r) = Substring.position "\n\nGoal proved." ss'
+        val (_,r) = Substring.position "\n\nGoal proved." ss'
       in
         if Substring.size r <> 0 then
           case recurse r of NONE => SOME r | x => x
@@ -215,7 +257,16 @@ fun removeCruft s =
 
 fun addIndent ws = String.translate(fn #"\n" => "\n"^ws | c => str c)
 
-val linelen_limit = ref (NONE : int option)
+type 'a refstack = 'a list ref
+fun rsPushValue a (r as ref v) = r := a::v
+fun rsValue (ref v) = hd v
+fun rsPop (ref [_]) = ()
+  | rsPop (r as ref (_::xs)) = r := xs
+  | rsPop (ref []) = raise Fail "rsPop: can't happen"
+fun newRS v = ref [v]
+
+val linelen_limit = newRS (NONE : int option)
+val linecount_limit = newRS (0, NONE) : (int*int option) refstack
 
 fun trunc lim s =
     if UTF8.size s <= lim then s
@@ -223,13 +274,54 @@ fun trunc lim s =
     else UTF8.substring(s,0,lim)
 
 fun impose_linelen_limit s =
-    case !linelen_limit of
+    case rsValue linelen_limit of
         NONE => s
       | SOME lim =>
         let
           val lines = String.fields (fn c => c = #"\n") s
         in
           String.concatWith "\n" (map (trunc lim) lines)
+        end
+
+fun impose_linecount_limit s =
+    case rsValue linecount_limit of
+        (0,NONE) => s
+      | (dropc, NONE) =>
+        let
+          val lines = String.fields (fn c => c = #"\n") s
+          val c = length lines
+        in
+          if dropc >= c then "[...No output after prefix elided...]\n"
+          else
+            "[...Lines elided...]\n" ^
+            String.concatWith "\n" (List.drop (lines, dropc)) ^ "\n"
+        end
+      | (0, SOME lim) =>
+        let
+          val lines = String.fields (fn c => c = #"\n") s
+          val c = length lines
+          val (lines', closeWith) =
+              case Int.compare(lim,c) of
+                  LESS => (List.take(lines, lim), "\n[...Output elided...]\n")
+                | _ => (lines, "\n")
+        in
+          String.concatWith "\n" lines' ^ closeWith
+        end
+      | (dropc, SOME takec) =>
+        let
+          val lines = String.fields (fn c => c = #"\n") s
+          val dr = List.drop and tk = List.take
+          val c = length lines
+        in
+          if c <= dropc then
+            "[...No output after prefix elided...]\n"
+          else if dropc + takec >= c then
+            "[...Lines elided...]\n" ^
+            String.concatWith "\n" (dr (lines, dropc)) ^ "\n"
+          else
+            "[...Lines elided...]\n" ^
+            String.concatWith "\n" (tk (dr (lines,dropc), takec)) ^
+            "\n[...Output elided...]\n"
         end
 
 fun transformOutput umap ws s =
@@ -239,6 +331,7 @@ fun transformOutput umap ws s =
     |> deleteTrailingWhiteSpace
     |> (fn s => ws ^ s)
     |> impose_linelen_limit
+    |> impose_linecount_limit
 
 fun spaceNotNL c = Char.isSpace c andalso c <> #"\n"
 
@@ -258,7 +351,7 @@ fun strip_for_thm s =
     remove_colonthm s0
   end
 
-fun tailmap f [] = []
+fun tailmap _ [] = []
   | tailmap f (h::t) = h :: map f t
 
 fun poss_space_extract n s =
@@ -271,10 +364,12 @@ fun poss_space_extract n s =
 
 fun strcat s1 s2 = s1 ^ s2
 
-fun dropWhile0 P a [] = (List.rev a,[])
+fun dropWhile0 _ a [] = (List.rev a,[])
   | dropWhile0 P a (l as h::t) = if P h then dropWhile0 P (h::a) t
                                  else (List.rev a, l)
 fun dropWhile P l = dropWhile0 P [] l
+
+datatype cstate = Consuming | Skipping
 
 fun process_line debugp umap obuf origline lbuf = let
   val {reset = obRST, ...} = obuf
@@ -319,7 +414,7 @@ fun process_line debugp umap obuf origline lbuf = let
     end
   val assertcmd = "##assert "
   val assertcmdsz = size assertcmd
-  val stringCReader = #read o QFRead.stringToReader true
+  val stringCReader = #read o HOLSource.stringToReader args
   fun compile exnhandle input =
       (if debugp then
          TextIO.output(TextIO.stdErr, input)
@@ -329,7 +424,16 @@ in
   if String.isPrefix ">>>" line then
     (advance lbuf; (ws ^ String.extract(line, 1, NONE), ""))
   else if String.isPrefix "###" line then
-    (advance lbuf; (ws ^ String.extract(line, 1, NONE), ""))
+    let val toks = String.tokens Char.isSpace line
+    in
+      advance lbuf;
+      case (ws, toks) of
+          ("", tok1 :: _) =>
+          if CharVector.all (fn c => c = #"#") tok1 then
+            (line, "")
+          else (ws ^ String.extract(line, 1, NONE), "")
+        | _ => (ws ^ String.extract(line, 1, NONE), "")
+    end
   else if String.isPrefix assertcmd line then
     let
       val e = String.substring(line, assertcmdsz, size line - assertcmdsz - 1)
@@ -427,13 +531,52 @@ in
         NONE => lnumdie (linenum lbuf) "Mal-formed ##linelen_limit directive"
                         (Fail "")
       | SOME i => if i >= 10 then
-                    (advance lbuf; linelen_limit := SOME i; ("", ""))
+                    (advance lbuf; rsPushValue (SOME i) linelen_limit; ("", ""))
                   else
                     lnumdie (linenum lbuf)
                             "Unreasonable (<10) ##linelen_limit directive"
                             (Fail "")
   else if String.isPrefix "##nolinelen_limit" line then
-    (advance lbuf; linelen_limit := NONE; ("", ""))
+    (advance lbuf; rsPushValue NONE linelen_limit; ("", ""))
+  else if String.isPrefix "##poplinelen_limit" line then
+    (advance lbuf; rsPop linelen_limit; ("", ""))
+  else if String.isPrefix "##linecount_limit " line then
+    case tl (String.tokens Char.isSpace line) of
+        [dr] => (case Int.fromString dr of
+                     NONE => lnumdie
+                               (linenum lbuf)
+                               ("Mal-formed ##linecount_limit directive: \""^
+                                dr ^ "\" not a valid integer")
+                               (Fail "")
+                   | SOME dri => (rsPushValue (dri,NONE) linecount_limit;
+                                  advance lbuf;
+                                  ("", "")))
+      | [dr,tk] =>
+        let
+          val dri =
+              case Int.fromString dr of
+                  NONE => lnumdie (linenum lbuf)
+                                  ("Mal-formed ##linecount_limit directive: \""^
+                                   dr ^ "\" not a valid integer")
+                                  (Fail "")
+                      | SOME i => i
+          val tkopt =
+              if tk = "_" then NONE
+              else
+                case Int.fromString tk of
+                    NONE => lnumdie
+                              (linenum lbuf)
+                              ("Mal-formed ##linecount_limit directive: \"" ^
+                               tk ^ "\" not a valid integer or \"_\"")
+                              (Fail "")
+                  | SOME i => SOME i
+        in
+          (advance lbuf; rsPushValue (dri,tkopt) linecount_limit; ("", ""))
+        end
+      | _ => lnumdie (linenum lbuf) "Mal-formed ##linecount_limit directive"
+                     (Fail "")
+  else if String.isPrefix "##poplinecount_limit" line then
+    (advance lbuf; rsPop linecount_limit; ("", ""))
   else if String.isPrefix ">>-" line then
     let
       val (firstline,d) = poss_space_extract 3 line
@@ -515,42 +658,99 @@ fun read_umap fname =
 
 
 fun usage() =
-  "Usage:\n  "^ CommandLine.name() ^ " [-d] [umapfile]"
+  "Usage:\n  "^ CommandLine.name() ^ " [-d] [-md] [umapfile]"
 
-fun main () =
+(* One-time setup shared between the CLI driver and external callers
+   (e.g., the smdpp mdbook preprocessor).  Returns the compiler output
+   buffer used by process_line. *)
+fun setupPolyscripter () =
   let
-    val _ = PolyML.print_depth 100;
+    val _ = PolyML.print_depth 100
     val _ = Parse.current_backend := PPBackEnd.raw_terminal
-    val (debugp,umap) =
-        case CommandLine.arguments() of
-            [] => (false, Binarymap.mkDict String.compare)
-          | ["-d"] => (true, Binarymap.mkDict String.compare)
-          | [name] => (false, read_umap name)
-          | ["-d", name] => (true, read_umap name)
-          | _ => die (usage())
-    val (obuf as {push = obPush, ...}) = HM_SimpleBuffer.mkBuffer()
+    val (obuf as {push = obPush, ...}) = SimpleBuffer.mkBuffer()
     val _ = ReadHMF.extend_path_with_includes {verbosity = 0, lpref = loadPath}
     val _ = Feedback.ERR_outstream := obPush
     val _ = Feedback.WARNING_outstream := obPush
     val _ = Feedback.MESG_outstream := obPush
+    val _ = Feedback.INFO_outstream := obPush
+  in
+    obuf
+  end
+
+(* Drive a single .smd document.  `obuf` should be a buffer obtained from
+   setupPolyscripter (and may be reused across documents to share Poly/ML
+   compiler state and theory loads).  `scriptPrint` is rebound to
+   `output` for the duration of the call so user-script writes land in
+   the same stream as polyscripter's emission. *)
+fun processStream {input, output, debug, umap, obuf} =
+  let
+    val savedScriptPrint = !scriptPrint
+    val () = scriptPrint := output
+    val lb = mklbuf input
+    fun recurse cstate =
+      case current lb of
+          NONE => ()
+        | SOME line =>
+          if String.isPrefix "##skip" line then
+            (advance lb; recurse (Skipping :: cstate))
+          else if String.isPrefix "##endskip" line then
+            (case cstate of
+                Skipping :: rest => (advance lb; recurse rest)
+              | _ => die ("Unbalanced ##endskip on line " ^
+                          Int.toString (linenum lb)))
+          else
+            case cstate of
+                Skipping :: _ => (advance lb; recurse cstate)
+              | _ =>
+                let
+                  val (i, out) =
+                      process_line debug umap obuf line lb
+                      handle e => die ("Untrapped exception: line "^
+                                       Int.toString (linenum lb) ^ ": " ^
+                                       exnMessage e)
+                in
+                  output (i ^ out);
+                  recurse cstate
+                end
+  in
+    (recurse [] handle e => (scriptPrint := savedScriptPrint; raise e));
+    scriptPrint := savedScriptPrint
+  end
+
+fun processString {input, debug, umap, obuf} =
+  let
+    val sb = SimpleBuffer.mkBuffer ()
+  in
+    processStream {input = TextIO.openString input,
+                   output = #push sb,
+                   debug = debug,
+                   umap = umap,
+                   obuf = obuf};
+    #read sb ()
+  end
+
+fun main () =
+  let
+    fun parseArgs (mdp, debugp, umap) args =
+        case args of
+            [] => (mdp, debugp, umap)
+          | "-md" :: rest => parseArgs (true, debugp, umap) rest
+          | "-d"  :: rest => parseArgs (mdp, true, umap) rest
+          | [name] => (mdp, debugp, read_umap name)
+          | _ => die (usage())
+    val (mdp, debugp, umap) =
+        parseArgs (false, false, Binarymap.mkDict String.compare)
+                  (CommandLine.arguments())
+    val () = if mdp then elision_string1 := elision_string1_plain else ()
+    val obuf = setupPolyscripter ()
     val cvn = PolyML.Compiler.compilerVersionNumber
     val _ = if cvn = 551 orelse cvn = 552 then
               ignore (TextIO.inputLine TextIO.stdIn)
             else ()
-    val lb = mklbuf TextIO.stdIn
-    fun recurse lb : unit=
-      case current lb of
-          NONE => ()
-        | SOME line =>
-          let
-            val (i, output) = process_line debugp umap obuf line lb
-               handle e => die ("Untrapped exception: line "^
-                                Int.toString (linenum lb) ^ ": " ^
-                                exnMessage e)
-          in
-            print (i ^ output);
-            recurse lb
-          end
   in
-    recurse lb
+    processStream {input = TextIO.stdIn,
+                   output = print,
+                   debug = debugp,
+                   umap = umap,
+                   obuf = obuf}
   end

@@ -32,7 +32,8 @@ val ERR = mk_HOL_ERR "Prim_rec";
 
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars boolTheory.bool_grammars
+  val bool_grammars = Option.valOf $ grammarDB {thyname="bool"}
+  val (Type,Term) = parse_from_grammars bool_grammars
 end
 open Parse
 
@@ -84,10 +85,8 @@ fun mymatch_and_instantiate axth pattern instance = let
     val forall_env = ListPair.map op|-> (patvars, instvars)
     val pateqn = Term.subst forall_env pateqn0
     val _ = aconv (lhs pateqn) (lhs insteqn) orelse
-      raise HOL_ERR {origin_function =
-                "prove_raw_recursive_functions_exist.mymatch_and_instantiate",
-              origin_structure = "Prim_rec",
-              message = ("Failed to match LHSes in clause "^Int.toString cnum)}
+      raise ERR "prove_raw_recursive_functions_exist.mymatch_and_instantiate"
+        ("Failed to match LHSes in clause "^Int.toString cnum)
     val instrhs = rhs insteqn and patrhs = rhs pateqn
     (* last arguments in the pattern will be instances of a function symbol
        being applied to recursive arguments *)
@@ -108,10 +107,8 @@ fun mymatch_and_instantiate axth pattern instance = let
     case (patconjs, instconjs) of
       ([], []) => List.rev acc
     | (p::ps, i::is) => match_eqns ((match_eqn n p i)::acc) (n + 1) ps is
-    | _ => raise
-        HOL_ERR {origin_function = "prove_raw_recursive_functions_exist",
-                 origin_structure = "recursion",
-                 message = "Number of conjuncts not even the same"}
+    | _ => raise ERR "prove_raw_recursive_functions_exist"
+             "Number of conjuncts not even the same"
   val tmsubst = match_eqns [] 1 (strip_conj new_patbody) (strip_conj instbody)
   val axth1 = Thm.INST_TYPE tyinst axth
   val axth2 = Thm.INST tmsubst axth1
@@ -143,11 +140,13 @@ fun prove_raw_recursive_functions_exist ax tm = let
   val raxs0 = rev_itlist gax (map (repeat rator o hd o snd) lpats) ([],table)
   val raxs = List.rev (fst raxs0)
   val axfns = map (repeat rator o lhand o snd o strip_forall) raxs
-  val dict = ListPair.foldl (fn (a,(b,_),d) => Binarymap.insert(d,a,b))
-                            (Binarymap.mkDict Term.compare)
+  val dict = ListPair.foldl (fn (a,(b,_),d) => Termtab.update (a,b) d)
+                            Termtab.empty
                             (axfns, lpats)
   val urfns =
-      map (fn v => Binarymap.find(dict,v) handle Binarymap.NotFound => v) exvs
+      map (fn v => case Termtab.lookup dict v of
+                       SOME b => b
+                     | NONE => v) exvs
   val axtm = list_mk_exists(exvs,list_mk_conj raxs)
   and urtm = list_mk_exists(urfns,tm)
   val ixth = mymatch_and_instantiate axth axtm urtm
@@ -234,7 +233,8 @@ val prove_recursive_functions_exist =
           val lpats = map (strip_comb o lhand) spcls
           val ufns = itlist (op_insert aconv o fst) lpats []
           val uxargs = map (C (op_assoc aconv) lpats) ufns
-          val oxargs = map (uncurry (C (curry op@)) o Lib.partition is_var) uxargs
+          val oxargs =
+              map (uncurry (C (curry op@)) o Lib.partition is_var) uxargs
           val trths = itlist2 reshuffle ufns uxargs []
           val tth = QCONV
                       (REPEATC (CHANGED_CONV
@@ -259,6 +259,24 @@ val prove_rec_fn_exists = prove_recursive_functions_exist
 
 fun new_recursive_definition0 ax name tm =
  let val eth = prove_recursive_functions_exist ax tm
+     (* The existence theorem is derived by instantiating the axiom, so
+        a clause the axiom cannot be made to say is left assumed rather
+        than reported.  Saying so here is the difference between naming
+        the restriction and new_specification complaining, several
+        layers down, that a theorem it was handed has assumptions. *)
+     val _ =
+         null (hyp eth) orelse
+         raise ERR "new_recursive_definition"
+           ("The recursion axiom does not justify the definition of " ^
+            name ^ ".  Where a type recurses under an operator the \
+            \axiom hands the recursion that operator's map of the \
+            \function being defined, so a recursive call under the \
+            \map has to be the function itself: a call written \
+            \eta-expanded, or one given arguments ahead of the \
+            \recursive one, is not of that form and cannot be \
+            \matched.  Such a definition can still be made with \
+            \Definition, which goes through TFL and asks for a \
+            \termination proof instead.")
      val (evs,bod) = strip_exists(concl eth)
  in
   Rsyntax.new_specification
@@ -501,14 +519,14 @@ fun BETAS fnn body =
 (* NB: the x is always a genvar, so optimized for this case.            *)
 (* ---------------------------------------------------------------------*)
 
-fun GTAC y (A,g) =
+fun GTAC y (A,g) ctxt =
    let val (Bvar,Body) = dest_forall g
        and y' = Term.variant (free_varsl (g::A)) y
    in
      if type_of Bvar = type_of y' then
        ([(A, subst[Bvar |-> y'] Body)],
         fn [th] => GEN Bvar (INST [y' |-> Bvar] th) | _ => raise Match)
-     else GEN_TAC (A,g)
+     else GEN_TAC (A,g) ctxt
    end;
 
 (* ---------------------------------------------------------------------*)
@@ -597,12 +615,13 @@ and TACS tm =
 (* GOALS is a strictly local function, used only in INDUCT_THEN.        *)
 (* ---------------------------------------------------------------------*)
 
-fun GOALS A [] tm = raise ERR "GOALS" "empty list"
-  | GOALS A [t] tm = let val (sg,pf) = t (A,tm) in ([sg],[pf]) end
-  | GOALS A (h::t) tm =
+fun GOALS A [] ctxt tm = raise ERR "GOALS" "empty list"
+  | GOALS A [t:tactic] ctxt tm =
+      let val (sg,pf) = t (A,tm) ctxt in ([sg],[pf]) end
+  | GOALS A (h::t) ctxt tm =
       let val (conj1,conj2) = dest_conj tm
-          val (sgs,pfs) = GOALS A t conj2
-          val (sg,pf) = h (A,conj1)
+          val (sgs,pfs) = GOALS A t ctxt conj2
+          val (sg,pf) = h (A,conj1) ctxt
       in (sg::sgs, pf::pfs)
       end;
 
@@ -663,14 +682,14 @@ fun INDUCT_THEN th =
      val ind = GEN v (SUBST [boolvar |-> GALPHA ty asm]
                             (mk_imp(boolvar, con))
                             (DISCH asm eta_th))
- in fn ttac => fn (A,t) =>
+ in fn ttac => fn (A,t) => fn ctxt =>
      let val lam = snd(dest_comb t)
          val spec = SPEC lam (INST_TYPE (Lib.snd(Term.match_term v lam)) ind)
          val (ant,conseq) = dest_imp(concl spec)
          val beta = SUBST [boolvar |-> bconv ant]
                           (mk_imp(boolvar, conseq)) spec
          val tacs = tacsf (fst(dest_abs lam)) ttac
-         val (gll,pl) = GOALS A tacs (fst(dest_imp(concl beta)))
+         val (gll,pl) = GOALS A tacs ctxt (fst(dest_imp(concl beta)))
          val pf = ((MP beta) o LIST_CONJ) o mapshape(map length gll)pl
      in
        (Lib.flatten gll, pf)
@@ -988,7 +1007,7 @@ fun prove_induction_thm th =
                   in GENL vs (SPECL [mk_abs(v,T), P] thm)
                   end
       val spec = SPECL (map (mk_fn P ty) cases) uniq
-      val simp =  CONV_RULE (LCONV(conv1 THENC conv2)) spec
+      val simp = CONV_RULE (LCONV(conv1 THENC conv2)) spec
    in
      GEN P (CONV_RULE (RAND_CONV CONCL_SIMP) simp)
    end
@@ -1665,20 +1684,19 @@ fun nBETA_CONV dpth n =
   else
     RATORn_CONV (dpth - 1) BETA_CONV THENC nBETA_CONV (dpth - 1) (n - 1)
 
-(* !x. ~T /\ x = ~T *)
-val notT_and = prove(gen_all ((mk_neg T /\ bn 1) == mk_neg T),
-                              REWRITE_TAC []);
-(* !x. ~~T /\ x = x *)
-val notnotT_and = prove(gen_all (((mk_neg (mk_neg T)) /\ bn 1) == bn 1),
-                        REWRITE_TAC []);
-(* !x. T /\ x = x *)
-val T_and = prove(gen_all (T /\ bn 1 == bn 1), REWRITE_TAC []);
-(* (T = ~T) = F *)
-val T_eqF = prove((T == mk_neg T) == F, REWRITE_TAC []);
-(* ~~T = T *)
-val notnotT = prove(mk_neg (mk_neg T) == T, REWRITE_TAC []);
-(* ~T = F *)
-val notT = prove(mk_neg T == F, REWRITE_TAC []);
+(* notT_and, notnotT_and, T_and, T_eqF, notnotT and notT are the rewrites
+   simp_conjs and prove_ineq below work with.  Each is a rearrangement of
+   one of the bool clauses, so derive them forward rather than prove them
+   afresh every time Prim_rec loads. *)
+val notT = el 2 (CONJUNCTS NOT_CLAUSES)                 (* |- ~T = F *)
+val notnotT = SPEC T (CONJUNCT1 NOT_CLAUSES)            (* |- ~~T = T *)
+val and_clauses = CONJUNCTS (SPEC_ALL AND_CLAUSES)
+val T_and = GEN_ALL (el 1 and_clauses)                  (* |- !t. T /\ t = t *)
+val notT_and = GEN_ALL (SUBS [SYM notT] (el 3 and_clauses))
+val notnotT_and = GEN_ALL (SUBS [SYM notnotT] (el 1 and_clauses))
+val T_eqF =                                             (* |- (T = ~T) = F *)
+  TRANS (AP_TERM (rator (mk_eq(T,T))) notT)
+        (TRANS (el 4 (CONJUNCTS (SPEC T EQ_CLAUSES))) notT)
 
 (* A special purpose conv to move along a conjunction of T's, ~T's and ~~T's,
    simplifying it to a single atom as quickly as possible.
@@ -1838,14 +1856,31 @@ fun usefuls cs = let
   val vs_l = HOLset.listItems vs
   val (_, eqn1) = strip_forall (hd cs)
   val (const,args) = strip_comb (lhs eqn1)
-  val (arg1_ty, casefs) = case args of
-                              h::t => (type_of h,t)
-                            | _ => raise mk_HOL_ERR "Prim_rec" "prove_case_rand_thm"
-                                         "Case constant theorem has too few arguments"
+  val (arg1_ty, casefs) =
+      case args of
+          h::t => (type_of h,t)
+        | _ => raise mk_HOL_ERR "Prim_rec" "prove_case_rand_thm"
+                     "Case constant theorem has too few arguments"
   val v = variant vs_l (mk_var("x", arg1_ty))
 in
   (const, list_mk_comb(const, v::tl args), casefs, vs_l, v)
 end
+
+fun strip_exists' avds t =
+  let
+    fun recurse acc avds t =
+      if is_exists t then
+        let
+          val (v, bod) = dest_exists t
+          val v' = variant avds v
+        in
+          recurse (v'::acc) (v'::avds)
+                  (if v ~~ v' then bod else subst[v |-> v'] bod)
+        end
+      else (List.rev acc, t)
+  in
+    recurse [] avds t
+  end
 
 fun prove_case_rand_thm {nchotomy, case_def} = let
   val cs = strip_conj (concl case_def)
@@ -1867,28 +1902,46 @@ fun prove_case_rand_thm {nchotomy, case_def} = let
         (casefs, ctor_args)
   val const' = inst [#2 (strip_fun (type_of const)) |-> fresh_tyvar] const
   val rhs' = list_mk_comb(const', v::cfs')
+  (* Forward proof.  Under each disjunct v = ctor args_i in nchotomy,
+     both sides reduce to f (casef_i args_i) after applying the
+     matching case_def equation on either side and beta-reducing.
+     Combine per-disjunct equalities via DISJ_CASES on nchotomy. *)
+  val nch_v = ISPEC v nchotomy
+  val disjs = strip_disj (concl nch_v)
+  val ret_ty = #2 (strip_fun (type_of const))
+  val case_def_inst = INST_TYPE [ret_ty |-> fresh_tyvar] case_def
+  fun try_conv c t = c t handle Conv.UNCHANGED => Thm.REFL t
+  fun prove_under_disj disj_body =
+    let
+      val (vars, eqn) = strip_exists' [] disj_body
+      val eq_asm = ASSUME eqn
+      val conv = PURE_ONCE_REWRITE_CONV [eq_asm] THENC
+                 PURE_REWRITE_CONV [case_def, case_def_inst] THENC
+                 Conv.DEPTH_CONV BETA_CONV
+      val lhs_r = try_conv conv new_lhs
+      val rhs_r = try_conv conv rhs'
+      val eq_thm = TRANS lhs_r (SYM rhs_r)
+    in
+      List.foldr
+        (fn (var, th) =>
+            let val h = hd (hyp th)
+                val ex_h = mk_exists (var, h)
+            in CHOOSE (var, ASSUME ex_h) th end)
+        eq_thm vars
+    end
+  val disj_thms = map prove_under_disj disjs
+  fun combine [th] = th
+    | combine (th :: rest) =
+        let val rest_thm = combine rest
+            val h_th = hd (hyp th)
+            val h_rest = hd (hyp rest_thm)
+            val full = mk_disj (h_th, h_rest)
+        in DISJ_CASES (ASSUME full) th rest_thm end
+    | combine [] = raise mk_HOL_ERR "Prim_rec" "prove_case_rand_thm"
+                                    "empty disjunction from nchotomy"
 in
-  prove(mk_eq(mk_comb(f,t),rhs'),
-        STRUCT_CASES_TAC (ISPEC v nchotomy) THEN
-        PURE_REWRITE_TAC [case_def] THEN BETA_TAC THEN
-        PURE_REWRITE_TAC [EQT_INTRO (SPEC_ALL EQ_REFL)])
+  PROVE_HYP nch_v (combine disj_thms)
 end
-
-fun strip_exists' avds t =
-  let
-    fun recurse acc avds t =
-      if is_exists t then
-        let
-          val (v, bod) = dest_exists t
-          val v' = variant avds v
-        in
-          recurse (v'::acc) (v'::avds)
-                  (if v ~~ v' then bod else subst[v |-> v'] bod)
-        end
-      else (List.rev acc, t)
-  in
-    recurse [] avds t
-  end
 
 (* prove a theorem of the form
      ty_CASE x f1 .. fn :bool <=>
@@ -1913,11 +1966,12 @@ fun prove_case_elim_thm {case_def,nchotomy} = let
           raise mk_HOL_ERR "Prim_rec" "prove_case_elim_thm"
                 "case_def and nchotomy theorem don't match up"
   val disjs = ListPair.map mapthis (disjs0,casefs)
+  val conv = PURE_REWRITE_CONV (CONJUNCTS case_def)
   fun prove_case_from_eqn ext = let
     (* ext is of the form ``?a1 .. ai. x = ctor1 a1 .. ai /\ f1 a1 .. ai`` *)
     val (vs,body) = strip_exists ext
     val body_th = ASSUME body
-    val res0 = EQT_ELIM (PURE_REWRITE_CONV [body_th,case_def] t)
+    val res0 = EQT_ELIM (REPEATC (PURE_REWRITE_CONV [body_th] THENC conv) t)
     fun foldthis (v,(ext,th)) = let
       val ex' = mk_exists(v,ext)
     in
@@ -1948,8 +2002,7 @@ fun prove_case_elim_thm {case_def,nchotomy} = let
     val ex_thm =
         List.foldr (fn (v, th) => EXISTS(mk_exists(v,concl th),v) th)
                    body_th vs
-    val elim =
-        EQ_MP (PURE_REWRITE_CONV [ASSUME c1, case_def] t) t_thm
+    val elim = EQ_MP ((PURE_REWRITE_CONV [ASSUME c1] THENC conv) t) t_thm
   in
     PROVE_HYP elim ex_thm
   end
@@ -2042,6 +2095,29 @@ fun prove_case_ho_imp_thm ty_def = let
       |> REWRITE_RULE [DISJ_EQ_IMP, NOT_CLAUSES]
       |> GEN f
   end
+(* prove case_const
+   (ty_CASE x (\a1 ... an. y) ... (\n1 ... nn. y) = y)
+*)
+fun prove_case_const_thm {nchotomy, case_def} = let
+  val case_eqs = strip_conj (concl case_def)
+  val (_,eqn1) = strip_forall (hd (case_eqs))
+  val (term,_,y_typ) = dest_eq_ty eqn1
+  val (case_const,_) = strip_comb term
+  val y = mk_var("y",y_typ)
+  val ([x],cases) = strip_forall (concl nchotomy)
+  val x = mk_var("x",type_of x)
+  val y' = mk_var("y'",y_typ)
+  (*subst y to ensure freshness*)
+  fun mk_abs_y xs = list_mk_abs((map (subst [y |-> y']) xs),y)
+  val abs_y = strip_disj cases
+              |> map (mk_abs_y o #1 o strip_exists)
+  val goal = mk_eq (list_mk_comb(mk_comb(case_const,x), abs_y), y)
+in
+  (TAC_PROOF(([],goal),
+  STRUCT_CASES_TAC (ISPEC x nchotomy) THEN
+  PURE_REWRITE_TAC [case_def] THEN BETA_TAC THEN
+  REFL_TAC))
+end
 
 (* ----------------------------------------------------------------------
     gen_indthm : given definition theorem that is output of

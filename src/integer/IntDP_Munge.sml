@@ -1,14 +1,15 @@
 structure IntDP_Munge :> IntDP_Munge =
 struct
 
-structure Parse = struct
-  open Parse
-  val (Type,Term) = parse_from_grammars int_arithTheory.int_arith_grammars
-end
-open Parse
 
 open HolKernel boolLib intSyntax boolSyntax CooperSyntax integerTheory
      int_arithTheory intReduce
+
+structure Parse = struct
+  open Parse
+  val (Type,Term) = parse_from_grammars $ valOf $ grammarDB {thyname="int_arith"}
+end
+open Parse
 
 val ERR = mk_HOL_ERR "IntDP_Munge";
 
@@ -234,9 +235,11 @@ in
       LAND_CONV eliminate_nat_quants THENC
       RATOR_CONV (RATOR_CONV (RAND_CONV eliminate_nat_quants))
     else ALL_CONV
-end tm handle HOL_ERR {origin_function = "REWR_CONV", ...} =>
-  raise ERR "IntDP_Munge" "Uneliminable natural number term remains"
-
+end tm
+handle (e as HOL_ERR herr) =>
+    if top_function_of herr = "REWR_CONV" then
+       raise ERR "IntDP_Munge" "Uneliminable natural number term remains"
+    else raise e
 
 fun tacTHEN t1 t2 tm = let
   val (g1, v1) = t1 tm
@@ -272,15 +275,10 @@ fun subtm_rel (t1, t2) =
 
 local
   open arithmeticTheory numSyntax
-  val Num_lemma = prove(
-    ``&(Num i) = if 0 <= i then i else & ((Num o I) i)``,
-    COND_CASES_TAC THEN
-    ASM_REWRITE_TAC [combinTheory.o_THM, integerTheory.INT_OF_NUM,
-                     combinTheory.I_THM])
 
   val rewrites = [GSYM INT_INJ, GSYM INT_LT, GSYM INT_LE,
-                  GREATER_DEF, GREATER_EQ, GSYM INT_ADD,
-                  GSYM INT_MUL, INT, INT_NUM_COND, Num_lemma]
+                  GREATER_DEF, GREATER_EQ, GSYM INT_ADD, INT_NUM_SUB,
+                  GSYM INT_MUL, INT, INT_NUM_COND, Num_EQ_ABS]
   val p_var = mk_var("p", num)
   val q_var = mk_var("q", num)
   fun elim_div_mod0 exp t = let

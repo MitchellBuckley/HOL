@@ -3,34 +3,40 @@ struct
 
 type t = {
   holstate : string option,
+  maxheap : int option,
   multithread : int option,
   poly : string option,
   polymllibdir : string option,
   poly_not_hol : bool,
   time_limit : Time.time option,
   relocbuild : bool,
+  retry_oos : int,
   core : HM_Core_Cline.t
 }
 
 local
   open FunctionalRecordUpdate
-  fun makeUpdateT z = makeUpdate8 z
+  fun makeUpdateT z = makeUpdate10 z
 in
 fun updateT z = let
-  fun from core holstate multithread poly polymllibdir poly_not_hol relocbuild
-           time_limit =
-    {core = core, holstate = holstate, multithread = multithread, poly = poly,
+  fun from core holstate maxheap multithread poly polymllibdir poly_not_hol
+           relocbuild retry_oos time_limit =
+    {core = core, holstate = holstate, maxheap = maxheap,
+     multithread = multithread, poly = poly,
      polymllibdir = polymllibdir, poly_not_hol = poly_not_hol,
-     relocbuild = relocbuild, time_limit = time_limit}
-  fun from' time_limit relocbuild poly_not_hol polymllibdir poly multithread
-            holstate core =
-    {core = core, holstate = holstate, multithread = multithread, poly = poly,
+     relocbuild = relocbuild, retry_oos = retry_oos,
+     time_limit = time_limit}
+  fun from' time_limit retry_oos relocbuild poly_not_hol polymllibdir poly
+            multithread maxheap holstate core =
+    {core = core, holstate = holstate, maxheap = maxheap,
+     multithread = multithread, poly = poly,
      polymllibdir = polymllibdir, poly_not_hol = poly_not_hol,
-     relocbuild = relocbuild, time_limit = time_limit}
-  fun to f {core, holstate, multithread, poly, polymllibdir, poly_not_hol,
-            relocbuild, time_limit} =
-    f core holstate multithread poly polymllibdir poly_not_hol relocbuild
-      time_limit
+     relocbuild = relocbuild, retry_oos = retry_oos,
+     time_limit = time_limit}
+  fun to f {core, holstate, maxheap, multithread, poly, polymllibdir,
+            poly_not_hol, relocbuild, retry_oos, time_limit} =
+    f core holstate maxheap multithread poly polymllibdir poly_not_hol
+      relocbuild retry_oos time_limit
 in
   makeUpdateT (from, from', to)
 end z
@@ -42,11 +48,13 @@ fun fupd_core f t = updateT t (U #core (f (#core t))) $$
 val default_options = {
   core = HM_Core_Cline.default_core_options,
   holstate = NONE,
+  maxheap = NONE,
   multithread = NONE,
   poly = NONE,
   polymllibdir = NONE,
   poly_not_hol = false,
   relocbuild = false,
+  retry_oos = 0,
   time_limit = NONE
 }
 
@@ -112,9 +120,39 @@ fun mt_optint sopt =
                             t)))
   end
 
+(* Poly/ML occasionally reports running out of store on a machine that
+   has memory to spare.  The failure is transient, so allow the build to
+   hand the same target back to the scheduler a bounded number of extra
+   times; see multibuild's oos_retry for the detection.  Only the
+   parallel builder can do this, because only it captures a job's output
+   in a log to look at. *)
+fun set_retry_oos s =
+  resfn (fn (wn, t : t) =>
+            case Int.fromString s of
+                NONE => (wn ("Bad retry count: \""^s^"\"; ignored"); t)
+              | SOME i =>
+                if i < 0 then
+                  (wn "Ignoring negative out-of-store retry count"; t)
+                else updateT t (U #retry_oos i) $$)
+
+fun set_maxheap s =
+  resfn (fn (wn, t : t) =>
+            case Int.fromString s of
+                NONE => (wn ("Bad heap-size value: \""^s^"\"; ignored"); t)
+              | SOME i =>
+                if i <= 0 then
+                  (wn ("heap-size must be positive; ignoring"); t)
+                else
+                  (if isSome (#maxheap t) then
+                     wn ("heap-size already set; ignoring earlier value")
+                   else ();
+                   updateT t (U #maxheap (SOME i)) $$))
+
 val poly_option_descriptions = [
   {help = "specify HOL state", long = ["holstate"], short = "",
    desc = ReqArg (set_holstate, "holstate")},
+  {help = "max heap size for builds (in MB)", long = ["heap-size"], short = "",
+   desc = ReqArg (set_maxheap, "size")},
   {help = "thread count (0/none = max h/w count)", short = "",
    long = ["mt"], desc = OptArg (mt_optint, "c")},
   {help = "specify Poly executable", long = ["poly"], short = "",
@@ -126,6 +164,9 @@ val poly_option_descriptions = [
   {help = "perform a relocation build", long = ["relocbuild"], short = "",
    desc = NoArg (fn () =>
                     resfn (fn (_,t) => updateT t (U #relocbuild true) $$))},
+  {help = "extra attempts after out-of-store failures",
+   long = ["retry-oos"], short = "",
+   desc = ReqArg (set_retry_oos, "n")},
   {help = "specify Poly/ML lib directory", long = ["polymllibdir"],
    short = "",
    desc = ReqArg (set_polymllibdir, "directory")},

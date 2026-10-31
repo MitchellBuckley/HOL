@@ -2,6 +2,8 @@ open HolKernel boolLib Parse PFset_conv
 open pred_setSimps
 open testutils
 
+val _ = new_theory "scratch"
+
 val _ = let
   open testutils
 in
@@ -101,8 +103,8 @@ in
          (Systeml.system_ps
               (String.concatWith " "
                    [Systeml.protect
-                        (concat(HOLDIR,concat("bin", "hol.bare"))),
-                    "<", "testscript.ML"]))
+                        (concat(HOLDIR,concat("bin", "hol"))),
+                    "--bare", "<", "testscript.ML"]))
   then print "** OK\n"
   else (print "** FAILED!\n";
         OS.Process.exit OS.Process.failure)

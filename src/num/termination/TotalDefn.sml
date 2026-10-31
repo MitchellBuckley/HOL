@@ -6,28 +6,59 @@ structure TotalDefn :> TotalDefn =
 struct
 
 open HolKernel Parse boolLib pairLib basicSize DefnBase numSyntax
-     arithmeticTheory;
+     relationTheory combinTheory prim_recTheory arithmeticTheory
+     basicSizeTheory pairTheory
+
+open simpLib infix ++;
+
+local open numSimps in end
 
 structure Parse = struct
   open Parse
-  val (Type,Term) = parse_from_grammars arithmeticTheory.arithmetic_grammars
+  val SOME arithmetic_grammars = grammarDB {thyname="arithmetic"}
+  val (Type,Term) = parse_from_grammars arithmetic_grammars
 end
+
 open Parse
 
-val allow_schema_definition = ref false
-val _ = Feedback.register_btrace ("Define.allow_schema_definition",
-                                  allow_schema_definition)
+(*---------------------------------------------------------------------------*)
+(* Set up standard errors, warnings, etc                                     *)
+(*---------------------------------------------------------------------------*)
 
 val ERR    = mk_HOL_ERR "TotalDefn";
 val ERRloc = mk_HOL_ERRloc "TotalDefn";
 val WARN   = HOL_WARNING "TotalDefn";
 
-fun render_exn srcfn e =
-    if !Globals.interactive then
-      (Feedback.output_ERR (Feedback.exn_to_string e);
-       raise ERR srcfn "Exception raised")
-    else
-      raise e
+(*---------------------------------------------------------------------------*)
+(* Set up traces                                                             *)
+(*---------------------------------------------------------------------------*)
+
+local
+  val monitoring = ref 0
+  val _ = register_trace
+             ("Definition.termination candidates", monitoring, 4)
+in
+fun lztrace(i,title,msgf) =
+  if i <= !monitoring then
+     Lib.say $ String.concat ["\n", title, msgf()]
+  else ()
+end
+
+val allow_schema_definition = ref false
+val _ = Feedback.register_btrace
+         ("Definition.allow_schema_definition", allow_schema_definition)
+
+val auto_tgoal = ref true
+val _ = Feedback.register_btrace("Definition.auto Defn.tgoal", auto_tgoal)
+
+val deleting_support = ref true
+val _ = Feedback.register_btrace
+          ("Definition.delete support defs", deleting_support)
+
+fun delete_support defn s2 s1 =
+   if !deleting_support then
+      DefnBase.delete_support defn s2 s1
+   else ()
 
 (*---------------------------------------------------------------------------*)
 (* Misc. stuff that should be in Lib probably                                *)
@@ -45,6 +76,15 @@ fun copies x =
         | repl n = x::repl (n-1)
   in repl
   end;
+
+fun trylist f [] = raise ERR "trylist" "all attempts failed"
+  | trylist f (h::t) = (h, f h) handle HOL_ERR _ => trylist f t
+
+fun index_of P =
+ let fun index i [] = raise ERR "index_of" "not found"
+       | index i (h::t) = if P(h) then i else index (i+1) t
+ in index 0
+ end
 
 (*---------------------------------------------------------------------------*)
 (* perms delivers all permutations of a list. By Peter Sestoft.              *)
@@ -142,26 +182,16 @@ fun proper_subterm tm1 tm2 =
 
 
 (*---------------------------------------------------------------------------*)
-(* Adjustable set of rewrites for doing termination proof.                   *)
+(* termination_simps is an adjustable set of rewrites for doing termination  *)
+(* proofs. It is created by the call to "create_simple_dictionary"           *)
 (*---------------------------------------------------------------------------*)
 
-val DIV_LESS_I = prove
-(``!n d. 0n < n /\ 1 < d ==> I(n DIV d) < I(n)``,
- REWRITE_TAC[DIV_LESS,combinTheory.I_THM]);
-
-val MOD_LESS_I = prove
-(``!m n. 0n < n ==> I(m MOD n) < I(n)``,
- REWRITE_TAC [MOD_LESS,combinTheory.I_THM]);
-
-val SUB_LESS_I = prove
-(``!m n. 0n < n /\ n <= m ==> I(m - n) < I(m)``,
- REWRITE_TAC[SUB_LESS,combinTheory.I_THM]);
-
-local open combinTheory prim_recTheory relationTheory basicSizeTheory pairTheory
-in end
-val initial_termination_simps = [("SUB_LESS_I", SUB_LESS_I),
-                                 ("DIV_LESS_I", DIV_LESS_I),
-                                 ("MOD_LESS_I", MOD_LESS_I)]
+val initial_termination_simps =
+  [("DIV_LT_X", DIV_LT_X),
+   ("X_LT_DIV", X_LT_DIV),
+   ("SUB_LESS", SUB_LESS),
+   ("DIV_LESS", DIV_LESS),
+   ("MOD_LESS", MOD_LESS)]
 
 val {exclude = exclude_termsimp, temp_exclude = temp_exclude_termsimp,
      export = export_termsimp,   temp_export = temp_export_termsimp,
@@ -170,24 +200,16 @@ val {exclude = exclude_termsimp, temp_exclude = temp_exclude_termsimp,
     ThmSetData.export_simple_dictionary {settype = "tfl_termsimp",
                                          initial = initial_termination_simps}
 val _ =
-    List.app temp_export_termsimp ["combin.o_DEF",
-                                   "combin.I_THM",
-                                   "prim_rec.measure_def",
-                                   "relation.inv_image_def",
-                                   "basicSize.sum_size_def",
-                                   "basicSize.min_pair_size_def",
-                                   "pair.LEX_DEF",
-                                   "pair.RPROD_DEF"]
+    List.app temp_export_termsimp
+        ["combin.o_DEF", "combin.I_THM",
+         "prim_rec.measure_def", "relation.inv_image_def",
+         "basicSize.sum_size_def", "basicSize.min_pair_size_def",
+         "pair.LEX_DEF", "pair.RPROD_DEF",
+         "arithmetic.DIV2_def"]
 
 fun with_termsimps ths =
     ThmSetData.sdict_withflag_thms
       ({getDB = termination_simpdb, temp_setDB = termination_tempsetDB}, ths)
-
-(*---------------------------------------------------------------------------*)
-(* Extra rewrites, used only if they would solve a termination conjunct.     *)
-(*---------------------------------------------------------------------------*)
-
-val termination_solve_simps = ref ([] : thm list);
 
 (*---------------------------------------------------------------------------*)
 (* Adjustable set of WF theorems for doing WF proofs.                        *)
@@ -204,52 +226,51 @@ val {getDB = WF_thms, export = export_WF_thm, ...} =
       end
     }
 
-
 (*---------------------------------------------------------------------------*)
-(* Same as pairSimps.PAIR_ss, except more eager to force paired              *)
-(* beta-reductions. For example, should reduce "(\(x,y). M x y) N" to        *)
-(* "M (FST N) (SND N)"                                                       *)
+(* Basic simplification set. We perform any (paired) beta-reductions, eg.    *)
+(* expand "(\(x,y). M x y) N" to "M (FST N) (SND N)", and apply common       *)
+(* arithmetic simplification.                                                *)
 (*---------------------------------------------------------------------------*)
 
-val term_ss =
- let open simpLib infix ++
- in boolSimps.bool_ss
+val base_ss =
+ boolSimps.bool_ss
     ++ pairSimps.PAIR_ss
     ++ pairSimps.paired_forall_ss
     ++ pairSimps.paired_exists_ss
     ++ pairSimps.gen_beta_ss
     ++ rewrites [pairTheory.FORALL_PROD]
     ++ numSimps.REDUCE_ss
-    ++ numSimps.ARITH_RWTS_ss
- end;
-
-val term_dp_ss =
- let open simpLib infix ++
- in term_ss ++ numSimps.ARITH_DP_ss
- end;
-
+    ++ numSimps.ARITH_RWTS_ss;
 
 (*---------------------------------------------------------------------------*)
 (* Destruct R (x1,...,xn) (y1,...ym) into [(x1,y1), ... , (xn,yn)],          *)
 (* where n and m need not be equal.                                          *)
 (*---------------------------------------------------------------------------*)
 
-local
-fun foo [] _  = raise ERR "foo" "empty arg."
-  | foo _ []  = raise ERR "foo" "empty arg."
-  | foo [x] Y = [(x,pairSyntax.list_mk_pair Y)]
-  | foo X [y] = [(pairSyntax.list_mk_pair X, y)]
-  | foo (x::rst) (y::rst1) = (x,y)::foo rst rst1
-in
-fun dest tm =
+fun pair_up [] _  = raise ERR "pair_up" "empty arg."
+  | pair_up _ []  = raise ERR "pair_up" "empty arg."
+  | pair_up [x] Y = [(x,pairSyntax.list_mk_pair Y)]
+  | pair_up X [y] = [(pairSyntax.list_mk_pair X, y)]
+  | pair_up (x::rst) (y::rst1) = (x,y)::pair_up rst rst1;
+
+(*---------------------------------------------------------------------------*)
+(* The two values a termination condition compares: the argument of the      *)
+(* recursive call, and the argument the call was made from.                  *)
+(*---------------------------------------------------------------------------*)
+
+fun dest_tc tm =
   let val Ryx = (snd o strip_imp o snd o strip_forall) tm
       val (Ry, x) = dest_comb Ryx
-      val y = rand Ry
+  in
+     (rand Ry, x)
+  end;
+
+fun dest tm =
+  let val (y,x) = dest_tc tm
       open pairSyntax
   in
-     foo (spine_pair y) (spine_pair x)
-  end
-end;
+     pair_up (spine_pair y) (spine_pair x)
+  end;
 
 (*---------------------------------------------------------------------------*)
 (* Is a list-of-lists rectangular, filling in with false on short rows       *)
@@ -332,7 +353,7 @@ fun list_mk_prod_tyl L =
  let val (front,(b,last)) = front_last L
      val tysize = TypeBasePure.type_size (TypeBase.theTypeBase())
      val last' = (if b then tysize else K0) last
-                 handle e => render_exn "last'" e
+                 handle e => raise wrap_exn "TotalDefn" "last'" e
   in
   itlist (fn (b,ty1) => fn M =>
      let val x = mk_var("x",ty1)
@@ -343,6 +364,7 @@ fun list_mk_prod_tyl L =
                numSyntax.mk_plus(mk_comb(blagga,x),mk_comb(M,y)))
      end) front last'
  end
+ handle e => raise wrap_exn "TotalDefn" "list_mk_prod" e;
 
 (*---------------------------------------------------------------------------*)
 (* Construct all lex combos corresponding to permutations of list            *)
@@ -366,7 +388,7 @@ fun mk_sized_subsets argvars sizedlist =
 
 val simplifyR =
  let open prim_recTheory basicSizeTheory reduceLib simpLib
-     val expand = QCONV (SIMP_CONV term_ss
+     val expand = QCONV (SIMP_CONV base_ss
                     [measure_def,pair_size_def,bool_size_def,one_size_def])
  in
   rhs o concl o expand
@@ -376,13 +398,165 @@ val simplifyR =
 (* Build a type size, not counting outer sum or pair constructors,           *)
 (* which are likely to be created by mutual recursion.                       *)
 (*---------------------------------------------------------------------------*)
-fun flat_type_size ty = case
-        (total sumSyntax.dest_sum ty, total pairSyntax.dest_prod ty) of
-    (SOME (lty, rty), _) => list_mk_icomb (basicSizeSyntax.sum_size_tm,
-        map flat_type_size [lty, rty])
-  | (NONE, SOME (lty, rty)) => list_mk_icomb (basicSizeSyntax.min_pair_size_tm,
-        map flat_type_size [lty, rty])
-  | _ => TypeBasePure.type_size (TypeBase.theTypeBase()) ty
+
+fun flat_type_size ty =
+  let open basicSizeSyntax in
+  case (total sumSyntax.dest_sum ty, total pairSyntax.dest_prod ty)
+   of (SOME (lty, rty), _) =>
+         mk_sum_size2(flat_type_size lty,flat_type_size rty)
+    | (NONE, SOME (lty, rty)) =>
+         mk_min_pair_size2(flat_type_size lty,flat_type_size rty)
+    | _ => TypeBasePure.type_size (TypeBase.theTypeBase()) ty end
+
+(*---------------------------------------------------------------------------*)
+(* A mutual recursion's domain is a sum, with one leaf per function.  Give   *)
+(* each leaf a measure of its own and add them up, without counting the sum  *)
+(* constructors that brought the functions into one domain: those say which  *)
+(* function a call is to, not how big its argument is.                       *)
+(*                                                                           *)
+(* A leaf is measured the way a flat domain is -- a column that never        *)
+(* shrinks weighs nothing -- so an argument a function merely carries, an    *)
+(* accumulator say, need not shrink for the call to.  A leaf's columns are   *)
+(* read off the conditions with both sides at that leaf, and failing those,  *)
+(* off the conditions that reach it from another leaf.                       *)
+(*---------------------------------------------------------------------------*)
+
+fun sum_leaves ty =
+  case total sumSyntax.dest_sum ty
+   of NONE => [ty]
+    | SOME (lty,rty) => sum_leaves lty @ sum_leaves rty;
+
+(*---------------------------------------------------------------------------*)
+(* The leaf a value was injected at, and the value injected.                 *)
+(*---------------------------------------------------------------------------*)
+
+fun leaf_of ty tm =
+  case total sumSyntax.dest_sum ty
+   of NONE => (0,tm)
+    | SOME (lty,rty) =>
+      case total sumSyntax.dest_inl tm
+       of SOME (t,_) => leaf_of lty t
+        | NONE =>
+          case total sumSyntax.dest_inr tm
+           of SOME (t,_) =>
+                let val (i,u) = leaf_of rty t
+                in (length (sum_leaves lty) + i, u)
+                end
+            | NONE => raise ERR "leaf_of" "not an injection";
+
+fun leaf_measures domty tcs =
+ let val tysize = TypeBasePure.type_size (TypeBase.theTypeBase())
+     val sided = mapfilter (fn tc =>
+            let val (y,x) = dest_tc tc
+            in (leaf_of domty x, leaf_of domty y)
+            end) tcs
+     fun rows i =
+       List.mapPartial
+         (fn ((ix,px),(iy,py)) =>
+             if ix = i andalso iy = i then
+               total (pair_up (pairSyntax.spine_pair py))
+                     (pairSyntax.spine_pair px)
+             else NONE)
+         sided
+     (* A leaf no condition compares with itself is still reached from
+        the others.  A column a call descended into is a proper subterm
+        of a column of the argument the call was made from; which column
+        that was does not matter, and need not even exist, because the
+        leaves need not take their parameters the same way. *)
+     fun reached i =
+       List.mapPartial
+         (fn ((ix,px),(iy,py)) =>
+             if iy = i andalso ix <> i then
+               let val src = pairSyntax.spine_pair px
+               in SOME (map (fn c => List.exists (proper_subterm c) src)
+                            (pairSyntax.spine_pair py))
+               end
+             else NONE)
+         sided
+     fun from_rows [] = NONE
+       | from_rows rws =
+           let val chf = projects rws
+           in if exists I chf then SOME chf else NONE
+           end
+     fun mask i = from_rows (map (map (uncurry proper_subterm)) (rows i))
+     val leaves = sum_leaves domty
+     val indices = Lib.upto 0 (length leaves - 1)
+     val masks = map mask indices
+     val reaching = map (from_rows o reached) indices
+     val known = List.mapPartial I masks
+     fun sized chf ty = list_mk_prod_tyl (strip_prod_ty chf ty)
+     fun By chf ty = (sized chf ty handle HOL_ERR _ => tysize ty)
+     fun whole _ ty = tysize ty
+     fun own i ty =
+       case List.nth(masks,i)
+        of SOME chf => By chf ty
+         | NONE => tysize ty
+     fun reach i ty =
+       case List.nth(masks,i)
+        of SOME chf => By chf ty
+         | NONE =>
+           case List.nth(reaching,i)
+            of SOME chf => By chf ty
+             | NONE => tysize ty
+     (* a leaf no condition compares with itself still shares the other
+        functions' parameters, so borrow a mask that fits it *)
+     fun shared i ty =
+       case List.nth(masks,i)
+        of SOME _ => own i ty
+         | NONE =>
+           case List.find (fn chf => Lib.can (sized chf) ty) known
+            of SOME chf => sized chf ty
+             | NONE => tysize ty
+     fun build leafm ty i =
+       case total sumSyntax.dest_sum ty
+        of NONE => (leafm i ty, i+1)
+         | SOME (lty,rty) =>
+             let val (ml,i1) = build leafm lty i
+                 val (mr,i2) = build leafm rty i1
+             in (basicSizeSyntax.mk_sum_size2(ml,mr), i2)
+             end
+ in
+   if Lib.can sumSyntax.dest_sum domty
+   then mapfilter (fn lm => fst (build lm domty 0)) [reach, own, shared, whole]
+   else []
+ end
+ handle HOL_ERR _ => [];
+
+(*---------------------------------------------------------------------------*)
+(* Among the termination_simps() are theorems of the form                    *)
+(*                                                                           *)
+(*   constraints ==> f t1 < f t2                                             *)
+(*                                                                           *)
+(* which are used to finalize termination proofs. These are also used to     *)
+(* determine if an argument position should be included in the synthesized   *)
+(* termination relation. An example is                                       *)
+(*                                                                           *)
+(*  ⊢ ∀m. m ≠ 0w ⇒ w2n (m − 1w) < w2n m                                      *)
+(*                                                                           *)
+(* When the type of t1 and t2 are :num, there need be no "measure function"  *)
+(* f present. The following theorem is an example.                           *)
+(*                                                                           *)
+(*  ⊢ ∀m n. 0 < n ⇒ m MOD n < n                                              *)
+(*                                                                           *)
+(*---------------------------------------------------------------------------*)
+
+fun is_relevant tsimps = let
+  fun rec_call_pat th = let
+      fun dest_order x = dest_less x handle HOL_ERR _ => dest_leq x
+      fun is_measureFn_app (l,r) =
+          aconv (rator l) (rator r) handle HOL_ERR _ => false
+      val (l,r) = concl th |> strip_forall |> snd |>
+                  strip_imp |> snd |> dest_order
+  in if is_measureFn_app (l,r) then
+        rand l else
+     if is_var r then
+        l
+     else raise ERR "is_relevant" ""
+  end
+  val pats = mapfilter rec_call_pat tsimps
+ in
+   fn (tm,_:term) => 0 < length (mapfilter (C match_term tm) pats)
+ end;
 
 (*---------------------------------------------------------------------------*)
 (* "guessR" guesses a list of termination measures. Quite ad hoc.            *)
@@ -396,22 +570,18 @@ fun flat_type_size ty = case
 (* duplicates are weeded out.                                                *)
 (*---------------------------------------------------------------------------*)
 
-fun known_fun tm =
- let fun dest_order x = dest_less x handle HOL_ERR _ => dest_leq x
-     fun get_lhs th =
-            rand (fst(dest_order(snd(strip_imp
-                  (snd(strip_forall(concl th)))))))
-     val pats = mapfilter get_lhs (termination_simps())
- in
-    0 < length (mapfilter (C match_term tm) pats)
- end;
-
-fun relevant (tm,_) = known_fun tm;
+fun report_num_tcs n =
+    lztrace(1,"Termination conditions: ",
+            fn () => Int.toString n)
+fun report_num_guesses n =
+    lztrace(1,"Candidate termination relations generated: ",
+            fn () => Int.toString n)
 
 fun guessR defn =
  let open Defn numSyntax simpLib boolSimps
    fun tysize ty = TypeBasePure.type_size (TypeBase.theTypeBase()) ty
    fun size_app v = mk_comb(tysize (type_of v),v)
+   val relevant = is_relevant (termination_simps())
  in
  if null (tcs_of defn) then []
   else
@@ -422,6 +592,7 @@ fun guessR defn =
            val (_,tcs0) = Lib.pluck isWFR (tcs_of defn)
            val tcs = map (rhs o concl o QCONV (SIMP_CONV bool_ss [])) tcs0
            val tcs = filter (not o aconv T) tcs
+           val () = report_num_tcs (length tcs)
            val matrix  = map dest tcs
            val check1  = map (map (uncurry proper_subterm)) matrix
            val chf1    = projects check1
@@ -448,13 +619,15 @@ fun guessR defn =
                         end) indices domtyl_2 ([],[])
            val lex_combs = mk_sized_subsets argvars subset
            val allrels = [mk_cmeasure domty0, mk_cmeasure (tysize domty),
-                             mk_cmeasure (flat_type_size domty)]
+                          mk_cmeasure (flat_type_size domty)]
+                         @ map mk_cmeasure (leaf_measures domty tcs)
                          @ it_prim_rec @ lex_combs
            val allrels' = mk_term_set (map simplifyR allrels)
+           val () = report_num_guesses(length allrels')
        in
          allrels'
        end
-end
+ end
  handle e => raise wrap_exn "TotalDefn" "guessR" e;
 
 (*---------------------------------------------------------------------------*)
@@ -475,102 +648,100 @@ fun BC_TAC th =
 fun PRIM_WF_TAC thl = REPEAT (MAP_FIRST BC_TAC thl ORELSE CONJ_TAC);
 fun WF_TAC g = PRIM_WF_TAC (WF_thms()) g;
 
-(*---------------------------------------------------------------------------*)
-(* Apply _size_eq theorems.                                                  *)
-(*---------------------------------------------------------------------------*)
-
-fun size_eq_conv tm = let
-    val tys = tm |> find_terms is_const |> map type_of
-      |> map (fst o strip_fun) |> List.concat
-    fun ty_rec ty_s [] = HOLset.listItems ty_s
-      | ty_rec ty_s (ty :: tys) = if is_type ty
-          then ty_rec (HOLset.add (ty_s, ty)) (snd (dest_type ty) @ tys)
-          else ty_rec ty_s tys
-    val all_tys = ty_rec (HOLset.empty Type.compare) tys
-    val size_eqs = mapfilter TypeBase.axiom_of all_tys
-      |> map Prim_rec.doms_of_tyaxiom |> List.concat
-      |> mapfilter TypeBase.size_of
-      |> map fst |> mapfilter dest_thy_const
-      |> mapfilter (fn xs => fetch (#Thy xs) (#Name xs ^ "_eq"))
-  in simpLib.SIMP_CONV boolSimps.bool_ss size_eqs tm end
-
 (*--------------------------------------------------------------------------*)
 (* Basic simplification and proof for remaining termination conditions.     *)
 (*--------------------------------------------------------------------------*)
 
-fun get_orig (TypeBasePure.ORIG th) = th
-  | get_orig _ = raise ERR "get_orig" "not the original"
-
-fun PRIM_TC_SIMP_CONV simps =
- let val els = TypeBasePure.listItems (TypeBase.theTypeBase())
-     val size_defs =
-         mapfilter (get_orig o #2 o valOf o TypeBasePure.size_of0) els
-     val case_defs = mapfilter TypeBasePure.case_def_of els
- in
-  simpLib.SIMP_CONV term_ss (simps@size_defs@case_defs)
- end;
-
-fun TC_SIMP_CONV tm = PRIM_TC_SIMP_CONV (termination_simps()) tm;
-
-val ASM_ARITH_TAC =
- REPEAT STRIP_TAC
-    THEN REPEAT (POP_ASSUM
-         (fn th => if numSimps.is_arith (concl th)
-                   then MP_TAC th else ALL_TAC))
-    THEN CONV_TAC Arith.ARITH_CONV;
-
-fun EX_ARITH_TAC exthl =
- CHANGED_TAC (CONV_TAC size_eq_conv THEN simpLib.SIMP_TAC term_ss exthl)
-    THEN REPEAT STRIP_TAC THEN simpLib.ASM_SIMP_TAC term_ss []
-    THEN CONV_TAC (PRIM_TC_SIMP_CONV exthl)
-    THEN ASM_ARITH_TAC
-
-fun solve_conv tac tm =
-    TAC_PROOF (([], tm), REWRITE_TAC [] THEN tac) |> EQT_INTRO
-
-fun solve_conjs tac = EVERY_CONJ_CONV (TRY_CONV (solve_conv tac))
-
-fun PRIM_TC_SIMP_TAC thl exthl =
-  CONV_TAC (PRIM_TC_SIMP_CONV thl)
-    THEN CONV_TAC (solve_conjs (TRY ASM_ARITH_TAC THEN TRY (EX_ARITH_TAC (exthl @ thl))))
-    THEN REWRITE_TAC []
-
-fun TC_SIMP_TAC g = PRIM_TC_SIMP_TAC
-    (termination_simps()) (!termination_solve_simps) g;
-
-fun PRIM_TERM_TAC wftac tctac = CONJ_TAC THENL [wftac,tctac]
-
-val STD_TERM_TAC = PRIM_TERM_TAC WF_TAC TC_SIMP_TAC;
-
-local
-  fun mesg tac (g as (_,tm)) =
-    (if !Defn.monitoring then
-      print(String.concat["\nCalling ARITH on\n",term_to_string tm,"\n"])
-      else () ;
-     tac g)
-in
-fun PROVE_TERM_TAC g =
- let open combinTheory simpLib
-     val simps = map (PURE_REWRITE_RULE [I_THM]) (termination_simps())
-     val ss = term_dp_ss ++ rewrites simps
- in
-   PRIM_TERM_TAC WF_TAC
-      (CONV_TAC TC_SIMP_CONV THEN BasicProvers.PRIM_STP_TAC ss NO_TAC)
- end g
-end;
-
-
 (*---------------------------------------------------------------------------*)
-(* Instantiate the termination relation with q and then try to prove         *)
-(* wellfoundedness and remaining termination conditions.                     *)
+(* Convert a tactic to a conv                                                *)
 (*---------------------------------------------------------------------------*)
 
-fun PRIM_WF_REL_TAC q WFthms simps exsimps g =
-  (Q.EXISTS_TAC q THEN CONJ_TAC THENL
-   [PRIM_WF_TAC WFthms, PRIM_TC_SIMP_TAC simps exsimps]) g;
+fun TAC_CONV tac tm = TAC_PROOF (([],tm),REWRITE_TAC [] THEN tac) |> EQT_INTRO
 
-fun WF_REL_TAC q = Q.EXISTS_TAC q THEN STD_TERM_TAC;
+val solve_conjs = EVERY_CONJ_CONV o TRY_CONV o TAC_CONV
 
+fun ACHIEVES_CONV P cnv t =
+  let val th = cnv t
+  in if P (dest_eq (concl th)) then th else NO_CONV t
+  end
+
+val SOLVES_CONV = ACHIEVES_CONV (aconv boolSyntax.T o snd)
+
+fun SOLVES tac g ctxt =
+  let val result as (subgoals, vfn) = tac g ctxt
+  in if null subgoals then result else NO_TAC g ctxt
+  end
+
+(*---------------------------------------------------------------------------*)
+(* There are two entrypoints to termination proofs. One---TC_SIMP_TAC---is  *)
+(* intended to be an automatic prover acting as a backend to prove one of a  *)
+(* set of generated guesses. Thus it needs to be reasonably fast and yet     *)
+(* still go "as deep as possible" in order to prove a guess if it is true.   *)
+(* So it's an "all or nothing" tactic.                                       *)
+(*                                                                           *)
+(* The other entrypoint---WF_REL_TAC---takes a user-supplied relation "R"    *)
+(* and does one of two things: it either proves the termination conditions   *)
+(* completely or, if unable to do that, leaves an understandable termination *)
+(* goal. By this we mean that the goal hasn't been so transformed that it is *)
+(* hard to see the connection with the original recursive equations.         *)
+(*---------------------------------------------------------------------------*)
+
+(*---------------------------------------------------------------------------*)
+(* Extra rewrites, used only if they would solve a termination conjunct.     *)
+(*---------------------------------------------------------------------------*)
+
+val {getDB = termination_solve_simps, export = export_termsolve_simp, ...} =
+    ThmSetData.export_list {settype = "tfl_termsolve", initial = []}
+
+(*---------------------------------------------------------------------------*)
+(* Create TC simplifiers and provers. WF(-) formulas not handled             *)
+(*---------------------------------------------------------------------------*)
+
+fun termination_ss() =
+  let open boolTheory
+      fun get_orig (TypeBasePure.ORIG th) = th
+        | get_orig _ = raise ERR "get_orig" "not the original"
+      val term_simps = [PULL_EXISTS] @ termination_simps()
+      val elts = TypeBase.elts()
+      val size_defs =
+          mapfilter (get_orig o #2 o valOf o TypeBasePure.size_of0) elts
+      val case_defs = mapfilter TypeBasePure.case_def_of elts
+  in
+   base_ss ++ rewrites term_simps
+           ++ rewrites size_defs
+           ++ rewrites case_defs
+           ++ numSimps.ARITH_DP_ss  (* important that this is last! *)
+  end
+
+(* simplify then case split and simplify from asms *)
+fun TC_SIMP_TAC ss thl =
+    let val ss' = ss ++ rewrites (termination_solve_simps() @ thl)
+    in
+      CONV_TAC (simpLib.SIMP_CONV ss' []) THEN
+      BasicProvers.PRIM_STP_TAC ss' NO_TAC
+    end
+
+(*---------------------------------------------------------------------------*)
+(* Instantiate the termination relation with q, then try to prove            *)
+(* wellfoundedness, then simplify and try to prove the TCs. Any remaining    *)
+(* unproved TCs should be in reduced form.                                   *)
+(*---------------------------------------------------------------------------*)
+
+fun TERM_TAC tctac = CONJ_TAC THENL [WF_TAC,tctac]
+
+fun WF_REL_TAC q =
+  let val ss = termination_ss()
+      val simplifier = simpLib.SIMP_CONV ss []
+      val prover = SOLVES (TC_SIMP_TAC ss [])
+      val conjunct_conv = TAC_CONV(prover) ORELSEC simplifier
+  in
+    Q.EXISTS_TAC q THEN
+    TERM_TAC (CONV_TAC (EVERY_CONJ_CONV conjunct_conv))
+  end
+
+fun mk_term_tac() =
+    let val ss = termination_ss() ++ boolSimps.ETA_ss
+    in TERM_TAC (SOLVES (TC_SIMP_TAC ss [])) end
 
 (*---------------------------------------------------------------------------
        Definition principles that automatically attempt
@@ -579,9 +750,9 @@ fun WF_REL_TAC q = Q.EXISTS_TAC q THEN STD_TERM_TAC;
  ---------------------------------------------------------------------------*)
 
 fun reln_is_not_set defn =
- case Defn.reln_of defn
-  of NONE => false
-   | SOME R => is_var R;
+  case Defn.reln_of defn
+   of NONE => false
+    | SOME R => is_var R;
 
 fun proveTotal tac defn =
   let val (WFR,rest) = get_WF (Defn.tcs_of defn)
@@ -592,81 +763,129 @@ fun proveTotal tac defn =
   end;
 
 fun complain_about_rhsfvs srcfn V =
-    let
-      val Vstr =
-          String.concat (Lib.commafy (map (Lib.quote o #1 o dest_var) V))
-    in
-      raise ERR srcfn
-            ("The following variables are free in the \nright hand side of\
-             \ the proposed definition: " ^ Vstr)
-    end
+  raise ERR srcfn
+      (String.concat
+       ["The following variables are free in the \n",
+        "right hand side of the proposed definition: ",
+        String.concatWith "," $ map (Lib.quote o #1 o dest_var) V])
 
 local open Defn
-  val auto_tgoal = ref true
-  val () = Feedback.register_btrace("auto Defn.tgoal", auto_tgoal)
-
   fun should_try_to_prove_termination defn rhs_frees =
-     let
-        val tcs = tcs_of defn
-     in
-        not(null tcs) andalso
-        null (op_intersect aconv (free_varsl tcs) rhs_frees)
-     end
+      let val tcs = tcs_of defn
+      in not(null tcs) andalso
+         null (op_intersect aconv (free_varsl tcs) rhs_frees)
+      end
   fun fvs_on_rhs V =
       if !allow_schema_definition then ()
       else complain_about_rhsfvs "defnDefine" V
-  val msg1 = "\nUnable to prove termination!\n\n\
-              \Try using \"TotalDefn.tDefine <name> <quotation> <tac>\".\n"
-  val msg2 = "\nThe termination goal has been set up using Defn.tgoal <defn>.\n\
-              \Solve the current proof goal (try e.g. p(), WF_REL_TAC).\n"
-  fun termination_proof_failed defn =
-     let
-        val s =
-           if !auto_tgoal
-              then (Defn.tgoal defn
-                    ; PP.prettyPrint
-                        (TextIO.print, !Globals.linewidth)
-                        (proofManagerLib.pp_proof (proofManagerLib.p()))
-                    ; if !Globals.interactive then msg2 else "")
-           else ""
-     in
-        raise ERR "defnDefine" (msg1 ^ s)
+
+  fun msg1 defName thm_src_loc =
+    let open DB_dtype
+        val locstring =
+          case thm_src_loc of
+            Unknown => "unknown location"
+          | Located {scriptpath,linenum,exact} =>
+            String.concat
+              [String.toString scriptpath, ":",
+               Int.toString linenum,
+               if not exact then " (approx)" else ""]
+     in String.concat
+        ["\nUnable to automatically prove termination for\n\n  ",
+         defName, " at\n  ", locstring, "\n"]
      end
-in
-  fun defnDefine term_tac defn =
-    let
-       val V = params_of defn
+
+  fun msg2 defName goalstring = String.concat
+    ["\nThe termination goal for ", defName,"\n\n  ",
+     goalstring, "\n\n",
+     "has been created in the proof manager. Solve the goal\n",
+     "(try e.g. p(), WF_REL_TAC) and add the tactic to the\n",
+     "Termination block for the Definition, i.e.\n\n",
+     "  Definition ", defName, ":\n",
+     "    <eqns>\n",
+     "  Termination\n",
+     "    <tactic>\n",
+     "  End\n\n"]
+
+  fun termination_proof_failed loc defn =
+     let val defName = Defn.name_of defn
+         val _ = Defn.tgoal defn
+         val goalstring =  (* grab this in any case *)
+             PP.pp_to_string (!Globals.linewidth)
+                 proofManagerLib.std_goal_pp (proofManagerLib.top_goal())
+         val _ = if not (!auto_tgoal) then
+                    ignore $ proofManagerLib.drop ()
+                 else ()
+     in
+       if not (!Globals.interactive) then
+          raise ERR "defnDefine" (msg1 defName loc ^ "\n" ^ goalstring ^ "\n")
+       else
+          raise ERR "defnDefine" (msg1 defName loc ^ msg2 defName goalstring)
+     end
+  fun report_successful_candidate tm candidates =
+      let val i = index_of (aconv tm) candidates
+          val mesg = String.concat
+              ["Termination proof successful with candidate ",
+               Int.toString i, ":\n  "]
+      in
+         lztrace(1, mesg, fn () => term_to_string tm ^ "\n\n")
+      end
+  fun report_failure_of_candidates() =
+      lztrace(1, "All candidates failed.\n", fn () => "\n")
+ in
+  fun located_defnDefine loc defn =
+   let val V = params_of defn
        val _ = if not (null V) then fvs_on_rhs V else ()  (* can fail *)
-       val tprover = proveTotal term_tac
-       fun try_proof defn Rcand = tprover (set_reln defn Rcand)
        val (defn',opt) =
-          if should_try_to_prove_termination defn V
-            then ((if reln_is_not_set defn
-                      then Lib.tryfind (try_proof defn) (guessR defn)
-                   else tprover defn)
-                  handle HOL_ERR _ => termination_proof_failed defn)
-            else (defn,NONE)
-    in
-       save_defn defn'
-       ; (LIST_CONJ (map GEN_ALL (eqns_of defn')), ind_of defn', opt)
-    end
+           if not (should_try_to_prove_termination defn V) then
+             (defn,NONE)
+           else
+           let val tprover = proveTotal (mk_term_tac())
+               fun try_proof Rcand = tprover (set_reln defn Rcand)
+           in
+             (if reln_is_not_set defn then  (* look for suitable term. reln *)
+                 let val candidates = guessR defn
+                     val (cand,result) = trylist try_proof candidates
+                     val () = report_successful_candidate cand candidates
+                 in result end
+              else (* one is already installed, try to prove TCs *)
+                 tprover defn
+             ) handle HOL_ERR _ =>
+                  (report_failure_of_candidates();
+                   termination_proof_failed loc defn)
+           end
+   in
+       save_defn_at loc defn'
+     ; (LIST_CONJ (map GEN_ALL (eqns_of defn')),
+        ind_of defn', opt)
+   end
+  val defnDefine = located_defnDefine DB.Unknown
 end
 
-val primDefine = defnDefine PROVE_TERM_TAC;
+fun located_primDefine loc = located_defnDefine loc
+
+val primDefine = located_primDefine DB.Unknown
 
 (*---------------------------------------------------------------------------*)
-(* Make a definition, giving the name to store things under. If anything     *)
-(* fails in the process, remove any constants introduced by the definition.  *)
+(* Make a definition, giving the name to store things under. Try to          *)
+(* automatically prove termination, if needed.                                *)
 (*---------------------------------------------------------------------------*)
 
 fun def_n_ind (def, indopt, NONE) = (def, NONE)
   | def_n_ind (def,indopt, SOME _) = (def, indopt)
 
-fun xDefine stem q =
- Parse.try_grammar_extension
-   (Theory.try_theory_extension
-       (def_n_ind o primDefine o Defn.Hol_defn stem)) q
-  handle e => render_exn "xDefine" e;
+fun located_xDefine loc stem q =
+  let fun thunk() =
+      let val snap1 = thy_consts (current_theory())
+          val defn = Defn.Hol_defn stem q
+          val result = def_n_ind (located_primDefine loc defn)
+          val snap2 = thy_consts (current_theory())
+      in delete_support defn snap2 snap1 ;
+         result
+      end
+  in Parse.try_grammar_extension thunk () end
+  handle e => render_exn (wrap_exn "TotalDefn" "xDefine" e);
+
+val xDefine = located_xDefine DB.Unknown
 
 (*---------------------------------------------------------------------------
      Define
@@ -698,10 +917,11 @@ end
 (* Version of Define where the termination tactic is explicitly supplied.    *)
 (*---------------------------------------------------------------------------*)
 
-fun tDefine stem q tac =
+fun located_tDefine loc stem q tac =
  let open Defn
      fun thunk() =
-       let val defn = Hol_defn stem q
+       let val snap1 = thy_consts (current_theory())
+           val defn = Hol_defn stem q
            val ps = params_of defn
            val _ = null ps orelse !allow_schema_definition orelse
                    complain_about_rhsfvs "tDefine" ps
@@ -712,60 +932,95 @@ fun tDefine stem q tac =
               val _ = HOL_MESG "Termination argument ignored (term. proved \
                                \automatically)"
           in been_stored (bind,def);
+             Theory.upd_binding bind (DB_dtype.updsrcloc (K loc));
              (def, NONE)
           end
-        else let val (def,ind) = with_flag (proofManagerLib.chatting,false)
-                                           Defn.tprove0(defn,tac)
-                 val def = def |> CONJUNCTS |> map GEN_ALL |> LIST_CONJ
-             in Defn.store(stem,def,ind) ;
-                (def, SOME ind)
-             end
+        else
+        let val (def,ind) = Defn.tprove0 (defn,tac)
+           val def = def |> CONJUNCTS |> map GEN_ALL |> LIST_CONJ
+        in
+            delete_support defn (thy_consts (current_theory())) snap1
+          ; Defn.store_at loc (stem,def,ind)
+          ; (def, SOME ind) end
        end
  in
-  Parse.try_grammar_extension
-    (Theory.try_theory_extension thunk) ()
-  handle e => render_exn "tDefine" e
- end;
+  Parse.try_grammar_extension thunk ()
+  handle e => render_exn (wrap_exn "TotalDefn" "tDefine" e)
+ end
+
+val tDefine = located_tDefine DB.Unknown
 
 (* ----------------------------------------------------------------------
     version of Define that allows control of options with "attributes"
     attached to the name, and provides an optional termination tactic
    ---------------------------------------------------------------------- *)
-fun test_remove n sl =
-    if mem n sl then (true, set_diff sl [n]) else (false, sl)
+fun test_remove n kvl =
+    let val (ns, rest) = Lib.partition (fn (k,_) => k = n) kvl
+    in
+      (not (null ns), rest)
+    end
 
-fun find_indoption sl =
-    case List.find (String.isPrefix "induction=") sl of
-        NONE => (NONE, sl)
-      | SOME s => (
-          SOME (String.extract(s,size "induction=",NONE)),
-          set_diff sl [s]
-      )
+fun find_indoption kvl =
+    case Lib.partition (fn (k,_) => k = "induction") kvl of
+        ([], _) => (NONE, kvl)
+      | ([(k,[v])], rest) => (SOME v, rest)
+      | _ => raise ERR "Definition" "multiple induction attribute-values"
 
-fun qDefine stem q tacopt =
+fun tailrecDefine loc nm q =
     let
-      val (corename, attrs) = ThmAttribute.extract_attributes stem
-      val (nocomp, attrs) = test_remove "nocompute" attrs
-      val (svarsok, attrs) = test_remove "schematic" attrs
-      val (notuserdef, attrs) = test_remove "notuserdef" attrs
-      val (indopt,attrs) = find_indoption attrs
+      val (t, _) = Defn.parse_absyn (Parse.Absyn q)
+      val th = tailrecLib.gen_tailrec_define {name = nm, def = t, loc = loc}
+    in
+      Defn.add_defs_to_EVAL [(nm,th)];
+      th
+    end
+
+val _ = List.app ThmAttribute.reserve_word
+                 ["nocompute", "schematic", "tailrecursive"]
+
+(* The context is the channel the expansion supplies; the quote and the
+   termination proof are handled by the Defn machinery below, which does
+   not take one yet. *)
+fun located_qDefine loc stem q tacopt (_ : Context.t) =
+    let
+      val {thmname=corename, attrs=attrs,reserved=R,unknown} =
+          ThmAttribute.extract_attributes stem
+      val (nocomp, R) = test_remove "nocompute" R
+      val (svarsok, R) = test_remove "schematic" R
+      val (notuserdef, R) = test_remove "notuserdef" R
+      val (rebindok, R) = test_remove "allow_rebind" R
+      val (tailrecp, R) = test_remove "tailrecursive" R
+      val (indopt, R) = find_indoption R
+      val _ = null unknown orelse
+              raise ERR "Definition"
+                    ("Unknown attributes: " ^
+                     String.concatWith ", " (map #1 unknown))
       fun fmod f =
           f |> (if nocomp then trace ("computeLib.auto_import_definitions", 0)
                 else (fn f => f))
-            |> (if svarsok then trace ("Define.allow_schema_definition", 1)
+            |> (if svarsok then trace ("Definition.allow_schema_definition", 1)
                 else (fn f => f))
             |> with_flag(Defn.def_suffix, "")
             |> (case indopt of NONE => with_flag(Defn.ind_suffix, "")
                              | SOME s => with_flag(Defn.ind_suffix, " " ^ s))
+            |> (if rebindok then trace ("Theory.allow_rebinds", 1)
+                else (fn f => f))
       val (thm,indopt) =
-          case tacopt of
-              NONE => fmod (xDefine corename) q
-            | SOME tac => fmod (tDefine corename q) tac
-      fun proc_attr a =
-          ThmAttribute.store_at_attribute{name = corename, attrname = a,
-                                          thm = thm}
-      val attrs = if notuserdef then attrs else "userdef" :: attrs
-      val gen_ind = Prim_rec.gen_indthm {lookup_ind = TypeBase.induction_of}
+          case (tailrecp, tacopt) of
+              (true, NONE) => (fmod (tailrecDefine loc corename) q, NONE)
+            | (true, SOME _) =>
+              raise ERR "qDefine"
+                    "Termination tactic for tail-recursive definition makes \
+                    \no sense"
+            | (false, NONE) => fmod (located_xDefine loc corename) q
+            | (false, SOME tac) => fmod (located_tDefine loc corename q) tac
+      fun proc_attr (k,vs) =
+          ThmAttribute.store_at_attribute{name = corename, attrname = k,
+                                          args = vs, thm = thm}
+      val attrs = if notuserdef then attrs else ("userdef",[]) :: attrs
+      val gen_ind =
+          if tailrecp then (fn th => raise ERR "Unseen" "")
+          else Prim_rec.gen_indthm {lookup_ind = TypeBase.induction_of}
     in
       List.app proc_attr attrs;
       if notuserdef then ()
@@ -778,6 +1033,9 @@ fun qDefine stem q tacopt =
             DefnBase.register_indn (ith, DefnBase.constants_of_defn thm);
       thm
     end
+
+fun qDefine stem q tacopt =
+    located_qDefine DB.Unknown stem q tacopt (Context.snapshot())
 
 fun Define q =
     let
@@ -794,7 +1052,7 @@ fun multidefine q = List.map (#1 o primDefine) (Defn.Hol_multi_defns q)
 
 fun multiDefine q =
   Parse.try_grammar_extension (Theory.try_theory_extension multidefine) q
-  handle e => render_exn "multiDefine" e;
+  handle e => render_exn (wrap_exn "TotalDefn" "multiDefine" e);
 
 (*---------------------------------------------------------------------------*)
 (* API for Define                                                            *)
@@ -843,7 +1101,7 @@ fun elimTCs guessR tac defn =
 
 fun apiDefine guessR tprover (stem,tm) =
   PASS tm ?> verdict (Defn.mk_defn stem) BUILD
-          ?> verdict (elimTCs guessR tprover) TERMINATION;
+          ?> verdict (elimTCs guessR (tprover())) TERMINATION;
 
 (*---------------------------------------------------------------------------*)
 (* Sequence the phases of definition, starting from a quotation              *)
@@ -859,8 +1117,8 @@ fun apiDefineq guessR tprover q =
 (* Instantiate to the current guesser and terminator                         *)
 (*---------------------------------------------------------------------------*)
 
-val std_apiDefine = apiDefine guessR PROVE_TERM_TAC;
-val std_apiDefineq = apiDefineq guessR PROVE_TERM_TAC;
+val std_apiDefine = apiDefine guessR mk_term_tac;
+val std_apiDefineq = apiDefineq guessR mk_term_tac;
 
 (*---------------------------------------------------------------------------
     Special entrypoints for defining schemas

@@ -6,12 +6,12 @@
 (* revealed that the completeness proof is due originally to Kalmar,         *)
 (* according to an attribution in Mendelson's book.                          *)
 (*===========================================================================*)
+Theory PropLogic
+Ancestors
+  pred_set string_num[qualified]
+Libs
+  stringLib[qualified]
 
-open HolKernel boolLib Parse bossLib pred_setTheory;
-
-local open stringLib string_numTheory in end;
-
-val _ = new_theory "PropLogic"
 
 (*---------------------------------------------------------------------------*)
 (* Simplification set for arithmetic and sets                                *)
@@ -145,13 +145,13 @@ End
 
 Inductive is_thm:
 [~Ax1:]
-  (!p q (H:prop set). is_thm H (Ax1 p q)) /\
+  (!p q (H:prop set). is_thm H (Ax1 p q))
 [~Ax2:]
-  (!p q r H. is_thm H (Ax2 p q r)) /\
+  (!p q r H. is_thm H (Ax2 p q r))
 [~Ax3:]
-  (!p H. is_thm H (Ax3 p)) /\
+  (!p H. is_thm H (Ax3 p))
 [~inH:]
-  (!p H. p IN H ==> is_thm H p) /\
+  (!p H. p IN H ==> is_thm H p)
 [~MP:]
   (!H p q. is_thm H (p --> q) /\ is_thm H p ==> is_thm H q)
 End
@@ -642,7 +642,8 @@ Theorem limitbuild_mono:
   ∀m n. m ≤ n ⇒ limitbuild A m ⊆ limitbuild A n
 Proof
   simp[PULL_EXISTS, arithmeticTheory.LESS_EQ_EXISTS] >>
-  Induct_on ‘p’ >> simp[arithmeticTheory.ADD_CLAUSES] >>
+  CONV_TAC SWAP_FORALL_CONV >> Induct >>
+  simp[arithmeticTheory.ADD_CLAUSES] >>
   rw[] >> gs[SUBSET_DEF]
 QED
 
@@ -776,4 +777,3 @@ Proof
   metis_tac[is_thm_FINITE_hyps, completeness_again, soundness_again]
 QED
 
-val _ = export_theory()

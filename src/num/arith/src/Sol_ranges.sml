@@ -29,9 +29,7 @@ open Streams;
 open Lib; infix ##;
 open Feedback;
 
-fun failwith function = raise HOL_ERR{origin_structure = "Sol_ranges",
-                                      origin_function = function,
-                                      message = ""};
+fun failwith function = raise mk_HOL_ERR "Sol_ranges" function ""
 
 
 (*---------------------------------------------------------------------------*)
@@ -129,7 +127,8 @@ fun inst_var_in_coeffs (v:string,c) coeffsl =
    then []
    else let val (const,bind) = hd coeffsl
             val ((_,coeff),bind') =
-               (remove (fn (name,_) => name = v) bind handle _ => ((v,zero),bind))
+               (remove (fn (name,_) => name = v) bind
+                handle _ => ((v,zero),bind))
         in  (const + (c * coeff),bind')::
                (inst_var_in_coeffs (v,c) (tl coeffsl))
         end

@@ -5,6 +5,14 @@
 structure Library =
 struct
 
+  structure Parse :> Parse =
+  struct
+    infixr $
+    fun f $ x = f x
+    open Parse
+    val (Type,Term) = parse_from_grammars $ valOf $ grammarDB {thyname="words"}
+  end
+
   (***************************************************************************)
   (* tracing                                                                 *)
   (***************************************************************************)
@@ -125,18 +133,36 @@ struct
             SOME token => (buffer := NONE; token)
           | NONE => aux [] (get_char ())
       in
-        if !trace > 2 then
+        if !trace > 3 then
           Feedback.HOL_MESG ("HolSmtLib: next token is '" ^ token ^ "'")
         else ();
         token
       end
   end
 
+  fun undo_look_ahead symbols get_token =
+  let
+    val buffer = ref symbols
+    fun get_token' () =
+      case !buffer of
+        [] => get_token ()
+      | x::xs => (buffer := xs; x)
+  in
+    get_token'
+  end
+
   fun parse_arbnum (s : string) =
-    Arbnum.fromString s
-      handle Option.Option =>
+    let
+      fun handle_err () =
         raise Feedback.mk_HOL_ERR "Library" "parse_arbnum"
           ("numeral expected, but '" ^ s ^ "' found")
+    in
+      Arbnum.fromString s
+        (* Moscow ML's Arbnum implementation throws Option.Option on error,
+           while Poly/ML's throws the Fail exception *)
+        handle Option.Option => handle_err ()
+             | Fail _ => handle_err ()
+    end
 
   fun expect_token (expected : string) (actual : string) : unit =
     if expected = actual then
@@ -154,6 +180,21 @@ struct
     Redblackmap.insert (dict, key, value :: values)
   end
 
+  (* the same as `extend_dict`, but ensures the key did not contain any
+     associated value in the dictionary prior to this call *)
+  fun extend_dict_unique ((key, value), dict) =
+  let
+    val values = Redblackmap.find (dict, key)
+      handle Redblackmap.NotFound => []
+    val new_dict = Redblackmap.insert (dict, key, value :: values)
+  in
+    if not (List.null values) then
+      raise Feedback.mk_HOL_ERR "Library" "extend_dict_unique"
+          ("key '" ^ key ^ "' already contained a value")
+    else
+      new_dict
+  end
+
   (* entries in 'dict2' are prepended to entries in 'dict1' *)
   fun union_dict dict1 dict2 = Redblackmap.foldl (fn (key, vals, dict) =>
     let
@@ -165,9 +206,84 @@ struct
 
   (* creates a dictionary that maps strings to lists of parsing functions *)
   fun dict_from_list xs
-      : (string, (string -> Arbnum.num list -> 'a list -> 'a) list)
+      : (string, (string -> Term.term list -> 'a list -> 'a) list)
         Redblackmap.dict =
     List.foldl extend_dict (Redblackmap.mkDict String.compare) xs
+
+  (***************************************************************************)
+  (* auxiliary functions                                                     *)
+  (***************************************************************************)
+
+  (* Convert a term to a string, in such a way that terms with exponentially
+     large term sizes can still be printed very quickly.
+
+     This function is needed because Z3 can create terms which cause a
+     combinatorial explosion in both the running time and the output size if
+     they were to be printed out fully, and in fact the default HOL
+     pretty-printers do suffer from apparent hangs when printing such terms.
+
+     To prevent this from happening, this function temporarily sets
+     `max_print_depth` so that sub-terms deeper than some value get abbreviated
+     with the string "...", therefore preventing the full gigantic term tree
+     from being traversed. It also removes non-trivial overloads, since some of
+     them are also causing the pretty-printer to appear to hang when printing
+     terms. *)
+  fun term_to_string tm =
+  let
+    val grammar = Parse.term_grammar ()
+    val simpler_grammar = term_grammar.clear_overloads grammar
+  in
+    Lib.with_flag(Globals.max_print_depth, 15)
+      (Parse.term_to_string_by_grammar (Parse.type_grammar (), simpler_grammar))
+        tm
+  end
+
+  (* the same as above, but print a theorem instead *)
+  fun thm_to_string thm =
+  let
+    fun hyps_to_string hyps =
+      String.concatWith ", " (List.map term_to_string hyps)
+    val hyps_contents =
+      if !Globals.show_assums then
+        hyps_to_string (Thm.hyp thm)
+      else
+        "."
+  in
+    " [" ^ hyps_contents ^ "] |- " ^ term_to_string (Thm.concl thm)
+  end
+
+  (* srcname is only a label for Sanity's report; the caller supplies it
+     because there need not be a current theory to name --- HolSmtLib
+     probes the solvers as it loads, before any segment is open *)
+  fun check_oracle_tags srcname name thm =
+    if Sanity.check_tags ((srcname, name), thm) then
+      raise Feedback.mk_HOL_ERR "HolSmtLib" "check_oracle_tags"
+        ("solver '" ^ name ^ "' produced unexpected oracle/axiom tags: " ^
+         thm_to_string thm)
+    else
+      ()
+
+  (* `is_def_oriented` must return false when:
+     1. `lhs` is not a variable in `var_set` but `rhs` is, or
+     2. `lhs` and `rhs` are both variables in `var_set` but `rhs` is smaller
+         than `lhs` (for some definition of "smaller").
+     Otherwise, it must return true. *)
+  fun is_def_oriented var_set (lhs, rhs) =
+    (not (HOLset.member (var_set, rhs))) orelse
+      (HOLset.member (var_set, lhs) andalso
+        Term.var_compare (rhs, lhs) <> LESS)
+
+  (* Orient a definition of the form `lhs = rhs` into `rhs = lhs`, if necessary.
+     This is used to ensure that the `lhs` is a variable in `var_set`. Also, if
+     both the `lhs` and the `rhs` are variables in `var_set`, then the `rhs`
+     must not be "smaller" than the `lhs`. This is done to avoid ending up with
+     circular definitions after they are all aggregated into the final theorem,
+     i.e. we want to avoid ending up with both `var1 = var2` and `var2 = var1`. *)
+  fun orient_def var_set (lhs, rhs) =
+    if is_def_oriented var_set (lhs, rhs) then
+      (lhs, rhs)
+    else
+      (rhs, lhs)
 
   (***************************************************************************)
   (* Derived rules                                                           *)
@@ -256,6 +372,36 @@ struct
     Thm.MP (Thm.NOT_ELIM th2) th1
   end
 
+  (* Given two terms ``lhs`` and ``rhs``, find an instantiation of free
+     variables such that a theorem with the conclusion ``lhs = rhs`` can be
+     returned. The instantiations become hypotheses of the returned theorem.
+     e.g.:
+
+     gen_instantiation (``x+1+z2``, ``z1+2``, {``z1``, ``z2``, ``z3``})
+     returns the theorem:
+
+     { z1 = x+1, z2 = 2 } |- x+1+z2 = z1+2
+
+     In cases where we end up with an hypothesis of the form `var1 = var2`,
+     we might orient the hypothesis to become `var2 = var1` to make sure that
+     the left-hand side is a variable in `var_set`. If both `var1` and `var2`
+     are in `var_set`, then we make sure that the left-hand side contains the
+     "smaller" variable. This avoids creating circular definitions across
+     multiple calls of this function (i.e. one call instantiating `z1 = z2`
+     and another instantiating `z2 = z1`). *)
+  fun gen_instantiation (lhs, rhs, var_set) =
+  let
+    val substs = Unify.simp_unify_terms [] lhs rhs
+    fun orient {redex, residue} = orient_def var_set (redex, residue)
+    val oriented_substs = List.map orient substs
+    val asl = List.map boolSyntax.mk_eq oriented_substs
+    val thms = List.map Thm.ASSUME asl
+    val concl = boolSyntax.mk_eq (lhs, rhs)
+  in
+    Tactical.TAC_PROOF ((asl, concl), Tactical.THEN (Tactic.SUBST_TAC thms,
+      Tactic.REFL_TAC))
+  end
+
   (***************************************************************************)
   (* Tactics                                                                 *)
   (***************************************************************************)
@@ -268,7 +414,7 @@ struct
       pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
       pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF]
   in
-    simpLib.SIMP_TAC (simpLib.mk_simpset [pred_setTheory.SET_SPEC_ss]) thms
+    simpLib.SIMP_TAC (simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss]) thms
   end
 
   (* A tactic that unfolds LET. *)
@@ -277,25 +423,18 @@ struct
 
   (* A tactic that simplifies certain word expressions. *)
 
-  val TO_WORD_EXTRACT = Q.prove(
-        `(!w : 'a word.
-            dimindex(:'b) < dimindex(:'a) ==>
-            (w2w w : 'b word = (dimindex(:'b) - 1 >< 0) w)) /\
-         (!w : 'a word.
-            dimindex(:'b) < dimindex(:'a) ==>
-            (sw2sw w : 'b word = (dimindex(:'b) - 1 >< 0) w))`,
-        BasicProvers.SRW_TAC [wordsLib.WORD_BIT_EQ_ss] [])
+  val TO_WORD_EXTRACT = HolSmtTheory.TO_WORD_EXTRACT
 
   val WORD_BIT_EXTRACT = simpLib.SIMP_PROVE
         (simpLib.++(bossLib.std_ss, wordsLib.WORD_BIT_EQ_ss))
-        [wordsLib.WORD_DECIDE ``1w :word1 ' 0``]
-      ``!w:'a word i. i < dimindex (:'a) ==> (w ' i = ((i >< i) w = 1w:word1))``
+        [wordsLib.WORD_DECIDE “1w :word1 ' 0”]
+        “!w:'a word i. i < dimindex (:'a) ==> (w ' i = ((i >< i) w = 1w:word1))”
 
   val WORD_SHIFT_BV = simpLib.SIMP_PROVE bossLib.bool_ss
         [wordsTheory.word_shift_bv]
-      ``(!w:'a word n. n < dimword (:'a) ==> (w << n = w <<~ n2w n)) /\
+       “(!w:'a word n. n < dimword (:'a) ==> (w << n = w <<~ n2w n)) /\
         (!w:'a word n. n < dimword (:'a) ==> (w >> n = w >>~ n2w n)) /\
-        (!w:'a word n. n < dimword (:'a) ==> (w >>> n = w >>>~ n2w n))``
+        (!w:'a word n. n < dimword (:'a) ==> (w >>> n = w >>>~ n2w n))”
 
   val bit_field_insert_rwt = simpLib.SIMP_RULE
         (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) [] wordsTheory.bit_field_insert;
@@ -319,5 +458,77 @@ struct
       [wordsTheory.EXTRACT_ALL_BITS, wordsTheory.WORD_EXTRACT_ZERO,
       wordsTheory.LSL_LIMIT, wordsTheory.LSR_LIMIT]
 *)
+
+  (***************************************************************************)
+  (* nonlinear arithmetic detection and proving                              *)
+  (***************************************************************************)
+
+  (* Is 'tm' a numeric literal (numeral, int literal, or real literal)? *)
+  fun is_numeric_literal tm =
+    numSyntax.is_numeral tm orelse
+    intSyntax.is_int_literal tm orelse
+    (realSyntax.is_real_literal tm
+     handle Feedback.HOL_ERR _ => false)
+
+  (* Does 'tm' contain a nonlinear arithmetic subterm?
+     A subterm is nonlinear if it is a multiplication of two non-literal
+     terms, or an exponentiation/power with exponent > 1. *)
+  fun is_nonlinear tm =
+  let
+    fun is_nl_mult dest_mult t =
+      (let val (l, r) = dest_mult t
+       in not (is_numeric_literal l) andalso not (is_numeric_literal r) end)
+      handle Feedback.HOL_ERR _ => false
+    fun check t =
+      is_nl_mult realSyntax.dest_mult t orelse
+      is_nl_mult intSyntax.dest_mult t orelse
+      is_nl_mult numSyntax.dest_mult t
+    fun walk t =
+      check t orelse
+      (let val (f, x) = Term.dest_comb t
+       in walk f orelse walk x end
+       handle Feedback.HOL_ERR _ => false)
+  in
+    walk tm
+  end
+
+  (* e.g., "(A --> B) --> C --> D" acc  ==>  [A, B, C, D] @ acc *)
+  fun strip_fun_tys ty acc =
+    let val (dom, rng) = Type.dom_rng ty
+    in strip_fun_tys dom (strip_fun_tys rng acc) end
+    handle Feedback.HOL_ERR _ => ty :: acc
+
+  (* approximate: does term contain real type? *)
+  fun term_contains_real_ty tm =
+    let val (rator, rand) = Term.dest_comb tm
+    in term_contains_real_ty rator orelse term_contains_real_ty rand end
+    handle Feedback.HOL_ERR _ =>
+      List.exists (Lib.equal realSyntax.real_ty)
+        (strip_fun_tys (Term.type_of tm) [])
+
+  (* Prove a nonlinear arithmetic goal using NLArith/SOSLib.
+     Type-dispatches: real → REAL_NLA then REAL_SOS, int → INT_SOS,
+     num → NUM_SOS_RULE.  Avoids trying wrong-type provers. *)
+  fun nla_prove tm =
+    if term_contains_real_ty tm then
+      NLArith.REAL_NLA tm
+      handle Feedback.HOL_ERR _ =>
+      (* REAL_NLA can't handle strict ineqs with equality preconditions;
+         REAL_SOS (which uses CSDP) can. *)
+      SOSLib.REAL_SOS tm
+    else
+      SOSLib.INT_SOS tm
+      handle Feedback.HOL_ERR _ =>
+      SOSLib.NUM_SOS_RULE tm
+
+  fun NLA_TAC (goal as (_, term)) ctxt =
+    if term_contains_real_ty term then
+      NLArith.NLA_TAC goal ctxt
+      handle Feedback.HOL_ERR _ =>
+      SOSLib.REAL_SOS_TAC goal ctxt
+    else
+      SOSLib.INT_SOS_TAC goal ctxt
+      handle Feedback.HOL_ERR _ =>
+      SOSLib.NUM_SOS_RULE_TAC goal ctxt
 
 end

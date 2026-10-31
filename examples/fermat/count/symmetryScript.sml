@@ -4,35 +4,21 @@
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
+Theory symmetry
+Ancestors
+  pred_set arithmetic gcdset number combinatorics
+  mapCount  (* for on_def *)
+  monoid group ring field fieldMap
+Libs
+  jcLib  (* for stripDup *)
 
-(* declare new theory at start *)
-val _ = new_theory "symmetry";
 
 (* ------------------------------------------------------------------------- *)
 
-
 (* val _ = load "jcLib"; *)
-open jcLib; (* for stripDup *)
 
-(* open dependent theories *)
-(* val _ = load "mapCountTheory"; *)
-open pred_setTheory arithmeticTheory;
-open helperCountTheory;
-open helperSetTheory;
 
-open mapCountTheory; (* for on_def *)
-open combinatoricsTheory;
-
-(* Get dependent theories local *)
-(* val _ = load "fieldMapTheory"; *)
-open monoidTheory groupTheory;
-open ringTheory fieldTheory;
-open submonoidTheory subgroupTheory;
-open monoidMapTheory groupMapTheory;
-open ringMapTheory fieldMapTheory;
-
+val _ = temp_overload_on("over", ``\f s t. !x. x IN s ==> f x IN t``);
 
 (* ------------------------------------------------------------------------- *)
 (* Symmetry Group Documentation                                              *)
@@ -219,10 +205,6 @@ open ringMapTheory fieldMapTheory;
    subfield_auto_group_group_1 |- !r s. Field r /\ subfield s r ==> Group (subfield_auto_group r s)
    subfield_auto_group_group_2 |- !r s. s <<= r ==> Group (subfield_auto_group r s)
 *)
-
-(* ------------------------------------------------------------------------- *)
-(* Helper Theorems                                                           *)
-(* ------------------------------------------------------------------------- *)
 
 (* ------------------------------------------------------------------------- *)
 (* Symmetric Group                                                           *)
@@ -1539,8 +1521,4 @@ QED
 
 
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

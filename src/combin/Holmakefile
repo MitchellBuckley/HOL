@@ -1,3 +1,4 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
@@ -17,6 +18,6 @@ ifdef HOLSELFTESTLEVEL
 all: combin-selftest.log
 
 combin-selftest.log: selftest.exe
-	./selftest.exe > $@ 2>&1
+	$(tee ./selftest.exe, $@)
 
 endif

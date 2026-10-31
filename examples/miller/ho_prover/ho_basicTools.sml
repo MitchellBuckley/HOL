@@ -1,33 +1,13 @@
-(* non-interactive mode
-*)
 structure ho_basicTools :> ho_basicTools =
 struct
+
 open HolKernel Parse boolLib;
-
-(* interactive mode
-val () = loadPath := union ["..", "../finished"] (!loadPath);
-val () = app load
-  ["bossLib",
-   "realLib",
-   "rich_listTheory",
-   "arithmeticTheory",
-   "numTheory",
-   "pred_setTheory",
-   "pairTheory",
-   "combinTheory",
-   "listTheory",
-   "dividesTheory",
-   "primeTheory",
-   "gcdTheory",
-   "probLib",
-   "hoTools"];
-val () = show_assums := true;
-
-*)
 
 open hurdUtils;
 
 infixr 0 ##
+
+val assert = simple_assert;
 
 (* ------------------------------------------------------------------------- *)
 (* Debugging.                                                                *)
@@ -235,7 +215,8 @@ fun ho_REWR_CONV th =
     ho_subst_REWR th' o var_ho_match vars pat
   end;
 
-fun ho_REWRITE_CONV ths = QCONV (TOP_DEPTH_CONV (FIRSTC (map ho_REWR_CONV ths)));
+fun ho_REWRITE_CONV ths =
+    QCONV (TOP_DEPTH_CONV (FIRSTC (map ho_REWR_CONV ths)));
 
 fun ho_REWRITE_TAC ths = CONV_TAC (ho_REWRITE_CONV ths);
 

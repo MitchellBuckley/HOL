@@ -25,7 +25,13 @@ datatype phase = Initial | Bare | Full
 val cline_record = process_cline ()
 val {cmdline,build_theory_graph,selftest_level,...} = cline_record
 val {debug,jobcount,relocbuild,extra={SRCDIRS,...},...} = cline_record
-val {multithread,keepgoing,...} = cline_record
+val {multithread,keepgoing,timelimit,thmsrc,...} = cline_record
+
+(* Forward only the cache options the user actually wrote, so that a
+   Holmakefile's CLINE_OPTIONS = --no-cache (etc.) isn't quietly
+   overridden by a synthesised default at the sub-Holmake command-line.
+   Defaults are left to each sub-Holmake to compute for itself. *)
+val cache_args = extract_cache_args (CommandLine.arguments())
 
 open Systeml;
 
@@ -74,6 +80,13 @@ in
               (case multithread of
                    NONE => []
                  | SOME i => ["--mt="^Int.toString i]) @
+              (case timelimit of
+                   NONE => []
+                 | SOME d => ["--time_limit="^Int.toString d]) @
+              (case thmsrc of
+                   NONE => []
+                 | SOME s => ["--thmsrc="^s]) @
+              cache_args @
               phase_extras())
     analysis selftest_level
 end
@@ -121,11 +134,18 @@ fun upload ((src, regulardir), target, symlink) =
     (thus requiring only a single place to look for things).
  ---------------------------------------------------------------------------*)
 
+val hol_state0 = fullPath [HOLDIR, "bin", "hol.state0"]
+val sigobj_proofmanLib = fullPath [HOLDIR, "sigobj", "proofManagerLib.uo"]
 fun buildDir symlink s =
-  if #1 s = fullPath [HOLDIR, "bin/hol.bare"] then phase := Bare
-  else if #1 s = fullPath [HOLDIR, "bin/hol"] then phase := Full
-  else
-    (build_dir Holmake selftest_level s; upload(s,SIGOBJ,symlink))
+  if #1 s = fullPath [HOLDIR, "bin/hol"] then phase := Full
+  else (
+    build_dir Holmake selftest_level s;
+    upload(s,SIGOBJ,symlink);
+    if !phase = Initial andalso OS.FileSys.access(hol_state0, []) andalso
+       OS.FileSys.access(sigobj_proofmanLib, [])
+    then phase := Bare
+    else ()
+  )
 
 fun build_src symlink = List.app (buildDir symlink) SRCDIRS
 
@@ -136,10 +156,14 @@ in
   clean_sigobj();
   setup_logfile();
   build_src symlink
-    handle SML90.Interrupt => (finish_logging false; die "Interrupted");
-  finish_logging true;
+    handle SML90.Interrupt =>
+      (finish_logging {buildok = false, selftest_level = selftest_level};
+       die "Interrupted");
+  finish_logging {buildok = true, selftest_level = selftest_level};
   make_buildstamp();
-  build_help build_theory_graph;
+  build_help {graph = build_theory_graph,
+              no_mdbook = #no_mdbook cline_record,
+              no_helpdocs = #no_helpdocs cline_record};
   print "\nHol built successfully.\n"
 end
 
@@ -166,6 +190,34 @@ in
                    {dirname = fP [HOLDIR, "tools", "Holmake"]})
   else
     die ("No Holmake executable in " ^ fP [HOLDIR, "bin"])
+end
+
+(* bin/hol is compiled by configure and by no Holmakefile rule, from
+   tools-poly/hol.ML, the Holmake sources, and tools/parsing (the quote
+   filter is linked in rather than run as bin/unquote; HolLex.sml is
+   generated from HolLex by configure).  The sweep above compares those
+   sources against bin/Holmake only, so hol can be stale while Holmake
+   is current, and hol.ML is checked nowhere.  A stale bin/hol
+   misdirects the interactive load path and fails
+   tools/Holmake/tests/repl, which -t reaches while still inside
+   sequences/kernel -- so the whole selftest build stops there.
+   Checking hol covers Holmake's embedded filter too: configure builds
+   Holmake first. *)
+val _ = let
+  val fP = fullPath
+  open HOLFileSys
+  val hol = fP [HOLDIR,"bin",xable_string "hol"]
+in
+  if access(hol, [A_READ, A_EXEC]) then
+    (check_against hol "tools-poly/hol.ML";
+     app_sml_files (check_against hol)
+                   {dirname = fP [HOLDIR, "tools-poly", "Holmake"]};
+     app_sml_files (check_against hol)
+                   {dirname = fP [HOLDIR, "tools", "Holmake"]};
+     check_against hol "tools/parsing/HolLex";
+     app_sml_files (check_against hol)
+                   {dirname = fP [HOLDIR, "tools", "parsing"]})
+  else ()
 end
 
 

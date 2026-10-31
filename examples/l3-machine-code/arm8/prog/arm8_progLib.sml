@@ -7,7 +7,8 @@ open stateLib spec_databaseLib arm8_progTheory
 structure Parse =
 struct
    open Parse
-   val (Type, Term) = parse_from_grammars arm8_progTheory.arm8_prog_grammars
+   val (Type, Term) =
+       parse_from_grammars $ valOf $ grammarDB {thyname="arm8_prog"}
 end
 open Parse
 
@@ -16,7 +17,7 @@ val ERR = Feedback.mk_HOL_ERR "arm8_progLib"
 (* ------------------------------------------------------------------------ *)
 
 val arm_proj_def = arm8_progTheory.arm8_proj_def
-val arm_comp_defs = arm8_progTheory.component_defs
+val arm_comp_defs = stateLib.sep_components {thyname="arm8_prog"}
 
 val step_1 = HolKernel.syntax_fns1 "arm8_step"
 fun syn n d m = HolKernel.syntax_fns {n = n, dest = d, make = m} "arm8_prog"
@@ -57,14 +58,8 @@ val state_id =
        ["REG", "branch_hint"]
       ]
 
-val arm_frame =
-   stateLib.update_frame_state_thm arm_proj_def
-      ["PSTATE.N", "PSTATE.Z", "PSTATE.C", "PSTATE.V", "SP_EL0", "PC", "REG",
-       "MEM"]
-
-val arm_frame_hidden =
-   stateLib.update_hidden_frame_state_thm arm_proj_def
-      [``s with branch_hint := x``]
+val arm_frame = arm8_progTheory.arm8_frame
+val arm_frame_hidden = arm8_progTheory.arm8_frame_hidden
 
 (* -- *)
 

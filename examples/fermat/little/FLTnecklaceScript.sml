@@ -23,34 +23,19 @@ This is a combinatorial proof without reference to Group Theory.
 
 (*===========================================================================*)
 
-(* add all dependent libraries for script *)
-open HolKernel boolLib bossLib Parse;
-
-(* declare new theory at start *)
-val _ = new_theory "FLTnecklace";
+Theory FLTnecklace
+Ancestors
+  arithmetic divides logroot gcd pred_set number combinatorics
+  cycle pattern
 
 (* ------------------------------------------------------------------------- *)
-
-
-(* open dependent theories *)
-(* val _ = load "patternTheory"; *)
-open helperNumTheory helperSetTheory;
-open arithmeticTheory pred_setTheory;
-
-open cycleTheory patternTheory;
-
-(* val _ = load "necklaceTheory"; *)
-open necklaceTheory;
-open dividesTheory; (* for PRIME_POS *)
-open gcdTheory; (* for PRIME_GCD *)
-
 
 (* ------------------------------------------------------------------------- *)
 (* Fermat's Little Theorem by necklace Documentation                         *)
 (* ------------------------------------------------------------------------- *)
 (* Overloading:
 *)
-(*
+(* Definitions and Theorems (# are exported, ! are in compute):
 
    Cycle and Necklaces:
    necklace_cycle      |- !n a ls k. ls IN necklace n a ==> cycle k ls IN necklace n a
@@ -120,8 +105,8 @@ open gcdTheory; (* for PRIME_GCD *)
                                      ls IN e ==> ls IN multicoloured n a
    multicoloured_prime_order
                        |- !p a ls. prime p /\ ls IN multicoloured p a ==> order ls = p
-   multicoloured_associate_card_prime
-                       |- !p a ls. prime p /\ ls IN multicoloured p a ==> CARD (associate ls) = p
+   multicoloured_partition_card_prime
+                       |- !p a e. prime p /\ e IN multicoloured_partition p a ==> CARD e = p
    multicoloured_card_prime
                        |- !p a. prime p ==>
                                 CARD (multicoloured p a) = p * CARD (multicoloured_partition p a)
@@ -320,7 +305,7 @@ QED
          Note SING (set ls)           by cycle_1_iff_set_sing, cycle 1 ls = ls
          thus ls IN monocoloured n a  by monocoloured_element
 *)
-Theorem monocoloured_iff_cycle_1:
+Theorem monocoloured_iff_cycle_1[allow_rebind]:
   !n a ls. ls IN necklace n a ==>
            (ls IN monocoloured n a <=> cycle 1 ls = ls)
 Proof
@@ -796,7 +781,7 @@ QED
      = order ls                    by associate_card_eq_order, ls <> []
      = p                           by multicoloured_prime_order
 *)
-Theorem multicoloured_associate_card_prime:
+Theorem multicoloured_partition_card_prime:
   !p a e. prime p /\ e IN multicoloured_partition p a ==> CARD e = p
 Proof
   rpt strip_tac >>
@@ -824,7 +809,7 @@ QED
    = SIGMA (order l)       by associate_card_eq_order
    = SIGMA (p)             by order of a multicoloured necklace <> 1
                            and for prime length, order = 1 or p.
-   = p * CARD (multicoloured_partition p a)  by SIGMA_CARD_CONSTANT
+   = p * CARD (multicoloured_partition p a)  by multicoloured_partition_card_prime, SIGMA_CARD_CONSTANT
 *)
 Theorem multicoloured_card_prime:
   !p a. prime p ==>
@@ -836,7 +821,7 @@ Proof
   `FINITE (multicoloured_partition p a)` by rw[multicoloured_partition_finite] >>
   `similar equiv_on (multicoloured p a)` by rw[similar_equiv_on_multicoloured] >>
   `CARD (multicoloured p a) = SIGMA CARD (multicoloured_partition p a)` by rw[multicoloured_partition_def, partition_CARD] >>
-  metis_tac[multicoloured_associate_card_prime, SIGMA_CARD_CONSTANT]
+  metis_tac[multicoloured_partition_card_prime, SIGMA_CARD_CONSTANT]
 QED
 
 (* ------------------------------------------------------------------------- *)
@@ -1193,10 +1178,5 @@ Proof
   metis_tac[DIVIDES_MOD_0, MOD_EQ]
 QED
 
-
 (* ------------------------------------------------------------------------- *)
-
-(* export theory at end *)
-val _ = export_theory();
-
 (*===========================================================================*)

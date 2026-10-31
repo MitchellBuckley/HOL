@@ -4,15 +4,21 @@ struct
 open HolKernel boolLib bossLib Parse;
 
 open listTheory wordsTheory pred_setTheory arithmeticTheory wordsLib pairTheory;
-open set_sepTheory progTheory helperLib addressTheory;
+open set_sepTheory progTheory helperLib addressTheory
+     decompilerLibSupportTheory;
 
 structure Parse =
 struct
    open Parse
-   val (Type, Term) = parse_from_grammars addressTheory.address_grammars
+   val (Type, Term) = parse_from_grammars $ valOf $ grammarDB {thyname="address"}
 end
 
-val new_definition = Definition.new_definition (* not boolSyntax! *)
+fun allow_rebinds f x = Feedback.trace ("Theory.allow_rebinds", 1) f x
+val new_definition =
+    allow_rebinds Definition.new_definition (* not boolSyntax! *)
+val save_thm = allow_rebinds save_thm
+val mk_pabs = pairSyntax.mk_pabs
+
 
 (* -------------------------------------------------------------------------- *)
 (* Decompilation stages:                                                      *)
@@ -159,8 +165,7 @@ fun get_output_list def = let
                   handle HOL_ERR e => x
   in pairSyntax.list_mk_pair(map deprime result) end;
 
-val GUARD_THM =
-  prove(``!m n x. GUARD n x = GUARD m x``, REWRITE_TAC [GUARD_def]);
+val GUARD_THM = decompilerLibSupportTheory.GUARD_THM
 
 
 (* -------------------------------------------------------------------------- *)
@@ -418,10 +423,7 @@ fun UNABBREV_CODE_RULE th = let
   val th = CONV_RULE ((RATOR_CONV o RAND_CONV) c) th
   in th end;
 
-val ABBBREV_CODE_LEMMA = prove(
-  ``!a (x :('a, 'b, 'c) processor) p c q.
-      (a ==> SPEC x p c q) ==> !d. c SUBSET d ==> a ==> SPEC x p d q``,
-  REPEAT STRIP_TAC THEN RES_TAC THEN IMP_RES_TAC SPEC_SUBSET_CODE);
+val ABBBREV_CODE_LEMMA = decompilerLibSupportTheory.ABBBREV_CODE_LEMMA
 
 fun abbreviate_code name thms = let
   fun extract_code (_,(th,_,_),_) =
@@ -987,8 +989,8 @@ fun tagged_var_to_num v = let
   val s = if s = "" then "100000" else s
   in string_to_int s end
 
-val GUARD_T = prove(``!x. x = (x = GUARD 0 T)``,REWRITE_TAC [GUARD_def])
-val GUARD_F = prove(``!x. ~x = (x = GUARD 0 F)``,REWRITE_TAC [GUARD_def])
+val GUARD_T = decompilerLibSupportTheory.GUARD_T
+val GUARD_F = decompilerLibSupportTheory.GUARD_F
 
 fun init_clean th = let
   fun side2guard_conv tm =
@@ -1257,7 +1259,7 @@ fun SUBST_EXISTS_CONV vs cs =
   THENC SUBST_EXISTS_CONV_AUX vs cs
   THENC REWRITE_CONV [];
 
-(*
+(* Consider using goalStack.print_tac instead if this is re-enabled
 fun PRINT_GOAL_TAC s (hs,goal) = let
   val _ = print "\n\n"
   val _ = print s
@@ -1407,7 +1409,7 @@ fun erase_conds (FUN_VAL tm) = FUN_VAL tm
   | erase_conds (FUN_LET (x,y,t)) = FUN_LET (x,y,erase_conds t)
 
 val REMOVE_TAGS_CONV = let
-  val alpha_lemma = prove(``!b:bool. (b = T) ==> b``,Cases THEN REWRITE_TAC []);
+  val alpha_lemma = decompilerLibSupportTheory.alpha_lemma
   fun REMOVE_TAG_CONV tm = let
     val (v,x) = dest_abs tm
     val xs = free_vars x
@@ -1636,13 +1638,13 @@ fun extract_function name th entry exit function_in_out = let
   val func_name = name
   val tm_option = NONE
   val (main_thm,main_def,pre_thm,pre_def) =
-         tailrecLib.tailrec_define_from_step func_name step_fun tm_option
+         mc_tailrecLib.tailrec_define_from_step func_name step_fun tm_option
   val finalise =
      CONV_RULE (REMOVE_TAGS_CONV THENC DEPTH_CONV (LET_EXPAND_POS_CONV))
   val main_thm = finalise main_thm
   val pre_thm = finalise pre_thm
   (* define temporary abbreviation *)
-  val silly_string = Theory.temp_binding "(( step ))"
+  val silly_string = Theory.temp_binding "((step))"
   val step_def =
      new_definition
         (silly_string,mk_eq(mk_var(silly_string,type_of step_fun),step_fun))

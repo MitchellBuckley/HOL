@@ -1,6 +1,8 @@
-open HolKernel Parse boolLib
+Theory addDB[bare]
+Libs
+  HolKernel Parse boolLib
 
-val _ = new_theory "addDB";
+val _ = set_trace "Theory.allow_rebinds" 1
 
 val foo_def = new_definition("foo_def", “foo x <=> ~x”);
 
@@ -29,7 +31,8 @@ val bar_def = new_definition("bar_def", “bar x <=> x /\ foo x”);
 
 val _ = delete_const "bar"
 
-val _ = length (DB.definitions "-") = 1 orelse raise Fail "bad DB.definitions"
+val _ = length (DB.definitions "-") = 2 orelse raise Fail "bad DB.definitions"
 
+val _ = new_constant ("foo", “:bool”)
 
-val _ = export_theory();
+val _ = length (DB.definitions "-") = 2 orelse raise Fail "bad DB.definitions"

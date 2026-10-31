@@ -2,15 +2,12 @@
  * Copyright 1991-1995  University of Cambridge (Author: Monica Nesi)
  * Copyright 2016-2017  University of Bologna   (Author: Chun Tian)
  *)
+Theory ObsCongrLaws
+Ancestors
+  CCS StrongEQ StrongLaws WeakEQ WeakLaws ObsCongr
+Libs
+  CCSLib StrongEQLib WeakEQLib ObsCongrLib
 
-open HolKernel Parse boolLib bossLib;
-
-open CCSLib CCSTheory;
-open StrongEQTheory StrongEQLib StrongLawsTheory;
-open WeakEQTheory WeakEQLib WeakLawsTheory;
-open ObsCongrTheory ObsCongrLib;
-
-val _ = new_theory "ObsCongrLaws";
 
 (******************************************************************************)
 (*                                                                            *)
@@ -121,7 +118,7 @@ val OBS_PAR_TAU_TAU = save_thm (
  *)
 val OBS_PAR_PREF_NO_SYNCR = save_thm (
    "OBS_PAR_PREF_NO_SYNCR",
-    STRIP_FORALL_RULE ((DISCH ``~((l :'b Label) = COMPL l')``) o
+    STRIP_FORALL_RULE ((DISCH ``~((l :'a Label) = COMPL l')``) o
                        (STRIP_FORALL_RULE (MATCH_MP STRONG_IMP_OBS_CONGR)) o
                        UNDISCH)
                       STRONG_PAR_PREF_NO_SYNCR);
@@ -138,7 +135,7 @@ val OBS_PAR_PREF_NO_SYNCR = save_thm (
  *)
 val OBS_PAR_PREF_SYNCR = save_thm (
    "OBS_PAR_PREF_SYNCR",
-    STRIP_FORALL_RULE ((DISCH ``((l :'b Label) = COMPL l')``) o
+    STRIP_FORALL_RULE ((DISCH ``((l :'a Label) = COMPL l')``) o
                        (STRIP_FORALL_RULE (MATCH_MP STRONG_IMP_OBS_CONGR)) o
                        UNDISCH)
                       STRONG_PAR_PREF_SYNCR);
@@ -194,15 +191,15 @@ val OBS_RESTR_PREFIX_TAU = save_thm (
 val OBS_RESTR_PR_LAB_NIL = save_thm (
    "OBS_RESTR_PR_LAB_NIL",
    ((Q.GENL [`l`, `L`]) o
-    (DISCH ``(l :'b Label) IN L \/ (COMPL l) IN L``) o
+    (DISCH ``(l :'a Label) IN L \/ (COMPL l) IN L``) o
     (Q.GEN `E`) o
     UNDISCH)
        (IMP_TRANS
-           (DISCH ``(l :'b Label) IN L \/ (COMPL l) IN L``
+           (DISCH ``(l :'a Label) IN L \/ (COMPL l) IN L``
             (Q.SPEC `E`
              (UNDISCH
               (Q.SPECL [`l`, `L`] STRONG_RESTR_PR_LAB_NIL))))
-           (SPECL [``restr (L :'b Label set) (prefix (label l) E)``, ``nil``]
+           (SPECL [``restr (L :'a Label set) (prefix (label l) E)``, ``nil``]
                   STRONG_IMP_OBS_CONGR)));
 
 (* Prove OBS_RESTR_PREFIX_LABEL:
@@ -213,16 +210,16 @@ val OBS_RESTR_PR_LAB_NIL = save_thm (
 val OBS_RESTR_PREFIX_LABEL = save_thm (
    "OBS_RESTR_PREFIX_LABEL",
   ((Q.GENL [`l`, `L`]) o
-   (DISCH ``~((l :'b Label) IN L) /\ ~((COMPL l) IN L)``) o
+   (DISCH ``~((l :'a Label) IN L) /\ ~((COMPL l) IN L)``) o
    (Q.GEN `E`) o
    UNDISCH)
       (IMP_TRANS
-           (DISCH ``~((l :'b Label) IN L) /\ ~((COMPL l) IN L)``
+           (DISCH ``~((l :'a Label) IN L) /\ ~((COMPL l) IN L)``
             (Q.SPEC `E`
              (UNDISCH
               (Q.SPECL [`l`, `L`] STRONG_RESTR_PREFIX_LABEL))))
-           (SPECL [``restr (L :'b Label set) (prefix (label l) E)``,
-                   ``prefix (label (l :'b Label)) (restr L E)``]
+           (SPECL [``restr (L :'a Label set) (prefix (label l) E)``,
+                   ``prefix (label (l :'a Label)) (restr L E)``]
                   STRONG_IMP_OBS_CONGR)));
 
 (******************************************************************************)
@@ -287,8 +284,9 @@ val OBS_RELAB_PREFIX = save_thm (
 (* Prove TAU1:
    |- !u E. OBS_CONGR (prefix u (prefix tau E)) (prefix u E)
  *)
-val TAU1 = store_thm ("TAU1",
-  ``!(u :'b Action) E. OBS_CONGR (prefix u (prefix tau E)) (prefix u E)``,
+Theorem TAU1:
+    !(u :'a Action) E. OBS_CONGR (prefix u (prefix tau E)) (prefix u E)
+Proof
     REPEAT GEN_TAC
  >> PURE_ONCE_REWRITE_TAC [OBS_CONGR]
  >> REPEAT STRIP_TAC (* 2 sub-goals here *)
@@ -296,16 +294,17 @@ val TAU1 = store_thm ("TAU1",
       IMP_RES_TAC TRANS_PREFIX \\
       Q.EXISTS_TAC `E` \\
       ASM_REWRITE_TAC [WEAK_TRANS, TAU_WEAK] \\
-      EXISTS_TAC ``prefix (u :'b Action) E`` \\
+      EXISTS_TAC ``prefix (u :'a Action) E`` \\
       Q.EXISTS_TAC `E` \\
       ASM_REWRITE_TAC [EPS_REFL, PREFIX],
       (* goal 2 (of 2) *)
       IMP_RES_TAC TRANS_PREFIX \\
-      EXISTS_TAC ``prefix (tau :'b Action) E2`` \\
+      EXISTS_TAC ``prefix (tau :'a Action) E2`` \\
       ASM_REWRITE_TAC [WEAK_TRANS, TAU_WEAK] \\
-      EXISTS_TAC ``prefix (u :'b Action) (prefix tau E2)`` \\
-      EXISTS_TAC ``prefix (tau :'b Action) E2`` \\
-      ASM_REWRITE_TAC [EPS_REFL, PREFIX] ]);
+      EXISTS_TAC ``prefix (u :'a Action) (prefix tau E2)`` \\
+      EXISTS_TAC ``prefix (tau :'a Action) E2`` \\
+      ASM_REWRITE_TAC [EPS_REFL, PREFIX] ]
+QED
 
 (* Prove WEAK_TAU1:
    |- !u E. WEAK_EQUIV (prefix u (prefix tau E)) (prefix u E)
@@ -316,8 +315,9 @@ val WEAK_TAU1 = save_thm ("WEAK_TAU1",
 (* Prove TAU2:
    |- !E. OBS_CONGR (sum E (prefix tau E)) (prefix tau E)
  *)
-val TAU2 = store_thm ("TAU2",
-  ``!E. OBS_CONGR (sum E (prefix tau E)) (prefix tau E)``,
+Theorem TAU2:
+    !E. OBS_CONGR (sum E (prefix tau E)) (prefix tau E)
+Proof
     GEN_TAC
  >> PURE_ONCE_REWRITE_TAC [OBS_CONGR]
  >> REPEAT STRIP_TAC (* 2 sub-goals here *)
@@ -342,7 +342,8 @@ val TAU2 = store_thm ("TAU2",
       take [`sum E (prefix tau E)`, `E2`] \\
       REWRITE_TAC [EPS_REFL] \\
       MATCH_MP_TAC SUM2 \\
-      PURE_ONCE_ASM_REWRITE_TAC [] ]);
+      PURE_ONCE_ASM_REWRITE_TAC [] ]
+QED
 
 (* Prove WEAK_TAU2:
    |- !E. WEAK_EQUIV (sum E (prefix tau E)) (prefix tau E)
@@ -355,10 +356,11 @@ val WEAK_TAU2 = save_thm ("WEAK_TAU2",
        OBS_CONGR (sum (prefix u (sum E (prefix tau E'))) (prefix u E'))
                  (prefix u (sum E (prefix tau E')))
  *)
-val TAU3 = store_thm ("TAU3",
-  ``!(u :'b Action) E E'.
+Theorem TAU3:
+    !(u :'a Action) E E'.
         OBS_CONGR (sum (prefix u (sum E (prefix tau E'))) (prefix u E'))
-                  (prefix u (sum E (prefix tau E')))``,
+                  (prefix u (sum E (prefix tau E')))
+Proof
     REPEAT GEN_TAC
  >> PURE_ONCE_REWRITE_TAC [OBS_CONGR]
  >> REPEAT STRIP_TAC (* 2 sub-goals here *)
@@ -373,7 +375,7 @@ val TAU3 = store_thm ("TAU3",
         IMP_RES_TAC TRANS_PREFIX \\
         Q.EXISTS_TAC `E1` \\
         ASM_REWRITE_TAC [WEAK_TRANS, WEAK_EQUIV_REFL] \\
-        take [`prefix (u :'b Action) (sum E (prefix tau E'))`,
+        take [`prefix (u :'a Action) (sum E (prefix tau E'))`,
               `sum E (prefix tau E')`] \\
         REWRITE_TAC [EPS_REFL, PREFIX] \\
         MATCH_MP_TAC ONE_TAU \\
@@ -386,7 +388,8 @@ val TAU3 = store_thm ("TAU3",
       take [`sum (prefix u (sum E (prefix tau E'))) (prefix u E')`, `E2`] \\
       REWRITE_TAC [EPS_REFL] \\
       MATCH_MP_TAC SUM1 \\
-      PURE_ONCE_ASM_REWRITE_TAC [] ]);
+      PURE_ONCE_ASM_REWRITE_TAC [] ]
+QED
 
 (* Prove WEAK_TAU3:
    |- !u E E'.
@@ -396,7 +399,6 @@ val TAU3 = store_thm ("TAU3",
 val WEAK_TAU3 = save_thm ("WEAK_TAU3",
     OBS_CONGR_IMP_WEAK_EQUIV_RULE TAU3);
 
-val _ = export_theory ();
 val _ = html_theory "ObsCongrLaws";
 
 (* last updated: Jun 20, 2017 *)

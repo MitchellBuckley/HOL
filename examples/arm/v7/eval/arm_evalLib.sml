@@ -17,7 +17,7 @@ open HolKernel boolLib bossLib Parse;
 
 (* ------------------------------------------------------------------------- *)
 
-val _ = numLib.prefer_num();
+val _ = numLib.temp_prefer_num();
 val _ = wordsLib.prefer_word();
 
 val ERR = Feedback.mk_HOL_ERR "arm_evalLib";
@@ -368,9 +368,9 @@ in
         end handle HOL_ERR _ => raise ERR "print_arm_state" "cannot print state"
 end;
 
-val _ = computeLib.add_conv
-          (``arm_eval$ptree_arm_next``,5,PTREE_ARM_NEXT_CONV)
-          computeLib.the_compset;
+val () = computeLib.upd_compset
+          (computeLib.add_conv
+             (``arm_eval$ptree_arm_next``,5,PTREE_ARM_NEXT_CONV));
 
 local
   fun decode_psr n = Term.mk_comb(``arm_coretypes$decode_psr``, n) |> eval

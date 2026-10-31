@@ -9,6 +9,8 @@ sig
   val CCONTR_TAC            : tactic
   val ASSUME_TAC            : thm_tactic
   val assume_tac            : thm_tactic
+  val LAST_ASSUME_TAC       : thm_tactic
+  val last_assume_tac       : thm_tactic
   val FREEZE_THEN           : thm_tactical
   val CONJ_TAC              : tactic
   val conj_tac              : tactic
@@ -22,8 +24,10 @@ sig
   val disj2_tac             : tactic
   val MP_TAC                : thm_tactic
   val mp_tac                : thm_tactic
+  val EQ_MP_TAC             : thm_tactic
   val EQ_TAC                : tactic
-  val eq_tac                : tactic
+  val eq_tac                : tactic (* alias for EQ_TAC *)
+  val iff_tac               : tactic (* alias for EQ_TAC *)
   val X_GEN_TAC             : term -> tactic
   val GEN_TAC               : tactic
   val gen_tac               : tactic
@@ -65,6 +69,8 @@ sig
   val FILTER_STRIP_TAC      : term -> tactic
   val ASM_CASES_TAC         : term -> tactic
   val REFL_TAC              : tactic
+  val SYM_TAC               : tactic
+  val sym_tac               : tactic
   val UNDISCH_TAC           : term -> tactic
   val AP_TERM_TAC           : tactic
   val AP_THM_TAC            : tactic
@@ -98,7 +104,7 @@ sig
   val KNOW_TAC              : term -> tactic
   val SUFF_TAC              : term -> tactic
   val suff_tac              : term -> tactic
-
+  val TRANS_TAC             : thm -> term -> tactic
 
   val eliminable            : term -> bool
   val VSUBST_TAC            : thm -> tactic
@@ -114,21 +120,25 @@ sig
   val dxrule               : thm_tactic
   val rev_drule            : thm_tactic
   val rev_dxrule           : thm_tactic
+  val every_drule          : thm_tactic
 
   val drule_at             : match_position -> thm_tactic
   val dxrule_at            : match_position -> thm_tactic
   val rev_drule_at         : match_position -> thm_tactic
   val rev_dxrule_at        : match_position -> thm_tactic
+  val every_drule_at       : match_position -> thm_tactic
 
   val drule_then           : thm_tactic -> thm_tactic
   val dxrule_then          : thm_tactic -> thm_tactic
   val rev_drule_then       : thm_tactic -> thm_tactic
   val rev_dxrule_then      : thm_tactic -> thm_tactic
+  val every_drule_then     : thm_tactic -> thm_tactic
 
   val drule_at_then        : match_position -> thm_tactic -> thm_tactic
   val dxrule_at_then       : match_position -> thm_tactic -> thm_tactic
   val rev_drule_at_then    : match_position -> thm_tactic -> thm_tactic
   val rev_dxrule_at_then   : match_position -> thm_tactic -> thm_tactic
+  val every_drule_at_then  : match_position -> thm_tactic -> thm_tactic
 
 
   val drule_all            : thm_tactic
@@ -147,7 +157,11 @@ sig
 
   val export_ignore : KernelSig.kernelname -> unit
   val get_ignores : unit -> KernelSig.kernelname HOLset.set
-  val unignoringc : term -> ('a -> 'b) -> ('a -> 'b)
-  val unignoring : KernelSig.kernelname -> ('a -> 'b) -> ('a -> 'b)
+  val get_ignores_of : Context.t -> KernelSig.kernelname HOLset.set
+  (* Both take a tactic rather than any function: the ignore set lives
+     in the context, so the only thing that can be run with it adjusted
+     is something the context is handed to. *)
+  val unignoringc : term -> tactic -> tactic
+  val unignoring : KernelSig.kernelname -> tactic -> tactic
 
 end

@@ -10,8 +10,39 @@ fun ERR x      = STRUCT_ERR "Cond_rewr" x;
 
 val stack_limit = ref 4;
 
-val track_rewrites = ref false;
-val used_rewrites  = ref [] : thm list ref;
+(* Which rewrites fired, for a human watching a simplification.  This is
+   an interactive convenience, so it is exposed as one bracketing
+   function that hands back the list with the result rather than as a
+   flag to set and a list to read afterwards.
+
+   The accumulator is per-thread and doubles as the switch: an untouched
+   thread, or NONE, means nobody is watching and nothing is recorded.
+   Nothing outside `with_tracking` can see it, so there is no flag for a
+   caller to leave set and no shared list for a second proof to append
+   to.  Nested tracking reports only the inner extent. *)
+local
+  val slot : thm list option ThreadLocal.t = ThreadLocal.new ()
+  fun peek () = case ThreadLocal.get slot of SOME s => s | NONE => NONE
+in
+  fun note_rewrite th =
+      case peek () of
+          NONE => ()
+        | SOME l => ThreadLocal.set (slot, SOME (th :: l))
+  fun with_tracking f x =
+      let
+        val saved = peek ()
+        val () = ThreadLocal.set (slot, SOME [])
+        fun stop () =
+            let val got = peek ()
+            in
+              ThreadLocal.set (slot, saved);
+              case got of NONE => [] | SOME l => List.rev l
+            end
+        val res = f x handle e => (ignore (stop ()); raise e)
+      in
+        (res, stop ())
+      end
+end
 
 (* -----------------------------------------------------------------------*
  * A total ordering on terms.  The behaviour of the simplifier depends    *
@@ -42,7 +73,7 @@ fun dest_hd env t =
     case dest_term t of
       VAR (s, ty) => let
       in
-        case Binarymap.peek(env, t) of
+        case Termtab.lookup env t of
           NONE => (((s, ""), 0), ty)
         | SOME n => ((("", ""), ~n), Type.alpha)
       end
@@ -68,8 +99,8 @@ in
           in
             case Type.compare(type_of bv1, type_of bv2) of
               EQUAL => let
-                val env1' = Binarymap.insert(env1, bv1, n)
-                val env2' = Binarymap.insert(env2, bv2, n)
+                val env1' = Termtab.update (bv1, n) env1
+                val env2' = Termtab.update (bv2, n) env2
               in
                 ac_term_ord0 (n + 1) (env1', env2') (bdy1, bdy2)
               end
@@ -87,7 +118,7 @@ in
     end
   | x => x
 end
-val empty_dict = Binarymap.mkDict Term.compare
+val empty_dict = Termtab.empty
 val ac_term_ord = ac_term_ord0 0 (empty_dict, empty_dict)
 
 (* bad old implementation, has a loop between
@@ -184,9 +215,8 @@ fun ac_term_ord(tm1,tm2) =
             val _ = if null conditions then
               trace(if isperm then 2 else 1, REWRITING(nm,tm,th))
                     else ()
-            val _ = if null stack andalso !track_rewrites
-                      then used_rewrites := th :: !used_rewrites
-                      else ()
+            (* note_rewrite is a no-op unless someone is tracking *)
+            val _ = if null stack then note_rewrite th else ()
         in trace(if isperm then 3 else 2,PRODUCE(tm,nm,final_thm));
             final_thm
         end
@@ -315,9 +345,17 @@ fun IMP_EQ_CANON (thm,bnd) = let
                       (trace(1,IGNORE("rewrite with existential vars (adding \
                                       \EQT version(s))",thm));
                        EQT_INTRO undisch_thm)
+                fun simple_rhs t =
+                    (if is_eq t then
+                      let
+                        val (l,r) = dest_eq t
+                      in
+                        (is_var l andalso is_const r) orelse (is_const l andalso is_var r)
+                      end
+                    else true)
                 val flip_eqp = let val (l,r) = dest_eq (concl base)
                                in
-                                 is_eq l andalso not (is_eq r)
+                                 is_eq l andalso (simple_rhs r)
                                end
               in
                 if flip_eqp then

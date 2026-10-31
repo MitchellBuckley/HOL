@@ -1,9 +1,65 @@
 open HolKernel Parse boolLib testutils markerLib
 
+val _ = new_theory "scratch"
+
 val _ = set_trace "Unicode" 0
 
-fun testtac tac = #1 o VALID tac
-val goalprint =
+(* Every directive constructor must be recognised with the identity and
+   payload its consumer needs, and nothing else may be. *)
+val _ =
+  let
+    val th = ASSUME “p:bool”
+    fun same th' =
+        HOLset.equal(hypset th, hypset th') andalso concl th ~~ concl th'
+    fun check (name, mk, ok) =
+        (tprint ("dest_directive: " ^ name);
+         case dest_directive (mk ()) of
+             NONE => die "not recognised"
+           | SOME d => if ok d then OK ()
+                       else die "wrong identity or payload")
+    fun rejects (name, mk) =
+        (tprint ("dest_directive: " ^ name ^ " is not a directive");
+         if isSome (dest_directive (mk ())) then die "recognised"
+         else OK ())
+  in
+    List.app check [
+      ("AC", fn () => AC th TRUTH,
+       fn DAC (a, b) => same a andalso concl b ~~ T | _ => false),
+      ("Cong", fn () => Cong th, fn DCong a => same a | _ => false),
+      ("Excl", fn () => Excl "nm", fn DExcl "nm" => true | _ => false),
+      ("ExclSF", fn () => ExclSF "nm", fn DExclSF "nm" => true | _ => false),
+      ("FRAG", fn () => FRAG "nm", fn DFRAG "nm" => true | _ => false),
+      ("Req0", fn () => mk_Req0 th, fn DReq0 a => same a | _ => false),
+      ("ReqD", fn () => mk_ReqD th, fn DReqD a => same a | _ => false),
+      ("Once", fn () => BoundedRewrites.Once th,
+       fn DBounded (a, 1) => same a | _ => false),
+      ("Ntimes 3", fn () => BoundedRewrites.Ntimes th 3,
+       fn DBounded (a, 3) => same a | _ => false),
+      ("NoAsms", fn () => NoAsms, fn DNoAsms => true | _ => false),
+      ("IgnAsm", fn () => IgnAsm ‘x = _’,
+       fn DIgnAsm s => String.isSuffix "x = _" s | _ => false),
+      ("Abbr", fn () => Abbr`v`, fn DAbbr "v" => true | _ => false),
+      ("L", fn () => L "lab", fn DLabel "lab" => true | _ => false),
+      ("Req0 wraps Cong", fn () => mk_Req0 (Cong th),
+       fn DReq0 a => (case dest_directive a of
+                          SOME (DCong b) => same b
+                        | _ => false)
+        | _ => false)
+    ];
+    List.app rejects [
+      ("TRUTH", fn () => TRUTH),
+      ("assumption", fn () => th),
+      ("reflexive equation", fn () => REFL “x:'a”),
+      ("equation", fn () => ASSUME “x:'a = y”),
+      ("implication from a marker", fn () => ASSUME “marker$Req0 ==> p”)
+    ]
+  end
+
+
+fun testtac tac = #1 o runtac (VALID tac)
+val goal_print = HOLPP.pp_to_string 75 goalStack.pp_goal
+
+val goals_print =
     HOLPP.pp_to_string 75(
       HOLPP.block HOLPP.CONSISTENT 0 o
       HOLPP.pr_list goalStack.pp_goal [HOLPP.NL, HOLPP.NL]
@@ -13,42 +69,42 @@ val L12_asms = [“L1 :- (x:'a) = a”, “L2 :- (y:'a) = b”]
 val _ = tprint "LLABEL_RES_THEN(1)"
 val _ = require_msg
       (check_result (goals_eq [(L12_asms, “(a:'a) = y”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN ASM_REWRITE_TAC [L"L1"]))
       (L12_asms, “x:'a = y”)
 
 val _ = tprint "LLABEL_RES_THEN(2)"
 val _ = require_msg
       (check_result (goals_eq [(L12_asms, “(a:'a) = b”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN ASM_REWRITE_TAC [L"L1", L"L2"]))
       (L12_asms, “x:'a = y”)
 
 val _ = tprint "LLABEL_RES_THEN(3)"
 val _ = require_msg
       (check_result (goals_eq [(L12_asms, “(x:'a) = y”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN ASM_REWRITE_TAC []))
       (L12_asms, “x:'a = y”)
 
 val _ = tprint "LLABEL_RES_THEN(4)"
 val _ = require_msg
       (check_result (goals_eq [(“y:'a = c” :: L12_asms, “(x:'a) = c”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN ASM_REWRITE_TAC []))
       (“y:'a = c ” :: L12_asms, “x:'a = y”)
 
 val _ = tprint "LLABEL_RES_THEN(5)"
 val _ = require_msg
       (check_result (goals_eq [(“y:'a = c” :: L12_asms, “(x:'a) = c”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN REWRITE_TAC [ASSUME “y:'a = c”]))
       (“y:'a = c” :: L12_asms, “x:'a = y”)
 
 val _ = tprint "LLABEL_RES_THEN(6)"
 val _ = require_msg
       (check_result (goals_eq [(“y:'a = c” :: L12_asms, “(a:'a) = c”)]))
-      goalprint
+      goals_print
       (testtac (LLABEL_RES_THEN REWRITE_TAC [ASSUME “y:'a = c”, L"L1"]))
       (“y:'a = c” :: L12_asms, “x:'a = y”)
 
@@ -63,7 +119,7 @@ val _ = require_msg
           (check_result (goals_eq [([“hide foo (P c1 /\ T /\ P x)”,
                                      “R c1 /\ R x”],
                                     “Q c1 c2:bool”)]))
-          (trace ("types", 1) goalprint)
+          (trace ("types", 1) goals_print)
           (testtac (RULE_ASSUM_TAC (REWRITE_RULE[])))
           (asl0, “Q c1 c2:bool”)
 
@@ -73,7 +129,7 @@ val _ = require_msg
           (check_result (goals_eq [([“hide foo (P c1 /\ T /\ P x)”,
                                      “R c2 /\ T /\ R x”],
                                     “Q c2 c2:bool”)]))
-          (trace ("types", 1) goalprint)
+          (trace ("types", 1) goals_print)
           (testtac (SUBST_ALL_TAC tyopEQ))
           (asl0, “Q c1 c2:bool”)
 
@@ -83,7 +139,7 @@ val _ = require_msg
                                    ([“hide foo (P c1 /\ T /\ P x)”,
                                      “R c1 /\ T /\ R c1”],
                                     “Q c1 c2:bool”)]))
-          (trace ("types", 1) goalprint)
+          (trace ("types", 1) goals_print)
           (testtac (CONJ_VALIDATE (SUBST_ALL_TAC (ASSUME “x = c1”))))
           (asl0, “Q c1 c2:bool”)
 
@@ -92,7 +148,7 @@ val _ = require_msg
           (check_result (goals_eq [([“hide foo (P c1 /\ P x)”,
                                      “R c1 /\ R x”],
                                     “Q c1 c2:bool”)]))
-          (trace ("types", 1) goalprint)
+          (trace ("types", 1) goals_print)
           (testtac $ unignoring_hide $ RULE_ASSUM_TAC $ REWRITE_RULE[])
           (asl0, “Q c1 c2:bool”)
 
@@ -102,6 +158,155 @@ val crwt = MATCH_MP condrwt (ASSUME “TEST y”)
 val _ = tprint "CONJ_VALIDATE(1)"
 val _ = require_msg
           (check_result (goals_eq[([], “TEST y /\ P c1”)]))
-          (trace ("types", 1) goalprint)
+          (trace ("types", 1) goals_print)
           (testtac (CONJ_VALIDATE (REWRITE_TAC[crwt])))
           ([], “P (y:tyop):bool”)
+
+fun thm_eq (hyps,t) th =
+    HOLset.equal(hyps, hypset th) andalso t ~~ concl th
+
+fun mklab s t = mk_comb(mk_comb(“suspendlabel”, mk_var(s, “:ind”)), t)
+val rhyp = mklab "3 r" “!r q p. suspendimp p (suspendimp q r)”
+val shyp = mklab "3 s" “!s q p. suspendimp p (suspendimp q s)”
+val rshyp = mklab "3 r" “!s q p. suspendimp p (suspendimp q s)”
+val p = mk_var("p", bool)
+val q = mk_var("q", bool)
+
+val _ = tprint "suspend (1)"
+val _ = require_msg
+          (check_result
+             (thm_eq (
+                 HOLset.fromList Term.compare [rhyp, shyp],
+                 “p /\ q ==> r /\ s”)
+             )
+          )
+          thm_to_string
+          (fn tac => TAC_PROOF(([], “p /\ q ==> r /\ s”), tac))
+          (rpt strip_tac >- suspend "r" >- suspend "s")
+
+val _ = tprint "suspend (2)"
+val _ = require_msg
+          (check_result
+             (thm_eq (
+                 HOLset.fromList Term.compare [rshyp, rhyp],
+                 “p /\ q ==> r /\ s”)
+             )
+          )
+          thm_to_string
+          (fn tac => TAC_PROOF(([], “p /\ q ==> r /\ s”), tac))
+          (rpt strip_tac >- suspend "r" >- suspend "r")
+
+val pq_th1 =
+    TAC_PROOF(([], “p /\ q ==> q /\ p”),
+              strip_tac >> conj_tac >- suspend "q" >- suspend "p")
+val pq_th2 =
+    TAC_PROOF(([], “p /\ q ==> q /\ p”),
+              strip_tac >> conj_tac >> suspend "pq")
+
+val _ = tprint "extract_suspended_goal (1)"
+val _ = require_msg
+          (check_result (goal_eq ([q, p], p)))
+          goal_print
+          (fn th => resumption_to_goal (extract_suspended_goal [th] "p"))
+          pq_th1
+
+val _ = tprint "extract_suspended_goal (2)"
+val _ = require_msg
+          (check_result (
+              goal_eq (
+                [],
+                “resconj (suspendimp p (suspendimp q p))
+                         (suspendimp p (suspendimp q q))”
+              )
+            )
+          )
+          goal_print
+          (fn th => resumption_to_goal (extract_suspended_goal [th] "pq"))
+          pq_th2
+
+val _ = shouldfail {checkexn = is_struct_HOL_ERR "markerLib",
+                    printarg = K "extract_suspended_goal fails (1)",
+                    printresult = goal_print,
+                    testfn = (fn th => resumption_to_goal (extract_suspended_goal [th] "pq"))}
+                   pq_th1
+
+val _ = show_assums := true
+val _ = tprint "prim_resume (1a)"
+fun pp {subresult,updated_main} =
+    let open HOLPP
+    in
+      PrettyBlock(0,true,[],[
+                    pp_thm subresult,
+                    PrettyLineBreak,
+                    pp_thm updated_main
+                    ])
+    end
+fun one_b (Res {subresult,updated_main}) = (
+  tprint "prim_resume (1b)";
+  require_msg(check_result
+                (fn {subresult,updated_main} =>
+                    thm_eq (HOLset.fromList Term.compare [q], q)
+                           subresult
+                    andalso
+                    thm_eq (HOLset.empty Term.compare, “p /\ q ==> q /\ p”)
+                           updated_main))
+             (HOLPP.pp_to_string 75 pp)
+             (fn th => prim_resume (th, "q", first_assum ACCEPT_TAC))
+             updated_main
+)
+  | one_b (Exn _) = die "Shouldn't happen in test"
+val _ = require_msgk (check_result
+                        (fn {subresult,updated_main} =>
+                            thm_eq (HOLset.fromList Term.compare [p],p)
+                                   subresult andalso
+                            thm_eq (HOLset.fromList Term.compare [
+                                       mklab "2 q"
+                                             “!q p. suspendimp p (suspendimp q q)”
+                                     ],
+                                    “p /\ q ==> q /\ p”) updated_main))
+                     pp
+                     (fn th => prim_resume(th,"p",first_assum ACCEPT_TAC))
+                     one_b
+                     pq_th1
+(* Test resconj with different closure-variable counts across sub-goals.
+   After gen_tac on "!x. T /\ (x ==> x)", conj_tac gives:
+     sub-goal 1 "([], T)" with fvs=[] so nclosure=0, and
+     sub-goal 2 "([], x ==> x)" with fvs=[x] so nclosure=1.
+   The two hypotheses have different nclosure counts encoded in their labels;
+   extract_suspended_goal and resumption_to_goal must handle both correctly,
+   stripping the right number of closure foralls per component. *)
+val resconj_closure_th =
+    TAC_PROOF(([], “!x:bool. T /\ (x ==> x)”),
+              gen_tac >> conj_tac >> suspend "s")
+
+val _ = tprint "prim_resume resconj+closure"
+val _ = require_msg
+          (check_result
+             (fn {subresult,updated_main} =>
+                  null (hyp updated_main) andalso
+                  concl updated_main ~~ “!x:bool. T /\ (x ==> x)”))
+          (HOLPP.pp_to_string 75 pp)
+          (fn th => prim_resume(th, "s",
+                                RESUME_TAC >>
+                                TRY (ACCEPT_TAC TRUTH) >>
+                                disch_then  ACCEPT_TAC))
+          resconj_closure_th
+
+(* Under the new cross-file suspend/resume design, a suspended theorem is
+   a perfectly valid export (as a theorem with suspendlabel hypotheses);
+   export_theory no longer fails on unfinalised suspensions. *)
+val incomplete_th = Feedback.quiet_messages save_thm("incomplete_th", pq_th1)
+
+(* UNABBREV_TAC on a name with no matching abbrev assumption used to fail
+   inside FIRST_ASSUM with an empty error message; it should now report a
+   clear UNABBREV_TAC error mentioning the missing abbreviation. (#1483) *)
+val _ = tprint "UNABBREV_TAC missing abbrev gives clear error"
+val _ = shouldfail {
+  checkexn = check_HOL_ERRexn
+               (fn (_, fnnm, msg) =>
+                   fnnm = "UNABBREV_TAC" andalso
+                   String.isSubstring "MISSING_ABBR" msg),
+  printarg = K "UNABBREV_TAC \"MISSING_ABBR\" with no such abbrev",
+  printresult = goals_print,
+  testfn = (fn g => testtac (UNABBREV_TAC "MISSING_ABBR") g)
+} ([“(P:'a -> bool) x”], “(Q:'a -> bool) x”)

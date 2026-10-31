@@ -1,24 +1,11 @@
 
-open HolKernel Parse boolLib bossLib finite_mapTheory;
-open recursivefnsTheory;
-open prnlistTheory;
-open primrecfnsTheory;
-open listTheory;
-open arithmeticTheory;
-open numpairTheory;
-open pred_setTheory;
-open recfunsTheory;
-open extNatTheory;
-open prtermTheory;
-open pred_setTheory;
-open realTheory;
-open real_sigmaTheory;
-open transcTheory;
-open boolListsTheory;
+Theory kraft_ineq
+Ancestors
+  finite_map recursivefns prnlist primrecfns list arithmetic
+  numpair pred_set recfuns extNat prterm pred_set real real_sigma
+  transc boolLists numposrep[qualified]
 
-val _ = new_theory "kraft_ineq";
-
-val _ = intLib.deprecate_int()
+val _ = hide "lg" (* transc$lg is now log base 2 *)
 
 Theorem bool_list_card[simp]:
   CARD {s | LENGTH (s:bool list) = n} = 2**n
@@ -342,7 +329,7 @@ Proof
       simp[Abbr‘jd’,RPOW_POS_LT])
 QED
 
-Triviality max_rs_lemma:
+Theorem max_rs_lemma[local]:
   !s. FINITE s ==> s<>{} ==> ?x:real. x IN s /\ !y. y IN s ==> y<=x
 Proof
   Induct_on‘FINITE’ >>rw[] >> Cases_on‘s={}’ >> fs[] >> qexists_tac‘max e x’ >>
@@ -350,7 +337,7 @@ Proof
   >- metis_tac[] >> Cases_on‘y=e’>> fsr[] >> RES_TAC >> fsr[]
 QED
 
-Triviality min_rs_lemma:
+Theorem min_rs_lemma[local]:
   !s. FINITE s ==> s<>{} ==> ?x:real. x IN s /\ !y. y IN s ==> x<=y
 Proof
   Induct_on‘FINITE’ >>rw[] >> Cases_on‘s={}’ >> fs[] >> qexists_tac‘min e x’ >>
@@ -358,12 +345,12 @@ Proof
   Cases_on‘y=e’>> fsr[] >> RES_TAC >> fsr[]
 QED
 
-Theorem maxr_set_def = new_specification(
+val maxr_set_def = new_specification(
   "maxr_set_def",["maxr_set"],
   SIMP_RULE(srw_ss() )[SKOLEM_THM,GSYM RIGHT_EXISTS_IMP_THM] max_rs_lemma
   );
 
-Theorem minr_set_def = new_specification(
+val minr_set_def = new_specification(
   "minr_set_def",["minr_set"],
   SIMP_RULE(srw_ss() )[SKOLEM_THM,GSYM RIGHT_EXISTS_IMP_THM] min_rs_lemma);
 
@@ -482,9 +469,11 @@ Proof
   (TBL2N_ub |> Q.INST [‘l’|->‘x’] |> assume_tac) >> simp[TBL2N_ub]
 QED
 
-val rpow_len_lb = Q.store_thm("rpow_len_lb",
-‘0<  2 rpow -&LENGTH x’,
-fs[RPOW_POS_LT]);
+Theorem rpow_len_lb:
+ 0<  2 rpow -&LENGTH x
+Proof
+fs[RPOW_POS_LT]
+QED
 
 Theorem TBL2N_lb:
   0 <= &TBL2N x * 2 rpow -&LENGTH x
@@ -946,7 +935,7 @@ Proof
 QED
 
 Definition TN2BL_def:
-  TN2BL n = MAP ((=) 1) $ REVERSE $ num_to_bin_list n
+  TN2BL n = MAP ((=) 1) $ num_to_bin_list n
 End
 
 Definition padL_def:
@@ -2028,5 +2017,3 @@ QED
 
 Theorem kraft_finite_converse =
   kraft_finite_ineq2 |> SIMP_RULE (srw_ss()) [REAL_SUM_FOLDR, GSYM powr_negexp]
-
-val _ = export_theory();

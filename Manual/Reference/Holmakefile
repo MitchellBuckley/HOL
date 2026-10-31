@@ -3,70 +3,136 @@
 # =====================================================================
 
 # ---------------------------------------------------------------------
-# Pathnames: Helpd = hol help directory, MAKEINDEX = makeindex program
+# Pathnames: Helpd = hol help directory; Processed = polyscripter-
+# evaluated mirror of the Reference entries (see
+# help/src-sml/process_docfiles.sml).  Both PDF and mdbook pipelines
+# consume the processed directory so polyscripter `>>` directives are
+# evaluated exactly once per build.
 # ---------------------------------------------------------------------
 Helpd=../../help
+Processed=../build/Docfiles-processed
+# Generated alias entries; built and owned by help/src-sml (below).
+Gend=$(Helpd)/generated-alias-docs
+
+INCLUDES = $(Helpd)/src-sml ../Tools
+
+# Cross-manual labels.tsv prereq list for the mdbook target.
+# See Manual/mdbook.mk for MANUALS / SIBLING_LABELS.
+THIS = Reference
+include ../mdbook.mk
 
 OTHER = ../LaTeX/commands.tex ../LaTeX/layout.sty ../LaTeX/ack.tex \
         ../LaTeX/ref-macros.tex
 
-reference.pdf: reference.tex entries.tex entries-intro.tex $(OTHER)
+all: reference.pdf
+.PHONY: all mdbook
+
+# ---------------------------------------------------------------------
+# PDF pipeline: Md2TeX concatenates every entry into one big chapter
+# (sorted alphabetically by function name); pandoc -> latexmk produces
+# the printable reference manual.  Unchanged in shape from before
+# Reference joined the mdbook pipeline.
+# ---------------------------------------------------------------------
+reference.pdf: reference.tex entries.tex $(OTHER)
 	latexmk -pdf reference
 
-entries.tex: $(Helpd)/src-sml/Doc2Tex.exe docfiles $(wildcard $(Helpd)/Docfiles/*.doc)
-	$(Helpd)/src-sml/Doc2Tex.exe ${Helpd}/Docfiles entries.tex
+entries.md: $(Helpd)/src-sml/Md2TeX.exe $(Processed)/.stamp
+	$(Helpd)/src-sml/Md2TeX.exe $(Processed) > $@
 
-docfiles:
-	@/bin/ls -1 $(Helpd)/Docfiles/*.doc > docfiles0
-	@if [ -r docfiles ] ; then if cmp -s docfiles0 docfiles ; then rm docfiles0 ; else mv docfiles0 docfiles ; fi ; else mv docfiles0 docfiles ; fi
+# process_docfiles is bulk: one HOL heap load polyscripts every
+# entry in one pass, so the smallest honest granularity is "rerun
+# the whole batch on any source change".  The `rm -rf` ensures the
+# tree only ever holds outputs for currently-existing sources --
+# without it, renaming/deleting a Docfile leaves orphans behind.
+# $(Gend)/.stamp is built by help/src-sml (this directory's INCLUDES),
+# which owns AliasGen and its output; see that Holmakefile.
+$(Processed)/.stamp: $(Helpd)/src-sml/process_docfiles \
+                     $(Gend)/.stamp \
+                     $(wildcard $(Helpd)/Docfiles/*.smd)
+	rm -rf $(Processed)
+	mkdir -p $(Processed)
+	cd $(Helpd)/src-sml && \
+	  ./process_docfiles $(HOLDIR)/help/Docfiles \
+	                     $(HOLDIR)/Manual/build/Docfiles-processed \
+	                     --extra-src=$(HOLDIR)/help/generated-alias-docs
+	touch $@
 
-.PHONY: docfiles
+entries.tex: entries.md
+	pandoc -V documentclass=book -o $@ $<
 
-EXTRA_CLEANS = $(patsubst %,reference.%,aux fdb_latexmk fls idx ilg ind log out pdf toc) title.aux entries.aux preface.aux docfiles docfiles0
+# ---------------------------------------------------------------------
+# mdbook pipeline: each entry .smd becomes one page; sidebar groups
+# entries by HOL structure (the first dot-separated component of the
+# filename).  SUMMARY.md is generated from the file listing into the
+# processed directory itself, alongside the (already-polyscripted)
+# entries (the whole tree is gitignored under Manual/build/).
+# ---------------------------------------------------------------------
+# Recipe-less PHONY alias; the real gate is the file target below.
+# See Manual/Description/Holmakefile for the rationale.
+mdbook: ../book/Reference/index.html
 
-# Until we know how to generate the theorems that used to be part of the
-# reference, this is all unused
-theorems:
-	@echo "\chapter{Pre-proved Theorems}" > theorems.tex
-	@echo "\input{theorems-intro}" >> theorems.tex
-	@echo "\section{Definitions of Basic Logical Constants}">>theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/basic-logic theorems.tex
-	@echo "\section{Constants for syntactic abbreviations}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/syntax theorems.tex
-	@echo "\section{Axioms}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/axioms theorems.tex
-	@echo "\section{Logical tautologies}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/logic theorems.tex
-	@echo "\section{Theorems about functions}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/functions theorems.tex
-	@echo "\section{Theorems about the type {\tt one}}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/one theorems.tex
-	@echo "\section{Theorems about combinators}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/combin theorems.tex
-	@echo "\section{Theorems about pairs}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/pairs theorems.tex
-	@echo "\section{Theorems about disjoint sums}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/sum theorems.tex
-	@echo "\section{Theorems about arithmetic}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/arith theorems.tex
-	@echo "\section{Theorems about lists}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/list theorems.tex
-	@echo "\section{Theorems about trees}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/tree theorems.tex
-	@echo "\section{Theorems used to define types}" >> theorems.tex
-	/bin/sh bin/doc-to-tex ${D2TSED} ${Helpd}/THEOREMS/tydefs theorems.tex
+../book/Reference/index.html: ../Tools/smdpp \
+        $(Processed)/SUMMARY.md entries.list identifiers.js \
+        labels.tsv $(SIBLING_LABELS)
+	mdbook build
+	# See Manual/Description/Holmakefile for the rationale.
+	cd ../book/Reference && \
+	  ln -sf $$(ls searchindex-*.js | head -1) searchindex.js
+	# `mdbook build` empties the build dir, so the entry-name
+	# sidecar is installed afterwards.  Copied rather than
+	# symlinked: a link pointing out of book/ wouldn't survive a
+	# deploy snapshot.
+	cp identifiers.js ../book/Reference/identifiers.js
+	../Tools/smdpp check-html ../book/Reference
+	../Tools/smdpp check-refs ../book/Reference
+	../Tools/smdpp check-links ../book/Reference || true
+# Reference entries' hand-curated "See also" sections reference the
+# legacy single-page anchor scheme (`#Foo.bar`).  Where `Foo.bar.smd`
+# exists, smdpp rewrites the link to the target entry's page; where
+# it doesn't (renamed or removed entries), the broken link survives
+# and check-links reports it.  These are source-content bugs in the
+# entries -- to be cleaned up entry-by-entry over time, not a
+# tooling failure -- so swallow the exit code (`|| true`) until the
+# audit completes.
 
-thmdoc:
-	(cd $(THMDIR)axioms;    make thmdoc) ;
-	(cd $(THMDIR)functions; $(MAKEDOC) fun) ;
-	(cd $(THMDIR)one;       $(MAKEDOC) one) ;
-	(cd $(THMDIR)combin;    $(MAKEDOC) combin) ;
-	(cd $(THMDIR)sum;       $(MAKEDOC) sum) ;
-	(cd $(THMDIR)arith;     $(MAKEDOC) num) ;
-	(cd $(THMDIR)arith;     $(MAKEDOC) prim_rec) ;
-	(cd $(THMDIR)arith;     $(MAKEDOC) arithmetic) ;
-	(cd $(THMDIR)list;      $(MAKEDOC) list) ;
-	(cd $(THMDIR)tree;      $(MAKEDOC) tree) ;
-	(cd $(THMDIR)tree;      $(MAKEDOC) ltree) ;
-	(cd $(THMDIR)tydefs;    $(MAKEDOC) tydefs) ;
-	@echo "===> .doc files for theorems created"
+# gen_reference_summary scans whatever directory you point it at,
+# so feeding it the processed mirror (where every *.smd has been
+# polyscripter-evaluated) yields a SUMMARY whose entry filenames
+# resolve cleanly inside the processed tree.
+$(Processed)/SUMMARY.md: ../Tools/gen_reference_summary $(Processed)/.stamp
+	../Tools/gen_reference_summary $(Processed) > $@
+
+# Scan-only label dump for cross-book `\ref{Book:label}` resolution.
+# See Manual/Description/Holmakefile for the rationale.
+labels.tsv: ../Tools/smdpp $(Processed)/SUMMARY.md $(Processed)/.stamp
+	../Tools/smdpp dump-labels .
+
+# Lookup table for `\refentry{Foo.bar}` substitution in Description
+# / Tutorial / Reference's smdpp pass.  One line per entry name
+# (filename without .smd).  Sibling books' smdpp loads this at
+# preprocess startup and dies if it sees `\refentry{X}` with X
+# missing -- a typo / removed-entry guard.
+# Via $(Gend)/.stamp rather than the Docfiles directly, so the
+# generated alias entries exist before the `ls`.
+entries.list: $(Gend)/.stamp
+	ls $(Helpd)/Docfiles/*.smd $(Gend)/*.smd | xargs -n1 basename | \
+	  sed 's/\.smd$$//' | sort > $@
+
+# Entry-name table for the site's name-lookup layer.  It exists
+# because elasticlunr runs its trimmer / stop-word filter / stemmer
+# over the *query* as well as over the indexed text, so entries
+# named `have`, `THEN`, `I`, `&&` (and the rest) are unreachable
+# through searchindex.js no matter what the reader types.  The
+# generator reuses this manual's own scan, so the sidebar and the
+# table always agree on which entries exist.  See
+# Manual/Developers/manual-authoring.md.
+identifiers.js: ../Tools/gen_reference_summary $(Processed)/.stamp
+	../Tools/gen_reference_summary --identifiers $(Processed) > $@
+
+EXTRA_CLEANS = reference.pdf entries.md entries.tex \
+               $(Processed)/ entries.list labels.tsv identifiers.js \
+               ../book/Reference/ \
+               reference.aux reference.log reference.out \
+               reference.toc reference.fls reference.idx reference.ilg \
+               reference.ind reference.blg reference.bbl \
+               reference.fdb_latexmk

@@ -1,4 +1,7 @@
 CLINE_OPTIONS = --no_overlay
+ifdef POLY
+CLINE_OPTIONS += --poly_not_hol
+endif
 
 FTHM_UI = $(protect $(SIGOBJ)/FinalThm-sig.ui)
 FTHM_UID = $(dprot $(SIGOBJ)/FinalThm-sig.ui)
@@ -8,6 +11,8 @@ FTYPE_UI = $(protect $(SIGOBJ)/FinalType-sig.ui)
 FTERM_UI = $(protect $(SIGOBJ)/FinalTerm-sig.ui)
 FNET_UI = $(protect $(SIGOBJ)/FinalNet-sig.ui)
 FNET_UID = $(dprot $(SIGOBJ)/FinalNet-sig.ui)
+FCTXT_UI = $(protect $(SIGOBJ)/FinalContext-sig.ui)
+FCTXT_UID = $(dprot $(SIGOBJ)/FinalContext-sig.ui)
 
 TAG_UOD = $(dprot $(SIGOBJ)/Tag.uo)
 TYPE_UID = $(dprot $(SIGOBJ)/Type.ui)
@@ -27,6 +32,14 @@ Thm.sml: otknl-thm.ML
 Thm-sig.sml: otknl-thmsig.ML
 	$(CP) $< $@
 
+else ifeq ($(KERNELID),trknl)
+
+Thm.sml: otknl-thm.ML
+	$(CP) $< $@
+
+Thm-sig.sml: otknl-thmsig.ML
+	$(CP) $< $@
+
 else
 Thm.sml: std-thm.ML
 	$(CP) $< $@
@@ -39,10 +52,10 @@ endif
 Thm-sig.uo: Thm-sig.sml $(FTHM_UID) $(TERM_UID) $(TAG_UOD)
 	$(HOLMOSMLC) -c -toplevel $(FTHM_UI) $<
 
-Overlay.uo: Overlay.sml $(TYPE_UID) $(NET_UOD) $(TERM_UOD) $(FTAG_UID) Thm.uo Thm-sig.uo $(FNET_UID)
+Overlay.uo: Overlay.sml $(TYPE_UID) $(NET_UOD) $(TERM_UOD) $(FTAG_UID) Thm.uo Thm-sig.uo $(FNET_UID) $(FCTXT_UID)
 	$(HOLMOSMLC) -c -toplevel \
               $(FTAG_UI) $(FTYPE_UI) $(FTERM_UI) $(FNET_UI) $(FTHM_UI) \
-              $(TYPE_UID) \
+              $(TYPE_UID) $(FCTXT_UI) \
 	      Thm-sig.ui Overlay.sml
 
 

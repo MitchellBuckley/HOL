@@ -12,7 +12,7 @@ open CCSLib CCSTheory;
 
 structure Parse = struct
   open Parse
-  val (Type, Term) = parse_from_grammars CCSTheory.CCS_grammars
+  val (Type, Term) = parse_from_grammars $ valOf $ grammarDB{thyname="CCS"}
 end
 open Parse
 
@@ -214,5 +214,3 @@ in
 end;
 
 end (* struct *)
-
-(* last updated: May 14, 2017 *)

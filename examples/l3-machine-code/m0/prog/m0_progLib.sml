@@ -7,7 +7,8 @@ open stateLib spec_databaseLib m0_progTheory
 structure Parse =
 struct
    open Parse
-   val (Type, Term) = parse_from_grammars m0_progTheory.m0_prog_grammars
+   val (Type, Term) =
+       parse_from_grammars $ valOf $ grammarDB {thyname="m0_prog"}
 end
 
 open Parse
@@ -17,7 +18,7 @@ val ERR = Feedback.mk_HOL_ERR "m0_progLib"
 (* ------------------------------------------------------------------------ *)
 
 val m0_proj_def = m0_progTheory.m0_proj_def
-val m0_comp_defs = m0_progTheory.component_defs
+val m0_comp_defs = stateLib.sep_components {thyname="m0_prog"}
 
 local
    val pc = Term.prim_mk_const {Thy = "m0", Name = "RName_PC"}
@@ -62,13 +63,8 @@ val state_id =
        ["REG", "count", "pcinc"]
       ]
 
-val m0_frame =
-   stateLib.update_frame_state_thm m0_proj_def
-      ["PSR.N", "PSR.Z", "PSR.C", "PSR.V", "count", "REG", "MEM"]
-
-val m0_frame_hidden =
-   stateLib.update_hidden_frame_state_thm m0_proj_def
-      [``s with pcinc := x``]
+val m0_frame = m0_progTheory.m0_frame
+val m0_frame_hidden = m0_progTheory.m0_frame_hidden
 
 (* -- *)
 
@@ -541,8 +537,14 @@ local
           [r, _, m, _] => [r, m]
         | _ => raise ERR "component_11" "")
    val sym_R_x_pc =
-      REWRITE_RULE [utilsLib.qm [] ``(a = RName_PC) = (RName_PC = a)``]
-         m0_stepTheory.R_x_pc
+      let val rname_pc_tm = ``RName_PC``
+          val rname_ty = type_of rname_pc_tm
+          val a_var = mk_var ("a", rname_ty)
+          val sym_thm =
+             Drule.ISPECL [a_var, rname_pc_tm] boolTheory.EQ_SYM_EQ
+      in
+        REWRITE_RULE [sym_thm] m0_stepTheory.R_x_pc
+      end
    val EXTRA_TAC =
       RULE_ASSUM_TAC (REWRITE_RULE [sym_R_x_pc, m0_stepTheory.R_x_pc])
       THEN ASM_REWRITE_TAC [boolTheory.DE_MORGAN_THM]

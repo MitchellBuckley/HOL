@@ -1,20 +1,17 @@
-open HolKernel boolLib bossLib Parse; val _ = new_theory "lisp_ops";
-val _ = ParseExtras.temp_loose_equality()
-open lisp_symbolsTheory lisp_sexpTheory lisp_consTheory lisp_invTheory;
-open lisp_equalTheory lisp_codegenTheory lisp_initTheory lisp_symbolsTheory;
+Theory lisp_ops
+Ancestors
+  lisp_symbols lisp_sexp lisp_cons lisp_inv lisp_equal
+  lisp_codegen lisp_init lisp_symbols words arithmetic list
+  pred_set pair combin finite_map address bit prog set_sep
+  prog_x64 stop_and_copy
+Libs
+  compilerLib codegenLib decompilerLib wordsLib helperLib
+  prog_x64Lib x64_encodeLib
 
+val _ = ParseExtras.temp_loose_equality()
 (* --- *)
 
-open compilerLib codegenLib decompilerLib;
-open wordsTheory arithmeticTheory wordsLib listTheory pred_setTheory pairTheory;
-open combinTheory finite_mapTheory addressTheory bitTheory;
-
-open progTheory set_sepTheory helperLib;
-open prog_x64Theory prog_x64Lib x64_encodeLib;
-open stop_and_copyTheory;
-
-infix \\
-val op \\ = op THEN;
+fun allowing_rebinds f x = Feedback.trace ("Theory.allow_rebinds", 1) f x
 val RW = REWRITE_RULE;
 val RW1 = ONCE_REWRITE_RULE;
 
@@ -41,16 +38,18 @@ Use of cs list:
 *)
 
 
-val zCODE_MEMORY_def = Define `
+Definition zCODE_MEMORY_def:
   (zCODE_MEMORY NONE dd d = emp) /\
   (zCODE_MEMORY (SOME F) dd d = zBYTE_MEMORY dd d) /\
-  (zCODE_MEMORY (SOME T) dd d = zCODE (zCODE_SET dd d))`;
+  (zCODE_MEMORY (SOME T) dd d = zCODE (zCODE_SET dd d))
+End
 
-val zCODE_UNCHANGED_def = Define `
+Definition zCODE_UNCHANGED_def:
   (zCODE_UNCHANGED NONE dd d = emp) /\
-  (zCODE_UNCHANGED (SOME x) dd d = cond (x = (dd,d)))`;
+  (zCODE_UNCHANGED (SOME x) dd d = cond (x = (dd,d)))
+End
 
-val zLISP_ALT_def = Define `
+Definition zLISP_ALT_def:
   zLISP_ALT side (a1,a2,sl,sl1,e,ex,cs,rbp,ddd,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok) =
     SEP_EXISTS tw0 tw1 tw2 wsp bp sp w0 w1 w2 w3 w4 w5 wi we df f dg g bp2 ds sa1 sa2 sa3 dd d.
       zR 0w tw0 * zR 1w tw1 * zR 2w tw2 * zR 3w wsp * zR 6w bp * zR 7w sp *
@@ -60,9 +59,10 @@ val zLISP_ALT_def = Define `
       zIO (EL 0 cs,EL 1 cs,EL 2 cs,EL 0 ds) io * zCODE_UNCHANGED cu dd d *
         cond (lisp_inv (a1,a2,sl,sl1,e,ex,cs,ok) (x0,x1,x2,x3,x4,x5,^VAR_REST)
                  (w0,w1,w2,w3,w4,w5,df,f,^REST) /\
-              side wsp wi we ds tw2)`;
+              side wsp wi we ds tw2)
+End
 
-val zLISP_R_def = Define `
+Definition zLISP_R_def:
   zLISP_R (a1,a2,sl,sl1,e,ex,cs,rbp,ddd,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok) =
     SEP_EXISTS tw0 tw1 tw2 wsp bp sp w0 w1 w2 w3 w4 w5 wi we df f dg g bp2 ds sa1 sa2 sa3 dd d.
       zR 0w tw0 * zR 2w (EL 1 cs) * zR 3w wsp * zR 6w bp * zR 7w sp *
@@ -71,9 +71,10 @@ val zLISP_R_def = Define `
       zR 14w wi * zR 15w we * zMEMORY df f * zBYTE_MEMORY dg g * zCODE_MEMORY ddd dd d *
       zIO_R (EL 0 cs,EL 1 cs,EL 2 cs) io * zCODE_UNCHANGED cu dd d *
         cond (lisp_inv (a1,a2,sl,sl1,e,ex,cs,ok) (x0,x1,x2,x3,x4,x5,^VAR_REST)
-                 (w0,w1,w2,w3,w4,w5,df,f,^REST))`;
+                 (w0,w1,w2,w3,w4,w5,df,f,^REST))
+End
 
-val zLISP_INIT_def = Define `
+Definition zLISP_INIT_def:
   zLISP_INIT (a1,a2,sl,sl1,e,ex,rbp,cs,qs,ddd,cu) io =
     SEP_EXISTS df f dg g sp sa1 sa_len ds dd d.
       zBYTE_MEMORY dg g * zCODE_MEMORY ddd dd d * zMEMORY df f * ~zR 0x0w *
@@ -81,9 +82,11 @@ val zLISP_INIT_def = Define `
       ~zR 0xBw * ~zR 0x9w * ~zR 0xDw * ~zR 0x8w * ~zR 0xCw * ~zR 0xAw *
       ~zR 0xEw * ~zR 0xFw * zIO (EL 0 cs,EL 1 cs,EL 2 cs,EL 0 ds) io *
        zCODE_UNCHANGED cu dd d *
-        cond (lisp_init (a1,a2,sl,sl1,e,ex,cs) io (df,f,dg,g,dd,d,sp,sa1,sa_len,ds))`;
+        cond (lisp_init (a1,a2,sl,sl1,e,ex,cs) io (df,f,dg,g,dd,d,sp,sa1,sa_len,ds))
+End
 
-val zLISP_raw = Define `zLISP = zLISP_ALT (\wsp wi we ds tw2. T)`;
+Definition zLISP_raw: zLISP = zLISP_ALT (\wsp wi we ds tw2. T)
+End
 val zLISP_def = SIMP_CONV std_ss [zLISP_ALT_def,zLISP_raw]
   ``zLISP (a1,a2,sl,sl1,e,ex,cs,rbp,ddd,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok)``
 val _ = save_thm("zLISP_def",zLISP_def);
@@ -98,10 +101,11 @@ val SEP_IMP_zLISP_ALT_zLISP = prove(
 
 val STAT = zLISP_def |> SPEC_ALL |> concl |> dest_eq |> fst |> car |> cdr;
 
-val zLISP_FAIL_def = Define `
+Definition zLISP_FAIL_def:
   zLISP_FAIL (a1,a2,sl,sl1,e,ex,cs,rbp,dd,cu) =
     SEP_EXISTS ddd vars. zLISP (a1,a2,sl,sl1,e,ex,cs,rbp,ddd,cu) vars *
-                         ~zS * zPC ex * cond ((dd = NONE) ==> (ddd = dd))`;
+                         ~zS * zPC ex * cond ((dd = NONE) ==> (ddd = dd))
+End
 
 val _ = set_echo 0;
 val (i,j) = (2,4)
@@ -644,9 +648,12 @@ fun X64_LISP_EQ_VAL n i = let
   val result = prove_spec th imp def pre_tm post_tm
   in save_lisp_thm("X64_LISP_EQ_VAL_" ^ int_to_string n ^ "_" ^ int_to_string i,result) end;
 
+val X64_LISP_EQ_VAL = fn n => fn i => allowing_rebinds (X64_LISP_EQ_VAL n) i
+
 val _ = map (X64_LISP_EQ_VAL 1) all_regs;
 val _ = map (X64_LISP_EQ_VAL 2) all_regs;
 val _ = map (X64_LISP_EQ_VAL 3) all_regs;
+(* does 3 0 a second time *)
 val _ = map (fn n => X64_LISP_EQ_VAL n 0) [3,4,5,6,7,8,9,10,11,12,13,14,15];
 
 (* eq *)
@@ -732,13 +739,15 @@ val X64_LISP_EVEN = let
 
 (* assign 0 and 1 to all regs *)
 
-val SIGN_EXTEND_MOD = store_thm("SIGN_EXTEND_MOD",
-  ``SIGN_EXTEND 32 64 (w2n imm32) MOD 4294967296 = w2n (imm32:word32)``,
+Theorem SIGN_EXTEND_MOD:
+    SIGN_EXTEND 32 64 (w2n imm32) MOD 4294967296 = w2n (imm32:word32)
+Proof
   SIMP_TAC std_ss [SIGN_EXTEND_def,LET_DEF] \\ SRW_TAC [] []
   \\ (SIMP_RULE (std_ss++SIZES_ss) [] (INST_TYPE [``:'a``|->``:32``] w2n_lt)
        |> Q.SPEC `imm32` |> ASSUME_TAC) \\ FULL_SIMP_TAC std_ss []
   \\ REWRITE_TAC [GSYM (EVAL ``4294967295 * 4294967296``)]
-  \\ IMP_RES_TAC MOD_MULT \\ FULL_SIMP_TAC std_ss []);
+  \\ IMP_RES_TAC MOD_MULT \\ FULL_SIMP_TAC std_ss []
+QED
 
 val imm32_lemma = prove(
   ``n < 2**30 ==>
@@ -864,7 +873,7 @@ val all_syms = ilist 0 lisp_inv_sym_tests;
 val _ = map (X64_LISP_SYM 0) all_regs; (* NIL *)
 val _ = map (X64_LISP_SYM 1) all_regs; (* T *)
 val _ = map (X64_LISP_SYM 2) all_regs; (* QUOTE *)
-val _ = map (fn x => X64_LISP_SYM x 0) all_syms;
+val _ = map (fn x => allowing_rebinds (X64_LISP_SYM x) 0) all_syms;
 
 
 (* error *)
@@ -1330,7 +1339,8 @@ val fix_lemma = prove(
     SPEC m p c ((if b then q1 else q2) * q)``,
   METIS_TAC []);
 
-val SFIX_def = Define `SFIX s = if isSym s then s else Sym "NIL"`;
+Definition SFIX_def:   SFIX s = if isSym s then s else Sym "NIL"
+End
 
 fun X64_LISP_SFIX i = let
   val _ = print "z"
@@ -1377,7 +1387,8 @@ val _ = map X64_LISP_SFIX all_regs;
 
 (* nfix *)
 
-val NFIX_def = Define `NFIX s = if isVal s then s else Val 0`;
+Definition NFIX_def:   NFIX s = if isVal s then s else Val 0
+End
 
 fun X64_LISP_NFIX i = let
   val _ = print "z"
@@ -2012,7 +2023,8 @@ val X64_LISP_RUNTIME_ERROR = save_lisp_thm("X64_LISP_RUNTIME_ERROR",let
   val th = MP th lemma
   in th end);
 
-val no_such_function_def = Define `no_such_function x0 = x0:SExp`;
+Definition no_such_function_def:   no_such_function x0 = x0:SExp
+End
 val X64_LISP_ERROR_11 = save_lisp_thm("X64_LISP_ERROR_11",let
   val s = x64_encode "mov r2d,11"
   val (spec,_,sts,_) = x64_tools
@@ -2181,8 +2193,10 @@ val X64_LISP_TEST_EOF = save_lisp_thm("X64_LISP_TEST_EOF",let
 
 (* next token *)
 
-val next_token1_def = Define `next_token1 s = FST (FST (next_token s))`;
-val next_token2_def = Define `next_token2 s = SND (FST (next_token s))`;
+Definition next_token1_def:   next_token1 s = FST (FST (next_token s))
+End
+Definition next_token2_def:   next_token2 s = SND (FST (next_token s))
+End
 
 val X64_LISP_NEXT_TOKEN = save_lisp_thm("X64_LISP_NEXT_TOKEN",let
   (* part 1 *)
@@ -2837,16 +2851,18 @@ val zBYTE_MEMORY_Z_thm = prove(
   ``zBYTE_MEMORY dd d = zBYTE_MEMORY_Z dd d``,
   SIMP_TAC std_ss [zBYTE_MEMORY_Z_def,zBYTE_MEMORY_def]);
 
-val X64_LISP_WEAKEN_CODE = store_thm("X64_LISP_WEAKEN_CODE",
-  ``SPEC X64_MODEL
+Theorem X64_LISP_WEAKEN_CODE:
+    SPEC X64_MODEL
       (zLISP (a1,a2,sl,sl1,e,ex,cs,rbp,SOME T,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok)) {}
-      (zLISP (a1,a2,sl,sl1,e,ex,cs,rbp,SOME F,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok))``,
+      (zLISP (a1,a2,sl,sl1,e,ex,cs,rbp,SOME F,cu) (x0,x1,x2,x3,x4,x5,xs,xs1,io,xbp,qs,code,amnt,ok))
+Proof
   SIMP_TAC std_ss [zLISP_def]
   \\ REPEAT (HO_MATCH_MP_TAC SPEC_EXISTS_EXISTS \\ REPEAT STRIP_TAC)
   \\ REPEAT (MATCH_MP_TAC (SIMP_RULE std_ss [PULL_FORALL_IMP] SPEC_FRAME))
   \\ REPEAT (MATCH_MP_TAC (RW1 [STAR_COMM] (SIMP_RULE std_ss [PULL_FORALL_IMP] SPEC_FRAME)))
   \\ MATCH_MP_TAC (MATCH_MP SPEC_WEAKEN (SPEC_ALL SPEC_REFL))
-  \\ SIMP_TAC std_ss [zCODE_MEMORY_def,zCODE_IMP_BYTE_MEMORY,zBYTE_MEMORY_Z_thm]);
+  \\ SIMP_TAC std_ss [zCODE_MEMORY_def,zCODE_IMP_BYTE_MEMORY,zBYTE_MEMORY_Z_thm]
+QED
 
 
 (* converting data into code *)
@@ -3015,8 +3031,8 @@ val X64_LISP_TEST_CF = let
 
 (* prove a few theorems which imply that the bytecode does the right thing *)
 
-val X64_POP0 = SPEC_COMPOSE_RULE [X64_LISP_TOP 0,X64_LISP_POP]
-val X64_POP1 = SPEC_COMPOSE_RULE [X64_LISP_TOP 1,X64_LISP_POP]
+val X64_POP0 = SPEC_COMPOSE_RULE [allowing_rebinds X64_LISP_TOP 0,X64_LISP_POP]
+val X64_POP1 = SPEC_COMPOSE_RULE [allowing_rebinds X64_LISP_TOP 1,X64_LISP_POP]
 
 val X64_LISP_SWAP1 = let
   val ((th,_,_),_) = x64_spec (x64_encode "xchg r8,r9")
@@ -3161,4 +3177,3 @@ fun get_code th = let
 
 
 val _ = print_compiler_grammar()
-val _ = export_theory();
